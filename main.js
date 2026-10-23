@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { build, pruneAssets, themes } = require("./lib/build");
+const { build, pruneAssets, themes, fonts } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite } = require("./lib/mirror");
@@ -142,7 +142,7 @@ function publicSettings(s) {
 }
 
 const handlers = {
-  themes: () => require("./themes/themes.json"),
+  themes: () => ({ themes, fonts }),
 
   "sites:list": async () => {
     const ids = await fs.readdir(data("sites")).catch(() => []);

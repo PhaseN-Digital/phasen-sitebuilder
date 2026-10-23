@@ -91,6 +91,30 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // WordPress import with an application password fetches anonymously while it can (#43).
+  // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
+  {
+    const { startWordPress } = require("./test/fakes");
+    const { fetchWordPress } = require("./lib/wordpress");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, opts) => realFetch(String(url).replace(/^https:/, "http:"), opts);
+    try {
+      for (const hidden of [false, true]) {
+        const wp = await startWordPress({ hidden });
+        try {
+          const r = await fetchWordPress(wp.url.replace("http:", "https:"), "admin", "abcd efgh");
+          const welcome = r.pages.find((p) => p.id === 3).html;
+          assert(r.pages.length === 3 && r.name === "Bob&#8217;s Bikes", `hidden=${hidden}: pages fetched`);
+          assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
+          assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
+        } finally { await wp.close(); }
+      }
+      const wp = await startWordPress({ hidden: true });
+      await assert.rejects(fetchWordPress(wp.url, "", ""), /needs a username/);
+      await wp.close();
+    } finally { globalThis.fetch = realFetch; }
+  }
+
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
@@ -133,6 +157,28 @@ const site = {
     ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
     assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
   }
+
+  // Theme packages: the bundled ones are valid, bad ones are caught, and a
+  // font stack instead of a font id still loads.
+  const { validateTheme, validateAll } = require("./lib/theme-validate");
+  const { loadThemes, themes, fonts } = require("./lib/themes");
+  assert.deepStrictEqual(validateAll("themes"), {});
+  assert.deepStrictEqual(Object.keys(themes), ["clean", "bold", "elegant"]);
+  assert(read("public/styles.css").includes("--font: Georgia") && read("public/styles.css").includes("text-transform"), "bold theme.css + serif font");
+  const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themes-"));
+  const pkg = (id, json, css) => {
+    fs.mkdirSync(path.join(tdir, id));
+    fs.writeFileSync(path.join(tdir, id, "theme.json"), JSON.stringify(json));
+    fs.writeFileSync(path.join(tdir, id, "theme.css"), css);
+  };
+  pkg("mono", { label: "Mono", about: "x", font: '"Courier New", monospace', colors: themes.clean.colors }, ":root { --radius: 0; }");
+  assert.deepStrictEqual(validateTheme(path.join(tdir, "mono")), []);
+  assert.strictEqual(fonts[loadThemes(tdir).mono.font].stack, '"Courier New", monospace');
+  pkg("Bad_Id", { label: "", about: "x", font: "x;}body{", colors: { background: "red" }, extra: 1 }, '@import "x.css"; a{background:url(javascript:alert(1))}</style>');
+  fs.writeFileSync(path.join(tdir, "Bad_Id", "evil.js"), "");
+  fs.writeFileSync(path.join(tdir, "Bad_Id", "preview.png"), "not a png");
+  const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
+  for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
 
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {

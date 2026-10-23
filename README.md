@@ -107,8 +107,15 @@ published always-pass test secret, so that one step needs internet access.
   users install nothing else. `lib/wrangler-argv-fix.js` is required for that
   to work, see the comment in it.
 - `runtime/`: the form Worker and browser script copied into every site.
-- `themes/`: `base.css` plus one small override file per theme. Colours/fonts
-  are CSS variables the user picks in the Design tab.
+- `themes/`: `base.css`, `fonts.json` (the Font choices) and one package per
+  theme, `themes/<id>/theme.json` (label, about, colours, font id or CSS font
+  stack, optional version) plus `theme.css` (small overrides on top of
+  `base.css`; CSS only, no JS or HTML). `lib/themes.js` loads them for both
+  the build and the Design tab; colours/fonts are CSS variables the user picks
+  there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
+  themes`); an identical copy is vendored into the public
+  [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
+  repo for its CI, so **keep the two copies in sync**: change both together.
 
 ## Privacy page
 
@@ -198,8 +205,10 @@ forms. Third-party assets (Google Fonts, CDNs) stay remote.
 ### Editable import
 
 Uses the WordPress REST API. Credentials (username + application password) are optional:
-only needed if the site blocks public REST access. They're only sent over
-https and aren't stored.
+only needed if the site blocks public REST access, and only used once the
+site refuses an anonymous request, because pages fetched with them are
+rendered as that (admin) user (login/account shortcodes would show "You're
+already signed in"). They're only sent over https and aren't stored.
 
 - Content: every published page becomes a page with a "Rich text" section.
   `lib/wordpress.js` fetches; `app/wordpress.js` sanitizes with an allowlist
@@ -261,6 +270,5 @@ in the Publish tab.
   cart/comment forms (#22); editable
   import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
-  colours, font and logo (#42); pages rendered as the logged-in user when an
-  application password is given (#43); copied analytics tags and remote Google
+  colours, font and logo (#42); copied analytics tags and remote Google
   Fonts (#45).
