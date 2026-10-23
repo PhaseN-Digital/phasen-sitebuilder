@@ -16,12 +16,16 @@ process. Read it before changing anything substantial.
 npm install      # also points git at .githooks (commit-msg check)
 npm start        # run the app
 npm test         # builder/form-parser self-check + syntax check of every script
+npm run test:regression  # end-to-end: real app under xvfb + built sites under wrangler dev
 npm run dist     # installer for the current OS
 ```
 
-`npm test` doesn't cover the editor UI or the Electron main process. For
-UI changes, launch the app and exercise them (it can be driven headlessly
-with `xvfb-run` and `executeJavaScript`, as during development).
+`npm test` doesn't cover the editor UI or the Electron main process;
+`npm run test:regression` does (README "Regression tests"). When a change
+alters a flow it covers, extend `test/drive.js` (UI, via `executeJavaScript`)
+or `test/regression.js` (built site under `wrangler dev`), and the fakes in
+`test/fakes.js` if needed. For anything else in the UI, launch the app and
+exercise it (headlessly with `xvfb-run` and `executeJavaScript`).
 
 ## Tracking work: required for every change
 
@@ -102,6 +106,8 @@ are not, so add them yourself.
   dropping it from the changelog and version bump. Don't bypass the hook with
   `--no-verify`.
 - `ci.yml` runs `npm test` on PRs and pushes to `main`.
+- `regression.yml` runs `npm run test:regression` on release-please PRs
+  (`release-please--` branches), on "Run workflow" and via `workflow_call`.
 - `release-please.yml` keeps a release PR open. Merging it creates the GitHub
   release, and its `build` job builds and attaches the Windows/macOS
   installers. Builds deliberately live in that workflow, not an

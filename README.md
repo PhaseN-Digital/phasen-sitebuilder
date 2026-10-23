@@ -9,6 +9,7 @@ form API (`POST /api/forms/<id>`) with honeypot, Turnstile and Resend email.
 npm install
 npm start        # run the app
 npm test         # builder self-check
+npm run test:regression   # end-to-end suite, see "Regression tests"
 npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 ```
 
@@ -35,6 +36,10 @@ use `scripts/check-commit.js`.
 
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
   on PRs.
+- `regression.yml`: `npm run test:regression` on release-please's release
+  PRs (branches starting `release-please--`), by hand ("Run workflow") and
+  via `workflow_call`. On failure the screenshots, wrangler logs and
+  results are uploaded as the `regression-output` artifact.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
   the `build` job then builds the Windows installer and the macOS installers
@@ -50,6 +55,29 @@ use `scripts/check-commit.js`.
   `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarisation.
   Windows: `WIN_CSC_LINK` (base64 .pfx) and `WIN_CSC_KEY_PASSWORD`; Azure
   Trusted Signing or a cloud-HSM certificate needs extra config (#32).
+
+## Regression tests
+
+`npm run test:regression` (`test/regression.js`, about 10 seconds locally)
+checks the whole app end to end with no accounts, against fake sites in
+`test/fakes.js`:
+
+- the real app, driven headlessly by `test/drive.js`: create a site, preview,
+  edit + rebuild, theme switch, image upload; editable WordPress import from
+  a fake WordPress (REST, global styles, hostile HTML); exact copy of a fake
+  Elementor site (no origin URLs left, forms re-wired, copy vs structure
+  tagging, page edit, site-wide edit, image replace, undo, revert);
+- the sites it made, built as publishing builds them and run under the
+  bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
+  the copied site's redirect, and form POSTs (honeypot, validation, captcha,
+  a valid message logged instead of emailed since `RESEND_API_KEY` is unset).
+
+It prints one line per check and a summary, and exits non-zero on any
+failure. On Linux without a display it runs Electron under `xvfb-run`
+(`apt install xvfb`). Set `SB_OUT=<dir>` to keep the output somewhere
+fixed; otherwise it's a temp folder, named in the summary. The Worker's
+Turnstile check calls Cloudflare's real siteverify endpoint with the
+published always-pass test secret, so that one step needs internet access.
 
 ## How it fits together
 
