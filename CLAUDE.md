@@ -86,9 +86,16 @@ are not, so add them yourself.
   push version bumps by hand.
 - **Every change needs the maintainer's review.** Open the PR, wait for CI,
   move the issue to Testing, and stop. Never merge a PR yourself, including
-  release-please's. GitHub can't enforce this yet (branch protection needs a
-  paid plan for this private repo, see #5), so it's a rule to follow, not a
-  safety net.
+  release-please's, unless you are the `release-manager` agent and the
+  maintainer has authorised merging for the current session.
+- **Agents** (`.claude/agents/`): when working through issues, run one fresh
+  `issue-worker` per issue (it implements, tests and opens a PR, but never
+  merges) and hand ready PRs to the `release-manager`. The release manager
+  is the only thing that merges, one PR at a time and in dependency order,
+  each brought up to date with `main` and green in CI first, and it says which
+  issues are safe to start next. Workers declare `Depends on #n` and
+  `Files:` in their PR bodies. GitHub can't enforce any of this yet
+  (branch protection needs a paid plan for this private repo, see #5).
 - Commit messages must be Conventional Commits (`feat:`, `fix(scope):`,
   `feat!:` …). The `commit-msg` hook and CI's `commits` job both run
   `scripts/check-commit.js`. release-please silently skips anything else,
