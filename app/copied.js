@@ -100,7 +100,7 @@ function pushCopyUndo(siteId, files) {
 }
 function copyRestored(siteId, message) {
   if (site?.id !== siteId) return;
-  selectedCopyImage = null;
+  selectedCopyImage = selectedCopyLink = null;
   renderTab();
   refreshPreview();
   $(".save-state").textContent = message;
@@ -157,8 +157,46 @@ function revertCopiedPage(page) {
 }
 
 let selectedCopyImage = null; // { key, alt, src }
+let selectedCopyLink = null; // { key, href, pageId, error }
+
+// The link an editable element stands for: the element itself, the link
+// around it, or the single link inside it (e.g. a menu item's <li>).
+const linkOf = (el) => el.closest("a") || el.querySelector("a");
+const copiedPaths = () => site.pages.filter((p) => p.mirror).map((p) => p.mirror);
+// Allowed link targets: web addresses, email, phone, or one of the copied pages.
+function linkTarget(value) {
+  const v = value.trim();
+  if (/^mailto:[^\s@]+@[^\s@]+$/i.test(v) || /^tel:\+?[\d\s().-]+$/i.test(v) || copiedPaths().includes(v)) return v;
+  try {
+    const u = new URL(v);
+    if ((u.protocol === "http:" || u.protocol === "https:") && u.hostname && !/\s/.test(v)) return v;
+  } catch {}
+  return null;
+}
+
+function setCopyLink(value) {
+  const target = linkTarget(value);
+  selectedCopyLink.error = target ? "" : "Use a web address (https://…), mailto:, tel: or one of your copied pages, like /";
+  if (!target) return renderTab();
+  const { key } = selectedCopyLink;
+  selectedCopyLink.href = target;
+  renderTab();
+  return applyCopyEdit(key, (el) => linkOf(el)?.setAttribute("href", target)).then(() =>
+    $("#preview")?.contentWindow.postMessage({ sb: true, type: "link-updated", key, href: target }, "*"));
+}
 
 function copiedPageCard(page) {
+  if (selectedCopyLink?.pageId !== page.id) selectedCopyLink = null;
+  const linkInput = selectedCopyLink && h("input", { value: selectedCopyLink.href, placeholder: "https://…, mailto:…, tel:… or /page/",
+    "aria-label": "Link goes to", onchange: (e) => setCopyLink(e.target.value) });
+  linkInput?.setAttribute("list", "copied-paths");
+  const linkPanel = selectedCopyLink && h("div", { className: "card copy-link" },
+    h("div", { className: "card-head" }, h("strong", {}, selectedCopyLink.key.startsWith("s-") ? "Link (on every page)" : "Link"),
+      h("button", { className: "icon", title: "Close", onclick: () => { selectedCopyLink = null; renderTab(); } }, "✕")),
+    h("p", { className: "hint" }, "Where it goes: a web address, an email (mailto:), a phone number (tel:) or one of your pages."),
+    linkInput,
+    h("datalist", { id: "copied-paths" }, copiedPaths().map((p) => h("option", { value: p }))),
+    selectedCopyLink.error && h("p", { className: "error" }, selectedCopyLink.error));
   const imagePanel = selectedCopyImage && h("div", { className: "card" },
     h("div", { className: "card-head" }, h("strong", {}, selectedCopyImage.key.startsWith("s-") ? "Image (on every page)" : "Image"),
       h("button", { className: "icon", title: "Close", onclick: () => { selectedCopyImage = null; renderTab(); } }, "✕")),
@@ -183,7 +221,7 @@ function copiedPageCard(page) {
   return [
     h("div", { className: "card" },
       h("strong", {}, page.title), h("p", { className: "hint" }, `Address: ${page.mirror}`),
-      h("p", {}, "Click any outlined text in the preview to change it, or click an image to replace it."),
+      h("p", {}, "Click any outlined text in the preview to change it (and where it links to), or click an image to replace it."),
       h("ul", { className: "legend" },
         h("li", {}, h("i", { className: "swatch page" }), "This page's content"),
         h("li", {}, h("i", { className: "swatch site" }), "Header, menu and footer: changes apply to every page")),
@@ -192,6 +230,7 @@ function copiedPageCard(page) {
         h("button", { className: "copy-undo", disabled: !copyUndo[site.id]?.length, onclick: undoCopyEdit }, "Undo last change"),
         h("button", { onclick: () => revertCopiedPage(page) }, "Revert this page to the original")),
       h("p", { className: "hint" }, "Reverting also undoes header, menu and footer changes on this page only; they stay on your other pages.")),
+    linkPanel,
     imagePanel,
   ];
 }
@@ -204,6 +243,10 @@ window.addEventListener("message", (event) => {
   if (type === "text" && typeof html === "string") {
     const clean = cleanEdit(html);
     applyCopyEdit(key, (el) => { el.innerHTML = clean; });
+  } else if (type === "link") {
+    const href = event.data.href;
+    selectedCopyLink = typeof href === "string" ? { key, href, pageId, error: "" } : null;
+    renderTab();
   } else if (type === "image") {
     selectedCopyImage = { key, alt: String(alt || ""), src: String(src || "") };
     renderTab();
