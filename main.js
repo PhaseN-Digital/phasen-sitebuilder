@@ -105,6 +105,8 @@ async function publish(id, log) {
   const { accountId } = settings.cloudflare;
   const resendKey = unseal(settings.resendKey);
   const state = await readState(id);
+  // Recorded up front so "Take offline" (#71) can undo even a half-finished publish.
+  Object.assign(state, { accountId, worker: site.workerName }, site.domain && { www: { id: site.domain.id, name: site.domain.name } });
 
   log("Preparing…\n");
   const hostname = site.domain ? site.domain.name : await cf.workersDevHostname(token, accountId, site.workerName);
@@ -114,7 +116,9 @@ async function publish(id, log) {
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
-    state.sendingKey = seal(await cf.createSendingKey(resendKey, site.name, domainId));
+    const key = await cf.createSendingKey(resendKey, site.name, domainId);
+    state.sendingKey = seal(key.token);
+    state.sendingKeyId = key.id;
     state.sendingKeyDomain = domainId;
     await writeState(id, state);
   }
@@ -140,6 +144,26 @@ async function publish(id, log) {
   log(`\nDone! Your website is live at ${state.url}\n`);
   return state.url;
 }
+
+// Undoes publish() (#71). Throws if anything couldn't be removed; publish.json
+// keeps just those parts, so trying again only retries them.
+async function unpublish(id, log) {
+  const settings = await loadSettings();
+  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first, so the website can be removed from it.");
+  const site = await readSite(id);
+  const state = await readState(id);
+  if (state.url) { // published before publish.json recorded these
+    state.worker ??= site.workerName;
+    if (site.domain) state.www ??= { id: site.domain.id, name: site.domain.name };
+  }
+  state.accountId ??= settings.cloudflare.accountId;
+  log("Taking the website offline…\n");
+  const { state: left, failed } = await cf.unpublish(unseal(settings.cloudflare.token), unseal(settings.resendKey), state, log);
+  await writeState(id, left);
+  if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
+  log("\nDone. The website is offline.\n");
+}
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId);
 
 // Theme sources (#58): the public repo (hideable via settings.hidePublicThemes)
 // plus settings.themeSources, [{ spec, token? (sealed) }]. Tokens never leave
@@ -228,13 +252,17 @@ const handlers = {
     await queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true }));
     return site;
   },
-  "sites:get": async (id) => ({ site: await readSite(id), url: (await readState(id)).url || null }),
+  "sites:get": async (id) => {
+    const state = await readState(id);
+    return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state) };
+  },
   "sites:save": async (site) => {
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
     const defaultTo = (await loadSettings()).email; // the privacy page's contact address
     return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true, defaultTo })); // page id -> preview path
   },
-  "sites:delete": async (id) => {
+  "sites:delete": async (id, offline, event) => {
+    if (offline) await unpublish(id, (line) => event.sender.send("publish-log", line)); // throws before anything local is deleted
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });
   },
   "sites:export": async (id) => {
@@ -249,6 +277,7 @@ const handlers = {
     return out;
   },
   "sites:publish": (id, event) => publish(id, (line) => event.sender.send("publish-log", line)),
+  "sites:unpublish": (id, event) => unpublish(id, (line) => event.sender.send("publish-log", line)),
 
   "images:save": async (id, bytes) => {
     if (!(bytes instanceof Uint8Array) || bytes.length > 20e6) throw new Error("Image too large.");

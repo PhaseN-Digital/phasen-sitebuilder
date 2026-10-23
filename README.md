@@ -309,7 +309,29 @@ Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redire
 Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
+## Taking a site offline
+
+"Take website offline" in the Publish tab, or ticking "Also take it offline"
+when deleting a site, undoes publishing (`unpublish` in `lib/publish.js`),
+using what `sites/<id>/publish.json` recorded at publish time:
+
+1. Deletes the Worker and its Custom Domains.
+2. Deletes the `www` record and redirect rule, but only ones publishing made
+   (matched by the record's comment and the rule's `ref`).
+3. Deletes the Turnstile widget and the site's Resend sending key.
+
+Each step is logged and best-effort: one failing doesn't stop the rest, and
+anything already gone (404) counts as removed. Whatever failed stays in
+`publish.json` so trying again only retries that, and a delete keeps the
+site's local files until taking it offline has fully worked.
+
 ## Known gaps
+
+- Taking a site offline (#71) leaves the domain registered with Resend and
+  Resend's DNS records in the zone, since they may predate the app or be
+  shared. Sites published before 0.5 didn't record their Resend key's id, so
+  that key has to be deleted at resend.com by hand (the log says so). Only
+  tested against a fake Cloudflare/Resend API so far, not the real ones.
 
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
