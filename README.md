@@ -126,8 +126,10 @@ third-party services the copied pages load.
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
 exact copy when the home page shows a page builder (Elementor, Divi, Beaver
-Builder, WPBakery, Bricks, Oxygen, Avada) or there's no REST API, and the
-editable import otherwise.
+Builder, WPBakery, Bricks, Oxygen, Avada; detected from the builder's own
+markup) or there's no REST API (including one hidden from visitors when no
+username and application password were given), and the editable import
+otherwise.
 
 ### Exact copy (`lib/mirror.js`)
 
@@ -137,11 +139,14 @@ and image at its original path under `sites/<id>/mirror/`. Since paths are
 kept, the only rewrite needed is stripping the site's domain from URLs
 (including JSON-escaped ones in inline scripts), so links, CSS `url()`s and
 srcsets keep working. Redirects found while crawling go into Cloudflare's
-`_redirects` file, and WordPress's own 404 page is copied.
+`_redirects` file, and WordPress's own 404 page is copied (with its own
+stylesheets and images).
 
 POST forms are re-wired in place, keeping their markup and styling: the
 questions are read from the form's fields, and the form gets a `data-form`
-id, honeypot and Turnstile widget. `runtime/form.js` listens in the capture
+id, honeypot and Turnstile widget. The same form on many pages (a footer
+newsletter form) becomes one form. Log-in forms (anything with a password
+field) are left alone. `runtime/form.js` listens in the capture
 phase so the page builder's own submit handler (which would post to
 WordPress) never runs. Turnstile key and thank-you message are filled in at
 build time.
@@ -149,7 +154,7 @@ build time.
 Copied pages are edited in place in the preview (Pages tab). `app/copied.js`
 separates copy from theme structure once, right after import: it tags text
 blocks (headings, paragraphs, list items, button text, page-builder text
-widgets) and images with a `data-sb-edit` key. Anything inside the header,
+widgets that don't contain a form) and images with a `data-sb-edit` key. Anything inside the header,
 menu, footer or sidebar (landmarks plus Elementor/Divi/Beaver/theme
 conventions) gets a site-wide `s-` key derived from its original text, so the
 same menu item or logo matches on every page and an edit there is applied to
@@ -186,8 +191,10 @@ https and aren't stored.
   built-in contact form instead.
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
   colours and font style are copied, from the home page's global styles
-  (block themes). Classic themes mostly don't expose these, so they get a
-  built-in theme's defaults.
+  (block themes; WordPress's own default button colour is ignored). Classic
+  themes and page builders mostly don't expose these, so they get a built-in
+  theme's defaults.
+- Some plugins print HTML before the REST API's JSON; that's skipped.
 - Not imported: blog posts, menus (page order follows WordPress's page
   order), page layouts, plugins.
 
@@ -223,3 +230,14 @@ in the Publish tab.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
 - No analytics/cookie banner.
+- Imports have been tried against a handful of public WordPress sites
+  (Elementor, Divi, block theme, classic theme with the REST API hidden) and
+  one Elementor 4 site of the maintainer's own (both imports, with an
+  application password), but not yet against a client site. Known problems
+  from that: re-wired forms with conditional or checkbox-group fields, and
+  cart/comment forms (#22); WordPress installed in a subfolder (#23); editable
+  import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
+  Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
+  colours, font and logo (#42); pages rendered as the logged-in user when an
+  application password is given (#43); copied analytics tags and remote Google
+  Fonts (#45).
