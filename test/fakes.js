@@ -14,29 +14,36 @@ async function listen(handler) {
 }
 
 // Classic WordPress: REST API, global styles on the home page, hostile page HTML.
-async function startWordPress() {
+// Like a membership plugin, the Welcome page renders differently for a
+// logged-in user (any Authorization header); `hidden` refuses anonymous REST
+// requests. `requests` records [path, authenticated] for each request.
+async function startWordPress({ hidden = false } = {}) {
   let B;
+  const requests = [];
   const site = await listen((req, res) => {
     const u = new URL(req.url, B);
+    const authed = Boolean(req.headers.authorization);
+    requests.push([u.pathname, authed]);
+    if (hidden && !authed && u.pathname.startsWith("/wp-json/")) { res.writeHead(401, { "content-type": "application/json" }); return res.end('{"code":"rest_cannot_access"}'); }
     const json = (v, h = {}) => { res.writeHead(200, { "content-type": "application/json", ...h }); res.end(JSON.stringify(v)); };
     if (u.pathname === "/wp-json/") return json({ name: "Bob&#8217;s Bikes", description: "Fixing bikes since 1999", namespaces: ["oembed/1.0", "wp/v2"] });
-    if (u.pathname === "/wp-json/wp/v2/pages") return json(pages(), { "x-wp-totalpages": "1" });
+    if (u.pathname === "/wp-json/wp/v2/pages") return json(pages(authed), { "x-wp-totalpages": "1" });
     if (u.pathname === "/wp-content/uploads/a.png") { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
     if (u.pathname === "/") { res.writeHead(200, { "content-type": "text/html" }); return res.end(home); }
     res.writeHead(404); res.end();
   });
   B = site.url;
-  const pages = () => [
+  const pages = (authed) => [
     { id: 7, title: { rendered: "About &amp; Team" }, link: `${B}/about/`, content: { rendered: `<!-- wp:paragraph --><p class="x" style="color:red" onclick="evil()">We <strong>fix</strong> bikes. See <a href="${B}/contact/">contact</a> or <a href="/blog/post-1/">a post</a> or <a href="javascript:alert(1)">bad</a>.</p><script>alert(1)</script><div class="wp-block-group"><h1>Big</h1><iframe src="https://evil"></iframe></div><figure class="wp-block-gallery"><figure><img src="${B}/wp-content/uploads/a.png" alt="Shop" onerror="evil()"></figure><figure><img src="${B}/wp-content/uploads/missing.png"></figure></figure>` } },
     { id: 9, title: { rendered: "Contact" }, link: `${B}/contact/`, content: { rendered: `<p>Write to us</p><div class="wpcf7"><form action="/x"><input name="your-name"><button>Send</button></form></div>` } },
-    { id: 3, title: { rendered: "Welcome" }, link: `${B}/`, content: { rendered: `<h2>Hello</h2><p>Go to <a href="/about/">about</a>.</p>` } },
+    { id: 3, title: { rendered: "Welcome" }, link: `${B}/`, content: { rendered: `<h2>Hello</h2><p>${authed ? "You&#8217;re already signed in." : "Sign in to your account."}</p><p>Go to <a href="/about/">about</a>.</p>` } },
   ];
   const home = `<!doctype html><html><head><style id="global-styles-inline-css">:root{--wp--preset--color--base: #fdf6e3;--wp--preset--color--contrast: #222222;--wp--preset--color--primary: #cc3300;--wp--preset--font-family--body: "Lora", Georgia, serif;}
 :root :where(body){background-color: var(--wp--preset--color--base);color: var(--wp--preset--color--contrast);font-family: var(--wp--preset--font-family--body);}
 a:where(:not(.wp-element-button)){color: var(--wp--preset--color--primary);}
 :root :where(.wp-element-button, .wp-block-button__link){background-color: #0a7d4b;color:#fff;}</style></head>
 <body class="home page-template-default page page-id-3"><img class="custom-logo" src="/wp-content/uploads/a.png"></body></html>`;
-  return site;
+  return { ...site, requests };
 }
 
 // Elementor site: header/footer templates, a hidden mobile menu, CSS with
@@ -92,4 +99,25 @@ ${body}
   return { ...site, forbidden };
 }
 
-module.exports = { startWordPress, startElementor, PNG };
+// WordPress in a subfolder (/blog/) under an unrelated root site. `forbidden`
+// collects requests outside the folder or into WordPress's admin.
+async function startSubfolder() {
+  let B;
+  const forbidden = [];
+  const site = await listen((req, res) => {
+    const u = new URL(req.url, B);
+    const html = (status, title, body) => { res.writeHead(status, { "content-type": "text/html" }); res.end(`<!doctype html><html><head><title>${title} &#8211; Sub Blog</title><meta property="og:site_name" content="Sub Blog"><link rel="https://api.w.org/" href="${B}/blog/wp-json/"></head><body>${body}</body></html>`); };
+    if (u.pathname === "/blog") { res.writeHead(301, { location: `${B}/blog/` }); return res.end(); }
+    if (u.pathname === "/blog/") return html(200, "Home", `<a href="${B}/blog/about/">About</a> <a href="/">Main site</a> <a href="${B}/shop/">Shop</a> <a href="${B}/blog/wp-admin/">Admin</a> <img src="${B}/blog/wp-content/uploads/a.png">`);
+    if (u.pathname === "/blog/about/") return html(200, "About", `<a href="${B}/blog/">Home</a> <a href="${B}/blog/old/">Old</a>`);
+    if (u.pathname === "/blog/old/") { res.writeHead(301, { location: `${B}/blog/about/` }); return res.end(); }
+    if (u.pathname === "/blog/wp-content/uploads/a.png") { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+    if (!u.pathname.startsWith("/blog/") || u.pathname.startsWith("/blog/wp-admin")) forbidden.push(u.pathname);
+    if (u.pathname.startsWith("/blog/")) return html(404, "Not found", "<h1>No such post</h1>");
+    res.writeHead(404); res.end();
+  });
+  B = site.url;
+  return { ...site, forbidden };
+}
+
+module.exports = { startWordPress, startElementor, startSubfolder, PNG };

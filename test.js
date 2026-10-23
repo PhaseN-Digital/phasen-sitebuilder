@@ -91,6 +91,39 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // WordPress import with an application password fetches anonymously while it can (#43).
+  // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
+  {
+    const { startWordPress } = require("./test/fakes");
+    const { fetchWordPress } = require("./lib/wordpress");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, opts) => realFetch(String(url).replace(/^https:/, "http:"), opts);
+    try {
+      for (const hidden of [false, true]) {
+        const wp = await startWordPress({ hidden });
+        try {
+          const r = await fetchWordPress(wp.url.replace("http:", "https:"), "admin", "abcd efgh");
+          const welcome = r.pages.find((p) => p.id === 3).html;
+          assert(r.pages.length === 3 && r.name === "Bob&#8217;s Bikes", `hidden=${hidden}: pages fetched`);
+          assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
+          assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
+        } finally { await wp.close(); }
+      }
+      const wp = await startWordPress({ hidden: true });
+      await assert.rejects(fetchWordPress(wp.url, "", ""), /needs a username/);
+      await wp.close();
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  const sub = await require("./test/fakes").startSubfolder();
+  const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
+  const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
+  assert.deepStrictEqual(copied.pages.map((p) => [p.path, p.title, p.file]), [["/blog/", "Home", "blog/index.html"], ["/blog/about/", "About", "blog/about/index.html"]]);
+  assert.deepStrictEqual(sub.forbidden, []);
+  assert(fs.existsSync(path.join(subOut, "blog/wp-content/uploads/a.png")) && fs.readFileSync(path.join(subOut, "404.html"), "utf8").includes("No such post"));
+  assert.strictEqual(fs.readFileSync(path.join(subOut, "_redirects"), "utf8"), "/blog/old/ /blog/about/ 301\n/ /blog/ 301\n");
+
   // Syntax-check every script, including the renderer ones nothing above loads.
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
   const { ensureWwwRedirect } = require("./lib/publish");
