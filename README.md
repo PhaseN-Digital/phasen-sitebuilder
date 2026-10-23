@@ -169,8 +169,10 @@ forms. Third-party assets (Google Fonts, CDNs) stay remote.
 ### Editable import
 
 Uses the WordPress REST API. Credentials (username + application password) are optional:
-only needed if the site blocks public REST access. They're only sent over
-https and aren't stored.
+only needed if the site blocks public REST access, and only used once the
+site refuses an anonymous request, because pages fetched with them are
+rendered as that (admin) user (login/account shortcodes would show "You're
+already signed in"). They're only sent over https and aren't stored.
 
 - Content: every published page becomes a page with a "Rich text" section.
   `lib/wordpress.js` fetches; `app/wordpress.js` sanitizes with an allowlist
@@ -229,6 +231,5 @@ in the Publish tab.
   cart/comment forms (#22); WordPress installed in a subfolder (#23); editable
   import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
-  colours, font and logo (#42); pages rendered as the logged-in user when an
-  application password is given (#43); copied analytics tags and remote Google
+  colours, font and logo (#42); copied analytics tags and remote Google
   Fonts (#45).
