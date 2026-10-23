@@ -129,7 +129,9 @@ async function workerChecks(sites) {
       const form = s.site.forms[0];
       check("worker (exact copy): home page", home.status === 200 && home.text.includes(`data-form="${form.id}"`), home.status);
       check("worker (exact copy): editor tags and placeholders gone", !/data-sb-edit|__TURNSTILE_SITEKEY__|__FORM_SUCCESS__/.test(home.text) && home.text.includes('data-sitekey="REAL_SITEKEY"'));
-      check("worker (exact copy): copied page", (await get(s.base, "/about/")).status === 200);
+      const about = await get(s.base, "/about/");
+      check("worker (exact copy): copied page", about.status === 200);
+      check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);
