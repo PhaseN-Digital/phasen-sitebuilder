@@ -97,7 +97,13 @@ all of them. Everything else gets a per-page `p-` key. Layout elements are
 never tagged. `app/copy-edit-frame.js` is injected into the preview to make
 tagged elements editable. Edits are written into the stored HTML (not the
 live DOM, which page scripts have modified), and the build strips the tags.
-There's no undo yet: re-import to start over.
+Before a page's file is first edited, its HTML is kept in
+`sites/<id>/mirror-original/`, for "Revert this page to the original" (which
+also drops that page's share of site-wide edits; they stay on other pages).
+"Undo last change" restores every file the last edit or revert wrote,
+from an in-memory stack of 20 per site, so undo history is lost when the app
+restarts. Sites edited before this existed keep their state at the first edit
+since then as the "original".
 
 Not copied: anything only reachable
 via a query string (`?p=123` permalinks, search results), files only loaded
