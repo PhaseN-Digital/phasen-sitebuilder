@@ -74,7 +74,8 @@ checks the whole app end to end with no accounts, against fake sites in
 
 - the real app, driven headlessly by `test/drive.js`: create a site, preview,
   edit + rebuild, theme switch, image upload; editable WordPress import from
-  a fake WordPress (REST, global styles, hostile HTML); exact copy of a fake
+  a fake WordPress (REST, global styles, hostile HTML) and of a fake
+  Elementor site (kit colours/font, header logo); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert);
 - the sites it made, built as publishing builds them and run under the
@@ -220,9 +221,12 @@ already signed in"). They're only sent over https and aren't stored.
   built-in contact form instead.
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
   colours and font style are copied, from the home page's global styles
-  (block themes; WordPress's own default button colour is ignored). Classic
-  themes and page builders mostly don't expose these, so they get a built-in
-  theme's defaults.
+  (block themes; WordPress's own default button colour is ignored), or
+  failing that from Elementor's kit stylesheet (global colours and primary
+  font; serif is guessed from a short list of font names). The logo is the
+  theme's custom logo, else the first image in an Elementor header. Classic
+  themes and other page builders mostly don't expose these, so they get a
+  built-in theme's defaults.
 - Some plugins print HTML before the REST API's JSON; that's skipped.
 - Not imported: blog posts, menus (page order follows WordPress's page
   order), page layouts, plugins.
@@ -269,6 +273,5 @@ in the Publish tab.
   from that: re-wired forms with conditional or checkbox-group fields, and
   cart/comment forms (#22); editable
   import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
-  Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
-  colours, font and logo (#42); copied analytics tags and remote Google
+  Elementor 3 runtime-loaded scripts (#11); copied analytics tags and remote Google
   Fonts (#45).
