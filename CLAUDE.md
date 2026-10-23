@@ -102,6 +102,12 @@ are not, so add them yourself.
   trigger other workflows, so a separate one would never run.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix.
+- `package.json`'s `allowScripts` approves the dependency install scripts
+  those binaries need (esbuild, workerd, electron-winstaller, fsevents on
+  macOS). Newer npm blocks unapproved install scripts, which would ship
+  installers without working binaries. If `npm ci` warns about a package
+  "not yet covered by allowScripts", review it and run
+  `npm install-scripts approve --no-allow-scripts-pin <pkg>` (or `deny`).
 
 ## Things that are easy to break
 
