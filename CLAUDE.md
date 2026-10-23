@@ -132,3 +132,8 @@ are not, so add them yourself.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
+- Uploaded images are found by `usedAssets` (`lib/build.js`) searching
+  site.json and the `mirror`/`mirror-original` HTML for `assets/<name>`. A
+  new place that stores an image reference must be covered there, or
+  publishing drops the image and startup deletes it. Never prune while the
+  editor is running: copied-page undo history lives in its memory.
