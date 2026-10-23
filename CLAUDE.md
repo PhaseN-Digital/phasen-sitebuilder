@@ -89,9 +89,13 @@ are not, so add them yourself.
   `main`. The same applies to release-please's own release PR: merge it, don't
   push version bumps by hand.
 - **Every change needs the maintainer's review.** Open the PR, wait for CI,
-  move the issue to Testing, and stop. Never merge a PR yourself, including
-  release-please's, unless you are the `release-manager` agent and the
-  maintainer has authorised merging for the current session.
+  move the issue to Testing, and stop. Never merge a PR yourself unless you
+  are the `release-manager` agent and the maintainer has authorised merging
+  for the current session.
+- **No agent ever merges release-please's release PR.** Patch releases are
+  merged automatically by `release-please.yml`'s gate once the regression
+  suite passes; minor/major releases (`needs-approval` label) are the
+  maintainer's to merge.
 - **Agents** (`.claude/agents/`): when working through issues, run one fresh
   `issue-worker` per issue (it implements, tests and opens a PR, but never
   merges) and hand ready PRs to the `release-manager`. The release manager
@@ -113,6 +117,17 @@ are not, so add them yourself.
   installers. Builds deliberately live in that workflow, not an
   `on: release`/tag workflow: release-please's GITHUB_TOKEN tags can't
   trigger other workflows, so a separate one would never run.
+- Release gate (same workflow, #47): when release-please opens or updates
+  the release PR (`prs_created`), `regression` calls `regression.yml` on the
+  PR's head sha, `release-gate` labels/comments or, for a passing patch
+  (`scripts/release-bump.js`), merges it with `--match-head-commit`, and
+  `release` runs release-please again to create the release. `build` runs on
+  either release-please job's `release_created` and checks out the tag
+  (after a gate merge `github.sha` is the pre-release commit). It all stays
+  in one run because release-please's PR updates and GITHUB_TOKEN merges
+  don't start new workflow runs. A manual dispatch still builds installers
+  without a release (it gates the release PR too if release-please updates
+  it).
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.

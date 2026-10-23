@@ -48,6 +48,15 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
+- Release gate: whenever release-please opens or updates the release PR,
+  the same run calls `regression.yml` on the PR's head. A **patch** release
+  (`scripts/release-bump.js`: same major.minor) that passes is merged by the
+  workflow and released and built in that same run. A **minor/major**
+  release that passes gets the `needs-approval` label and a comment, and is
+  released when the maintainer merges it. A failure gets the
+  `regression-failed` label and a comment, and is never merged. This all
+  happens in one run because release-please's PR updates and a
+  `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Code signing switches on per OS once that OS's certificate secret exists
   (repo Settings > Secrets and variables > Actions); without it the
   installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
