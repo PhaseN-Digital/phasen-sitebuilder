@@ -75,6 +75,10 @@ const site = {
     { id: "pick", label: "pick", type: "text", required: false },
     { id: "msg", label: "msg", type: "textarea", required: false },
   ]);
+  // Builder detection looks for the builder's markup, not just its name (an image called Elementor-Logo.svg).
+  const { detectBuilder } = require("./lib/mirror");
+  assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
+  assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
   // Syntax-check every script, including the renderer ones nothing above loads.
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.

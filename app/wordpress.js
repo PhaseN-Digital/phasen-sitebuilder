@@ -59,7 +59,8 @@ function wordpressStyle(home) {
   const vars = Object.fromEntries([...css.matchAll(/(--wp--preset--[a-z0-9-]+):\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]));
   const resolve = (v) => v?.replace(/var\((--wp--preset--[a-z0-9-]+)\)/g, (_, name) => vars[name] || "").trim();
   const blocks = (re) => [...css.matchAll(re)].map((m) => m[1]).join(";");
-  const prop = (block, name) => resolve(block.match(new RegExp(`(?:^|[;\\s])${name}\\s*:\\s*([^;]+)`))?.[1]);
+  // Last declaration wins, as in CSS: the theme's rules come after WordPress's own defaults.
+  const prop = (block, name) => resolve([...block.matchAll(new RegExp(`(?:^|[;\\s])${name}\\s*:\\s*([^;]+)`, "g"))].pop()?.[1]);
 
   const body = blocks(/(?:^|[}\s,])(?::root\s+:where\(body\)|body)\s*\{([^}]*)\}/g);
   const button = blocks(/wp-element-button[^{]*\{([^}]*)\}/g);
@@ -71,7 +72,8 @@ function wordpressStyle(home) {
       background: toHex(prop(body, "background-color") || prop(body, "background")),
       text: toHex(prop(body, "color")),
       primary: toHex(prop(link, "color")) || toHex(preset("primary")) || toHex(preset("accent")),
-      accent: toHex(prop(button, "background-color")) || toHex(preset("secondary")) || toHex(preset("accent")),
+      // #32373c is WordPress's own default button colour, on every site, so it says nothing about the theme.
+      accent: [toHex(prop(button, "background-color"))].find((c) => c !== "#32373c") || toHex(preset("secondary")) || toHex(preset("accent")),
     },
     serif: /serif/i.test(font) && !/sans-serif/i.test(font),
   };
@@ -81,7 +83,8 @@ const isDark = (hex) => hex && [1, 3, 5].reduce((sum, i) => sum + parseInt(hex.s
 
 // "auto" makes an exact copy when the site uses a page builder (its layout
 // lives in the builder, not in content the editable import can read) or when
-// there's no usable REST API; otherwise it does the editable import.
+// there's no usable REST API (including one hidden from visitors when no
+// username and application password were given); otherwise it does the editable import.
 async function runImport({ url, username, password, mode }, log) {
   if (mode === "exact") return copySite(url, log);
   log("Connecting to WordPress…");
@@ -89,8 +92,9 @@ async function runImport({ url, username, password, mode }, log) {
   try {
     wp = await call("wp:fetch", url, username, password);
   } catch (e) {
-    if (mode === "editable" || /refused|needs a username|https/.test(errorText(e))) throw e;
-    log("No WordPress content API found, so we'll copy the site exactly as it looks.");
+    // A hidden API ("needs a username") with no credentials given is treated like a missing one.
+    if (mode === "editable" || /refused|https/.test(errorText(e))) throw e;
+    log("Couldn't read the content through WordPress's API, so we'll copy the site exactly as it looks.");
     return copySite(url, log);
   }
   if (mode === "auto" && wp.builder) {
