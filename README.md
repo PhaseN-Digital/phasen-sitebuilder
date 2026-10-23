@@ -113,6 +113,18 @@ not legal advice. Exact-copy pages keep their own footer, so there the user
 is told the address and adds the link themselves; the notice doesn't cover
 third-party services the copied pages load.
 
+## Analytics and cookie consent
+
+Design › Google Analytics measurement ID (optional, `site.analyticsId`, must
+look like `G-XXXX`, anything else is ignored). When set, every page built
+from the site's own themes gets a cookie banner and `runtime/consent.js`
+(copied to `/consent.js`, ID passed in `data-ga-id`). Following UK PECR, the
+Google tag only loads after the visitor clicks Accept; the choice is kept in
+`localStorage` and a footer "Cookie preferences" link reopens the banner.
+Nothing loads in the in-app preview. The site then always gets the privacy
+page, which gains an "Analytics and cookies" section (and drops the form
+parts if there are no forms). Exact-copy pages don't get the banner (#45).
+
 ## Importing from WordPress
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
@@ -220,7 +232,8 @@ in the Publish tab.
   is wired up but untested, since no certificates exist yet (#6).
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No analytics/cookie banner.
+- Analytics consent covers only pages built from the themes, not exact-copy
+  pages (#45), and only Google Analytics.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an

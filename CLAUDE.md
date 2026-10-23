@@ -147,8 +147,12 @@ are not, so add them yourself.
   (`applyCopyEdit`), or undo/revert will miss it.
 - `pagePaths` in `lib/build.js` always reserves the generated privacy page's
   slug and returns it under the `privacy` key (page ids are hex, so it can't
-  clash); `build()` drops it when the site has no forms, and the editor uses
+  clash); `build()` drops it when the site has no forms and no valid
+  analytics ID, and the editor uses
   `paths.privacy` to decide whether to show the Privacy page settings.
+- With `site.analyticsId` set, the Google tag must only ever be injected by
+  `runtime/consent.js` after Accept (UK PECR); never add `gtag.js` to a page
+  head. `test.js` asserts no built page mentions it.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.

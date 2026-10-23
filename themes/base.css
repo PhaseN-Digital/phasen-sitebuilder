@@ -43,3 +43,10 @@ main img { border-radius: var(--radius); }
 .richtext table { border-collapse: collapse; width: 100%; }
 .richtext th, .richtext td { border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); padding: 8px; text-align: left; }
 .richtext .gallery-grid figure { margin: 0; }
+.cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; background: var(--text); color: var(--background); padding: 16px 0; box-shadow: 0 -4px 16px rgb(0 0 0 / .15); }
+.cookie-banner[hidden] { display: none; }
+.cookie-banner .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
+.cookie-banner p { margin: 0; font-size: .95rem; max-width: 640px; }
+.cookie-banner a { color: inherit; }
+.cookie-banner-actions { display: flex; gap: 10px; }
+.cookie-banner .button { padding: 10px 22px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--background) 50%, transparent); }
