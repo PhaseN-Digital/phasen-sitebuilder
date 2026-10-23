@@ -42,6 +42,13 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
+- Code signing switches on per OS once that OS's certificate secret exists
+  (repo Settings > Secrets and variables > Actions); without it the
+  installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
+  Developer ID Application .p12) and `CSC_KEY_PASSWORD`, plus `APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarisation.
+  Windows: `WIN_CSC_LINK` (base64 .pfx) and `WIN_CSC_KEY_PASSWORD`; Azure
+  Trusted Signing or a cloud-HSM certificate needs extra config (#32).
 
 ## How it fits together
 
@@ -163,9 +170,9 @@ in the Publish tab.
 
 ## Known gaps
 
-- Installers are unsigned: Windows SmartScreen and macOS Gatekeeper will warn.
-  Add signing (Apple Developer ID + notarisation, a Windows code-signing
-  certificate) before giving the app to clients.
+- Installers are unsigned until the signing secrets are added (see "Commits
+  and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
+  is wired up but untested, since no certificates exist yet (#6).
 - The macOS build is Apple Silicon only (`macos-latest`). Add an Intel runner
   to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because

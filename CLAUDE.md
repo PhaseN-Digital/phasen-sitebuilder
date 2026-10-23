@@ -107,7 +107,15 @@ are not, so add them yourself.
 
 - Wrangler runs on Electron's own Node (`ELECTRON_RUN_AS_NODE`) and needs
   `lib/wrangler-argv-fix.js` preloaded. Without it, yargs misreads argv
-  under Electron.
+  under Electron. That's also why signed macOS builds rely on
+  electron-builder's defaults: hardened runtime with its stock entitlements
+  (allow-jit, allow-unsigned-executable-memory, disable-library-validation),
+  which the self-spawned Node also needs, and the RunAsNode fuse left on.
+  Don't add `electronFuses.runAsNode: false` or a narrower entitlements file.
+- Signing in `release-please.yml`'s `build` job is driven by secrets that
+  may be absent. Empty secrets must be unset before `npm run dist`
+  (electron-builder treats an empty `CSC_LINK` as set, and Windows falls back
+  to `CSC_LINK`), as the "Build installer" step does.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
