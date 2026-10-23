@@ -211,6 +211,8 @@ in the Publish tab.
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
-- `asar` is off and workerd (only used by `wrangler dev`) is bundled because
-  wrangler loads it at startup, so installs are about 600 MB unpacked.
+- `asar` is off, so installs are still about 330 MB unpacked (mostly
+  Electron). workerd's binary, which only `wrangler dev` runs, is replaced
+  with a stub at package time (`scripts/after-pack.js`), so the packaged app
+  can't run `wrangler dev`.
 - No analytics/cookie banner.
