@@ -1,0 +1,12 @@
+{
+  "label": "Elegant",
+  "about": "Warm, centred, serif type.",
+  "font": "serif",
+  "colors": {
+    "background": "#faf7f2",
+    "text": "#2d2a26",
+    "primary": "#5b4636",
+    "accent": "#b08d57"
+  },
+  "version": "1.0.0"
+}

@@ -158,6 +158,28 @@ const site = {
     assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
   }
 
+  // Theme packages: the bundled ones are valid, bad ones are caught, and a
+  // font stack instead of a font id still loads.
+  const { validateTheme, validateAll } = require("./lib/theme-validate");
+  const { loadThemes, themes, fonts } = require("./lib/themes");
+  assert.deepStrictEqual(validateAll("themes"), {});
+  assert.deepStrictEqual(Object.keys(themes), ["clean", "bold", "elegant"]);
+  assert(read("public/styles.css").includes("--font: Georgia") && read("public/styles.css").includes("text-transform"), "bold theme.css + serif font");
+  const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themes-"));
+  const pkg = (id, json, css) => {
+    fs.mkdirSync(path.join(tdir, id));
+    fs.writeFileSync(path.join(tdir, id, "theme.json"), JSON.stringify(json));
+    fs.writeFileSync(path.join(tdir, id, "theme.css"), css);
+  };
+  pkg("mono", { label: "Mono", about: "x", font: '"Courier New", monospace', colors: themes.clean.colors }, ":root { --radius: 0; }");
+  assert.deepStrictEqual(validateTheme(path.join(tdir, "mono")), []);
+  assert.strictEqual(fonts[loadThemes(tdir).mono.font].stack, '"Courier New", monospace');
+  pkg("Bad_Id", { label: "", about: "x", font: "x;}body{", colors: { background: "red" }, extra: 1 }, '@import "x.css"; a{background:url(javascript:alert(1))}</style>');
+  fs.writeFileSync(path.join(tdir, "Bad_Id", "evil.js"), "");
+  fs.writeFileSync(path.join(tdir, "Bad_Id", "preview.png"), "not a png");
+  const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
+  for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
