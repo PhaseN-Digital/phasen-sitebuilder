@@ -124,7 +124,15 @@ are not, so add them yourself.
   the release PR (`prs_created`), `regression` calls `regression.yml` on the
   PR's head sha, `release-gate` labels/comments or, for a passing patch
   (`scripts/release-bump.js`), squash-merges it with `--match-head-commit`, and
-  `release` runs release-please again to create the release. `build` runs on
+  `release` runs release-please again to create the release. The gate only
+  merges onto the main it tested (#97): the first step records main's sha,
+  and right before merging the gate re-fetches main and the PR and refuses
+  (with a PR comment, leaving it to the run the newer push queued) if main
+  moved, the PR's base isn't that main, its head isn't the tested sha or
+  doesn't contain main; it re-classifies the bump from the current versions,
+  checks main once more just before `gh pr merge`, and fails without
+  releasing if the squash isn't exactly the tested tree. Keep
+  `cancel-in-progress: false`: the queued run is what re-gates the PR. `build` runs on
   either release-please job's `release_created` and checks out the tag
   (after a gate merge `github.sha` is the pre-release commit). It all stays
   in one run because release-please's PR updates and GITHUB_TOKEN merges
