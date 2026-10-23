@@ -39,7 +39,7 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { createSite, wordpressImport, exactCopy };
+    const steps = { updateBanner, createSite, wordpressImport, exactCopy };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -48,6 +48,15 @@ app.on("browser-window-created", (_e, win) => {
     } finally {
       fs.writeFileSync(SB_RESULT, JSON.stringify(result, null, 2));
       app.quit();
+    }
+
+    // ---------- 0. update banner, from test/fakes.js's latest.json ----------
+    async function updateBanner() {
+      const text = await waitFor(() => run(`document.querySelector("#update-banner")?.textContent`));
+      check("update check: banner shows the newer version", text?.includes("Version 99.0.0 is available") && text.includes("Download"), text);
+      await shot("update-banner");
+      await clickButton("Dismiss");
+      check("update check: banner dismisses", !(await run(`Boolean(document.querySelector("#update-banner"))`)));
     }
 
     // ---------- 1. a site made in the app ----------

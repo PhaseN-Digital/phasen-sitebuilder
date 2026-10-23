@@ -11,7 +11,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor } = require("./fakes");
+const { startWordPress, startElementor, startUpdates } = require("./fakes");
 
 const ROOT = path.join(__dirname, "..");
 const ELECTRON = require("electron"); // the binary's path, when required from Node
@@ -39,12 +39,12 @@ function start(cmd, args, opts = {}) {
   return child;
 }
 
-async function driveApp(wp, el) {
+async function driveApp(wp, el, updates) {
   const result = path.join(OUT, "drive.json"), shots = path.join(OUT, "screenshots");
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url };
+  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -143,15 +143,15 @@ async function workerChecks(sites) {
 (async () => {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
-  const wp = await startWordPress(), el = await startElementor();
+  const wp = await startWordPress(), el = await startElementor(), updates = await startUpdates();
   try {
-    const sites = await driveApp(wp, el);
+    const sites = await driveApp(wp, el, updates);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {
-    await wp.close(); await el.close();
+    await wp.close(); await el.close(); await updates.close();
   }
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed in ${Math.round((Date.now() - started) / 1000)}s.`);

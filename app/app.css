@@ -30,6 +30,8 @@ a { color: var(--primary); cursor: pointer; }
 #site-list button.active { background: var(--primary); }
 .new-site { display: grid; gap: 8px; }
 .new-site input { background: #ffffff10; border-color: #ffffff30; color: #fff; }
+.update-banner { margin-top: 12px; padding: 10px; border-radius: 6px; background: #ffffff14; display: grid; gap: 8px; }
+.update-banner button:not(.primary) { background: transparent; border-color: #ffffff30; }
 .import-button { margin-top: 8px; background: transparent; border-color: #ffffff30; color: inherit; }
 .import-wrap { flex: 1; overflow: auto; padding: 40px; }
 .import { max-width: 560px; }
