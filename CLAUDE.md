@@ -194,7 +194,9 @@ are not, so add them yourself.
   `paths.privacy` to decide whether to show the Privacy page settings.
 - With `site.analyticsId` set, the Google tag must only ever be injected by
   `runtime/consent.js` after Accept (UK PECR); never add `gtag.js` to a page
-  head. `test.js` asserts no built page mentions it.
+  head. `test.js` asserts no built page mentions it. Exact copies strip the
+  original site's trackers (`TRACKERS` in `lib/mirror.js`, extend the table
+  rather than adding special cases) and self-host Google Fonts.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.

@@ -200,6 +200,17 @@ srcsets keep working. Redirects found while crawling go into Cloudflare's
 `_redirects` file, and WordPress's own 404 page is copied (with its own
 stylesheets and images).
 
+The original site's tracking is dropped from the copy, since it would report
+to the old site's accounts without the new site's visitors' consent: any
+`<script>`, `<noscript>` or `<link>` matching the `TRACKERS` table in
+`lib/mirror.js` (Google Analytics/Tag Manager, Facebook pixel, Hotjar,
+Microsoft Clarity, LinkedIn Insight, TikTok pixel, Microsoft Ads) is removed,
+and the import log says which were found. Google Fonts stylesheets
+(`fonts.googleapis.com`, in pages or CSS `@import`s) and their font files are
+downloaded into `/google-fonts/` in the copy, with Google preconnect hints
+removed, so visitors' browsers never contact Google for them. A stylesheet
+that can't be downloaded is logged, and its fonts fall back.
+
 A WordPress installed in a subfolder (`example.com/blog/`) is copied from that
 folder only: its pages keep their `/blog/...` paths, so addresses match the old
 site, and the copy's `/` redirects to `/blog/`. The folder is taken from the
@@ -329,8 +340,9 @@ in the Publish tab.
   Electron). workerd's binary, which only `wrangler dev` runs, is replaced
   with a stub at package time (`scripts/after-pack.js`), so the packaged app
   can't run `wrangler dev`.
-- Analytics consent covers only pages built from the themes, not exact-copy
-  pages (#45), and only Google Analytics.
+- Analytics consent covers only pages built from the themes, and only Google
+  Analytics. Exact-copy pages lose the original site's tracking (#45) but
+  don't get the consent banner or the site's own measurement ID yet (#103).
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
@@ -338,5 +350,5 @@ in the Publish tab.
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
   Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
-  Elementor 3 runtime-loaded scripts (#11); copied analytics tags and remote Google
-  Fonts (#45).
+  Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
+  self-hosting (#45) are tested only against a fake Elementor site.
