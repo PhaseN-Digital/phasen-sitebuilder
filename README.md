@@ -31,7 +31,8 @@ hook refuses them). Commit messages must follow [Conventional Commits](https://w
 (`feat: …`, `fix(publish): …`, `feat!: …` for breaking changes).
 release-please silently skips anything else, so the change would be missing
 from the changelog and version bump. `npm install` sets up a `commit-msg` hook
-(`.githooks/`) that checks this locally; CI checks every commit in a PR. Both
+(`.githooks/`) that checks this locally; CI checks every commit in a PR and the PR title. PRs
+are squash merged, so the PR title becomes the commit on `main`. Both
 use `scripts/check-commit.js`.
 
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
@@ -106,8 +107,15 @@ published always-pass test secret, so that one step needs internet access.
   users install nothing else. `lib/wrangler-argv-fix.js` is required for that
   to work, see the comment in it.
 - `runtime/`: the form Worker and browser script copied into every site.
-- `themes/`: `base.css` plus one small override file per theme. Colours/fonts
-  are CSS variables the user picks in the Design tab.
+- `themes/`: `base.css`, `fonts.json` (the Font choices) and one package per
+  theme, `themes/<id>/theme.json` (label, about, colours, font id or CSS font
+  stack, optional version) plus `theme.css` (small overrides on top of
+  `base.css`; CSS only, no JS or HTML). `lib/themes.js` loads them for both
+  the build and the Design tab; colours/fonts are CSS variables the user picks
+  there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
+  themes`); an identical copy is vendored into the public
+  [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
+  repo for its CI, so **keep the two copies in sync**: change both together.
 
 ## Privacy page
 

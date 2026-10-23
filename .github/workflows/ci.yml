@@ -2,6 +2,8 @@ name: ci
 
 on:
   pull_request:
+    # edited: re-check the title when it is renamed.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -20,8 +22,9 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # release-please silently skips commits it can't parse, so check every
-  # commit in a PR (merge commits are skipped), not just its title.
+  # release-please silently skips commits it can't parse. PRs are squash
+  # merged and the PR title becomes the commit on main, so check the title,
+  # plus every commit in the PR (merge commits are skipped).
   commits:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -29,4 +32,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # Title via env, never interpolated into the shell (injection).
+      - run: node scripts/check-commit.js --message "$PR_TITLE"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
       - run: node scripts/check-commit.js --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"

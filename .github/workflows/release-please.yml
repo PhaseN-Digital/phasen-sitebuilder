@@ -91,7 +91,7 @@ jobs:
             exit 0
           fi
           # --match-head-commit: only merge exactly what the regression run tested.
-          gh pr merge "$PR" --merge --match-head-commit "$SHA"
+          gh pr merge "$PR" --squash --match-head-commit "$SHA"
           echo "merged=true" >> "$GITHUB_OUTPUT"
 
   # Creates the release for a patch PR the gate just merged (the merge's push

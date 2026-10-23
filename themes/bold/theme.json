@@ -1,0 +1,12 @@
+{
+  "label": "Bold",
+  "about": "Dark, big headings, strong colour.",
+  "font": "sans",
+  "colors": {
+    "background": "#0f172a",
+    "text": "#f1f5f9",
+    "primary": "#7c3aed",
+    "accent": "#22d3ee"
+  },
+  "version": "1.0.0"
+}
