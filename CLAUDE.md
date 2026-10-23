@@ -147,6 +147,12 @@ are not, so add them yourself.
   (allow-jit, allow-unsigned-executable-memory, disable-library-validation),
   which the self-spawned Node also needs, and the RunAsNode fuse left on.
   Don't add `electronFuses.runAsNode: false` or a narrower entitlements file.
+- `scripts/after-pack.js` (electron-builder `afterPack`) swaps workerd's
+  binary for a stub file in the packaged app: wrangler needs the file to
+  exist at load time but only `wrangler dev` runs it. Don't ship anything
+  that runs `wrangler dev` from the installed app, and leave the hook's
+  unlink-before-write alone (packaged files can be hardlinks into
+  `node_modules`).
 - Signing in `release-please.yml`'s `build` job is driven by secrets that
   may be absent. Empty secrets must be unset before `npm run dist`
   (electron-builder treats an empty `CSC_LINK` as set, and Windows falls back
