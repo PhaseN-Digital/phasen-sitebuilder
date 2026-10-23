@@ -1,0 +1,8 @@
+:root { --radius: 0; }
+.site-header { background: var(--primary); border: 0; }
+.site-header .brand, .site-header nav a { color: var(--primary-text); }
+.site-header nav a:hover, .site-header nav a[aria-current] { color: var(--primary-text); text-decoration: underline; }
+h1, h2 { text-transform: uppercase; letter-spacing: .02em; }
+.hero { padding: 160px 0; }
+.hero h1 { font-size: clamp(2.6rem, 7vw, 5rem); }
+.button { text-transform: uppercase; letter-spacing: .05em; }

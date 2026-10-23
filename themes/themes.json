@@ -1,0 +1,16 @@
+{
+  "themes": {
+    "clean": { "label": "Clean", "about": "Light and simple, suits most businesses.", "font": "sans",
+      "colors": { "background": "#ffffff", "text": "#1f2933", "primary": "#1d4ed8", "accent": "#f59e0b" } },
+    "bold": { "label": "Bold", "about": "Dark, big headings, strong colour.", "font": "sans",
+      "colors": { "background": "#0f172a", "text": "#f1f5f9", "primary": "#7c3aed", "accent": "#22d3ee" } },
+    "elegant": { "label": "Elegant", "about": "Warm, centred, serif type.", "font": "serif",
+      "colors": { "background": "#faf7f2", "text": "#2d2a26", "primary": "#5b4636", "accent": "#b08d57" } }
+  },
+  "fonts": {
+    "sans": { "label": "Modern", "stack": "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif" },
+    "serif": { "label": "Classic serif", "stack": "Georgia, Cambria, \"Times New Roman\", serif" },
+    "humanist": { "label": "Friendly", "stack": "Seravek, \"Gill Sans Nova\", Ubuntu, Calibri, \"DejaVu Sans\", sans-serif" },
+    "rounded": { "label": "Rounded", "stack": "ui-rounded, \"Hiragino Maru Gothic ProN\", Quicksand, Comfortaa, \"Arial Rounded MT\", Calibri, sans-serif" }
+  }
+}

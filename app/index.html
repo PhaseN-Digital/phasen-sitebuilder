@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' preview: data: blob:; frame-src preview:; style-src 'self' 'unsafe-inline'">
+<title>PhaseN Site Builder</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand">Site Builder</div>
+  <h2>Your websites</h2>
+  <nav id="site-list"></nav>
+  <form id="new-site" class="new-site">
+    <input name="name" placeholder="New website name" required>
+    <button class="primary">Create website</button>
+  </form>
+</aside>
+<main id="main">
+  <div class="welcome">
+    <h1>Welcome</h1>
+    <p>Create a website on the left to get started. You can change everything later.</p>
+  </div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

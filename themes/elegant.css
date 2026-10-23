@@ -1,0 +1,7 @@
+:root { --radius: 2px; }
+h1, h2 { font-weight: 400; letter-spacing: .03em; }
+.site-header .wrap { flex-direction: column; justify-content: center; }
+.hero, main section h2, .site-footer { text-align: center; }
+.hero h1, .hero p { margin-inline: auto; }
+.gallery-grid img { border: 6px solid #fff; box-shadow: 0 2px 12px rgb(0 0 0 / .12); }
+.form form { margin-inline: auto; }
