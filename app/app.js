@@ -169,6 +169,8 @@ function designTab() {
     site.mirror && h("div", { className: "warn" }, "Pages copied from WordPress keep their original design. These settings only apply to pages you add here."),
     text("Website name", site, "name"),
     area("Short description", site, "description", "Shown under your site's name in Google search results."),
+    text("Google Analytics measurement ID (optional)", site, "analyticsId", "Looks like G-XXXXXXXXXX, from Admin › Data streams in Google Analytics. Visitors are asked to accept analytics cookies first, and your privacy page explains them." +
+      (site.mirror ? " Pages copied from WordPress aren't covered." : ""), { placeholder: "G-XXXXXXXXXX" }),
     h("h3", { className: "section-title" }, "Theme"),
     h("div", { className: "themes" }, Object.entries(themes).map(([id, t]) =>
       h("button", { className: `theme${site.theme === id ? " active" : ""}`, onclick: () => {
@@ -407,7 +409,7 @@ function publishTab() {
           ? `Your site will be at https://${site.domain.name}. Email records are added for you automatically.`
           : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."])),
     paths.privacy && step("5. Privacy page", Boolean(site.privacy?.owner),
-      h("p", {}, "Because your site has a form, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
+      h("p", {}, "Because your site has a form or analytics, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
         site.mirror ? "Copied pages keep their own footer, so add a link to it there if you can." : "It's linked from the footer of every page.",
         " It uses the email address form messages are sent to."),
       h("div", { className: "warn" }, "This is a starting point, not legal advice. Read it and check it matches how you handle people's information.",

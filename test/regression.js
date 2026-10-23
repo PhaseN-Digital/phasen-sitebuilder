@@ -57,9 +57,9 @@ async function driveApp(wp, el) {
 }
 
 // Builds a site the way publishing does and serves it with `wrangler dev`.
-async function serve(name, siteId) {
+async function serve(name, siteId, extra = {}) {
   const siteDir = path.join(OUT, "userdata", "sites", siteId);
-  const site = JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8"));
+  const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), ...extra };
   const dir = path.join(OUT, "built", name);
   await build(site, siteDir, dir, { workerName: site.workerName, sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com" });
   fs.writeFileSync(path.join(dir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\n`);
@@ -102,7 +102,7 @@ async function formChecks(label, { base, child }, formId, valid) {
 
 async function workerChecks(sites) {
   if (sites.created) {
-    const s = await serve("created", sites.created);
+    const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1" });
     try {
       const home = await get(s.base, "/");
       check("worker (made in app): home page", home.status === 200 && home.text.includes("Edited headline") && home.text.includes("/styles.css"), home.status);
@@ -110,6 +110,8 @@ async function workerChecks(sites) {
       check("worker (made in app): uploaded image served", img && (await get(s.base, img)).status === 200, img);
       const contact = await get(s.base, "/contact");
       check("worker (made in app): contact page with form", contact.status === 200 && contact.text.includes('data-form="contact"') && contact.text.includes('data-sitekey="REAL_SITEKEY"'), contact.status);
+      check("worker (made in app): cookie banner, no gtag before consent", home.text.includes('id="cookie-banner"') && !home.text.includes("googletagmanager")
+        && (await get(s.base, "/consent.js")).text.includes("googletagmanager"));
       check("worker (made in app): privacy page", (await get(s.base, "/privacy")).text.includes("owner@example.com"));
       const missing = await get(s.base, "/no-such-page");
       check("worker (made in app): custom 404", missing.status === 404 && missing.text.includes("Page not found"), missing.status);

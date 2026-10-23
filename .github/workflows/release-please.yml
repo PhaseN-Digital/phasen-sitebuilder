@@ -8,9 +8,97 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write # labels and comments on the release PR
+
+# One run at a time: the gate merges and releases, and must not interleave
+# with another run updating the same release PR.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
 
 jobs:
   release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+      bump: ${{ steps.pr.outputs.bump }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # prs_created is only true when the release PR was opened or updated in
+      # this run, so an unchanged PR isn't re-gated.
+      - if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v7
+      - if: ${{ steps.release.outputs.prs_created == 'true' }}
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.release.outputs.pr }}
+        run: |
+          number=$(jq -r .number <<<"$PR")
+          sha=$(gh pr view "$number" --json headRefOid -q .headRefOid)
+          git fetch -q --depth 1 origin "$sha"
+          bump=$(node scripts/release-bump.js "$(jq -r '."."' .release-please-manifest.json)" "$(git show "$sha:.release-please-manifest.json" | jq -r '."."')")
+          echo "Release PR #$number at $sha is a $bump release"
+          { echo "number=$number"; echo "sha=$sha"; echo "bump=$bump"; } >> "$GITHUB_OUTPUT"
+
+  # Release gate (#47): the regression suite runs against the release PR's
+  # head. Patch releases that pass are merged here and released by the
+  # `release` job below; minor/major releases wait for the maintainer to merge
+  # them. This has to happen in this run: release-please's PR updates and a
+  # GITHUB_TOKEN merge don't trigger other workflow runs.
+  regression:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.pr_sha != '' }}
+    uses: ./.github/workflows/regression.yml
+    with:
+      ref: ${{ needs.release-please.outputs.pr_sha }}
+
+  release-gate:
+    needs: [release-please, regression]
+    if: ${{ !cancelled() && needs.release-please.outputs.pr_sha != '' }}
+    runs-on: ubuntu-latest
+    outputs:
+      merged: ${{ steps.gate.outputs.merged }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ needs.release-please.outputs.pr_number }}
+      SHA: ${{ needs.release-please.outputs.pr_sha }}
+      BUMP: ${{ needs.release-please.outputs.bump }}
+      RESULT: ${{ needs.regression.result }}
+    steps:
+      - id: gate
+        run: |
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "$RESULT" != success ]; then
+            gh label create regression-failed --color d73a4a --description "Release PR failed the regression suite" --force
+            gh pr edit "$PR" --add-label regression-failed
+            gh pr comment "$PR" --body "Regression suite result: **$RESULT** on $SHA ([run]($run)). Not merging."
+            exit 0
+          fi
+          gh pr edit "$PR" --remove-label regression-failed 2>/dev/null || true
+          if [ "$BUMP" != patch ]; then
+            gh label create needs-approval --color fbca04 --description "Minor/major release: the maintainer merges it" --force
+            gh pr edit "$PR" --add-label needs-approval
+            gh pr comment "$PR" --body "Regression suite passed on $SHA ([run]($run)). This is a **$BUMP** release, so it waits for the maintainer to merge it."
+            exit 0
+          fi
+          # --match-head-commit: only merge exactly what the regression run tested.
+          gh pr merge "$PR" --merge --match-head-commit "$SHA"
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+  # Creates the release for a patch PR the gate just merged (the merge's push
+  # to main doesn't start a new run, see above).
+  release:
+    needs: release-gate
+    if: ${{ needs.release-gate.outputs.merged == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -30,9 +118,11 @@ jobs:
   # That includes CPU arch: macos-latest is Apple Silicon (arm64 dmg) and
   # macos-15-intel is Intel (x64 dmg); electron-builder builds for the host arch.
   # A manual dispatch builds installers as run artifacts without a release.
+  # The release comes from either release-please run: a maintainer-merged
+  # release PR (first job) or a patch the gate merged (`release`).
   build:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch' }}
+    needs: [release-please, release]
+    if: ${{ !cancelled() && needs.release-please.result == 'success' && (needs.release-please.outputs.release_created == 'true' || needs.release.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     strategy:
       matrix:
         os: [windows-latest, macos-latest, macos-15-intel]
@@ -40,8 +130,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name || needs.release.outputs.tag_name }}
     steps:
+      # Build the tag: after a gate merge, github.sha is still the pre-release commit.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -88,9 +183,9 @@ jobs:
             dist/*.exe
             dist/*.dmg
       - name: Attach installer to the release
-        if: ${{ needs.release-please.outputs.release_created == 'true' }}
+        if: ${{ env.TAG != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" dist/*.exe dist/*.dmg --clobber
+          gh release upload "$TAG" dist/*.exe dist/*.dmg --clobber

@@ -15,7 +15,7 @@ process. Read it before changing anything substantial.
 ```
 npm install      # also points git at .githooks (commit-msg check)
 npm start        # run the app
-npm test         # builder/form-parser self-check + syntax check of every script
+npm test         # builder/form-parser/subfolder-copy self-check + syntax check of every script
 npm run test:regression  # end-to-end: real app under xvfb + built sites under wrangler dev
 npm run dist     # installer for the current OS
 ```
@@ -89,9 +89,13 @@ are not, so add them yourself.
   `main`. The same applies to release-please's own release PR: merge it, don't
   push version bumps by hand.
 - **Every change needs the maintainer's review.** Open the PR, wait for CI,
-  move the issue to Testing, and stop. Never merge a PR yourself, including
-  release-please's, unless you are the `release-manager` agent and the
-  maintainer has authorised merging for the current session.
+  move the issue to Testing, and stop. Never merge a PR yourself unless you
+  are the `release-manager` agent and the maintainer has authorised merging
+  for the current session.
+- **No agent ever merges release-please's release PR.** Patch releases are
+  merged automatically by `release-please.yml`'s gate once the regression
+  suite passes; minor/major releases (`needs-approval` label) are the
+  maintainer's to merge.
 - **Agents** (`.claude/agents/`): when working through issues, run one fresh
   `issue-worker` per issue (it implements, tests and opens a PR, but never
   merges) and hand ready PRs to the `release-manager`. The release manager
@@ -113,6 +117,17 @@ are not, so add them yourself.
   installers. Builds deliberately live in that workflow, not an
   `on: release`/tag workflow: release-please's GITHUB_TOKEN tags can't
   trigger other workflows, so a separate one would never run.
+- Release gate (same workflow, #47): when release-please opens or updates
+  the release PR (`prs_created`), `regression` calls `regression.yml` on the
+  PR's head sha, `release-gate` labels/comments or, for a passing patch
+  (`scripts/release-bump.js`), merges it with `--match-head-commit`, and
+  `release` runs release-please again to create the release. `build` runs on
+  either release-please job's `release_created` and checks out the tag
+  (after a gate merge `github.sha` is the pre-release commit). It all stays
+  in one run because release-please's PR updates and GITHUB_TOKEN merges
+  don't start new workflow runs. A manual dispatch still builds installers
+  without a release (it gates the release PR too if release-please updates
+  it).
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
@@ -132,6 +147,12 @@ are not, so add them yourself.
   (allow-jit, allow-unsigned-executable-memory, disable-library-validation),
   which the self-spawned Node also needs, and the RunAsNode fuse left on.
   Don't add `electronFuses.runAsNode: false` or a narrower entitlements file.
+- `scripts/after-pack.js` (electron-builder `afterPack`) swaps workerd's
+  binary for a stub file in the packaged app: wrangler needs the file to
+  exist at load time but only `wrangler dev` runs it. Don't ship anything
+  that runs `wrangler dev` from the installed app, and leave the hook's
+  unlink-before-write alone (packaged files can be hardlinks into
+  `node_modules`).
 - Signing in `release-please.yml`'s `build` job is driven by secrets that
   may be absent. Empty secrets must be unset before `npm run dist`
   (electron-builder treats an empty `CSC_LINK` as set, and Windows falls back
@@ -147,8 +168,12 @@ are not, so add them yourself.
   (`applyCopyEdit`), or undo/revert will miss it.
 - `pagePaths` in `lib/build.js` always reserves the generated privacy page's
   slug and returns it under the `privacy` key (page ids are hex, so it can't
-  clash); `build()` drops it when the site has no forms, and the editor uses
+  clash); `build()` drops it when the site has no forms and no valid
+  analytics ID, and the editor uses
   `paths.privacy` to decide whether to show the Privacy page settings.
+- With `site.analyticsId` set, the Google tag must only ever be injected by
+  `runtime/consent.js` after Accept (UK PECR); never add `gtag.js` to a page
+  head. `test.js` asserts no built page mentions it.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
