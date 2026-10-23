@@ -26,7 +26,11 @@ app.on("browser-window-created", (_e, win) => {
     const frame = () => win.webContents.mainFrame.frames[0];
     // Times out: a call into a frame that's being replaced by a reload can otherwise never settle.
     const inFrame = (js) => Promise.race([frame().executeJavaScript(js), sleep(5000).then(() => { throw new Error("preview frame didn't answer"); })]);
-    const shot = async (name) => fs.writeFileSync(path.join(SB_SHOTS, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    // Screenshots are diagnostics: capturePage can throw (UnknownVizError on CI runners, #87), so log and never fail a check.
+    const shot = async (name) => {
+      try { fs.writeFileSync(path.join(SB_SHOTS, `${name}.png`), (await win.webContents.capturePage()).toPNG()); }
+      catch (e) { console.log(`screenshot ${name} skipped: ${e.message || e}`); }
+    };
     // Polls fn until it returns something truthy; returns the last value either way.
     const waitFor = async (fn, ms = 15000) => {
       let v;
@@ -44,7 +48,7 @@ app.on("browser-window-created", (_e, win) => {
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
-        await shot(name).catch(() => {});
+        await shot(name);
       }
     } finally {
       fs.writeFileSync(SB_RESULT, JSON.stringify(result, null, 2));
@@ -247,7 +251,7 @@ app.on("browser-window-created", (_e, win) => {
       check("copy link: undone everywhere", all.every((f) => aboutLinks(now[f]) === '<a href="/about/">About</a> <a href="/about/">About</a>'), all.map((f) => aboutLinks(now[f])));
       await clickAbout();
       await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
-      await shot("copy-link").catch(() => {});
+      await shot("copy-link");
       await setLink("https://example.com/about-acme"); await settle();
       check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
     }
