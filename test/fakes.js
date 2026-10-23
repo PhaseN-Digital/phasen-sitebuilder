@@ -137,4 +137,70 @@ async function startUpdates() {
   return { ...site, latestUrl: `${site.url}/latest.json` };
 }
 
-module.exports = { startWordPress, startElementor, startSubfolder, startUpdates, PNG };
+// A gzipped tar like GitHub's tarballs: everything under one top folder,
+// pax header for long paths. files: { "path": string|Buffer }, "dir/" for folders.
+function tarball(files) {
+  const zlib = require("node:zlib");
+  const block = (name, size, type) => {
+    const h = Buffer.alloc(512);
+    h.write(name, 0, 100); h.write("0000644\0", 100); h.write(size.toString(8).padStart(11, "0") + "\0", 124);
+    h.write("00000000000\0", 136); h.write("        ", 148); h.write(type, 156); h.write("ustar\0" + "00", 257);
+    h.write(h.reduce((a, b) => a + b, 0).toString(8).padStart(6, "0") + "\0 ", 148);
+    return h;
+  };
+  const pad = (b) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512)]);
+  const parts = [];
+  for (const [name, body] of Object.entries({ "Acme-repo-abc123/": "", ...Object.fromEntries(Object.entries(files).map(([k, v]) => [`Acme-repo-abc123/${k}`, v])) })) {
+    const data = Buffer.from(body);
+    if (name.length > 99) {
+      const rec = ` path=${name}\n`;
+      let len = rec.length; len += String(len + String(len).length).length;
+      const pax = Buffer.from(`${len}${rec}`);
+      parts.push(block("pax", pax.length, "x"), pad(pax));
+    }
+    const dir = name.endsWith("/");
+    parts.push(block(name.slice(0, 99), dir ? 0 : data.length, dir ? "5" : "0"), pad(data));
+  }
+  return zlib.gzipSync(Buffer.concat([...parts, Buffer.alloc(1024)]));
+}
+
+// GitHub's REST API for theme sources (#58), plus the separate download host
+// its tarball endpoint redirects to. PhaseN-Digital/phasen-sitebuilder-themes
+// is public; acme/private-themes answers 404 (like GitHub) unless sent
+// GITHUB_TOKEN. `requests` records [host, path, authorization] for each request.
+const GITHUB_TOKEN = "github_pat_fake";
+const PRIVATE_FOLDER = `site/${"long-folder-name-".repeat(5)}themes`;
+const themeFiles = (id, label, extra = {}) => ({
+  [`${id}/theme.json`]: JSON.stringify({ label, about: `${label} test theme.`, font: '"Courier New", monospace', colors: { background: "#101010", text: "#fafafa", primary: "#ff3366", accent: "#33ccff" }, version: "1.0.0" }),
+  [`${id}/theme.css`]: `/* ${id}-theme-css */ h1 { letter-spacing: 0.1em; }`,
+  ...extra,
+});
+async function startGitHub() {
+  const requests = [];
+  const repos = {
+    "PhaseN-Digital/phasen-sitebuilder-themes": () => ({
+      "README.md": "x", ".github/workflows/ci.yml": "x",
+      ...Object.fromEntries(Object.entries({ ...themeFiles("retro", "Retro", { "retro/preview.png": PNG }), ...themeFiles("clean", "Clean"), ...themeFiles("broken", "Broken", { "broken/evil.js": "alert(1)" }) }).map(([k, v]) => [`themes/${k}`, v])),
+    }),
+    // In a folder whose paths are too long for a plain tar header.
+    "acme/private-themes": (authed) => authed && Object.fromEntries(Object.entries(themeFiles("night", "Night", { "night/preview.png": PNG })).map(([k, v]) => [`${PRIVATE_FOLDER}/${k}`, v])),
+  };
+  const downloads = await listen((req, res) => {
+    requests.push([downloads.host, req.url, req.headers.authorization || null]);
+    const files = repos[decodeURIComponent(req.url.slice(1))]?.(true);
+    if (!files) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": "application/x-gzip" });
+    res.end(tarball(files));
+  });
+  const api = await listen((req, res) => {
+    requests.push([api.host, req.url, req.headers.authorization || null]);
+    const m = /^\/repos\/([^/]+\/[^/]+)\/tarball(\/.*)?$/.exec(req.url);
+    if (m?.[1] === "limited/repo") { res.writeHead(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }); return res.end(); }
+    if (!m || !repos[m[1]]?.(req.headers.authorization === `Bearer ${GITHUB_TOKEN}`)) { res.writeHead(404, { "content-type": "application/json" }); return res.end('{"message":"Not Found"}'); }
+    res.writeHead(302, { location: `${downloads.url}/${encodeURIComponent(m[1])}` });
+    res.end();
+  });
+  return { ...api, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, close: () => Promise.all([api.close(), downloads.close()]) };
+}
+
+module.exports = { startWordPress, startElementor, startSubfolder, startUpdates, startGitHub, tarball, PNG };
