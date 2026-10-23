@@ -203,9 +203,10 @@ app.on("browser-window-created", (_e, win) => {
       check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
 
       // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
+      // Find and click in one poll: a separate click call can land on a frame the undo reload is replacing and hang.
+      const clickAbout = () => waitFor(() => inFrame(`{ const a = document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'); if (a) { a.click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); } Boolean(a) }`));
       const aboutLinks = (html) => (html.match(/<a href="([^"]*)">About<\/a>/g) || []).join(" ");
-      await waitFor(() => inFrame(`Boolean(document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'))`));
-      await inFrame(`document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]').click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); 0`);
+      await clickAbout();
       const shown = await waitFor(() => run(`document.querySelector(".copy-link input")?.value`), 5000);
       check("copy link: panel shows the current target", shown === "/about/", shown);
       const setLink = (v) => run(`{ const i = document.querySelector(".copy-link input"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("change")); 0 }`);
@@ -219,8 +220,7 @@ app.on("browser-window-created", (_e, win) => {
       await clickButton("Undo last change"); await settle();
       now = grab();
       check("copy link: undone everywhere", all.every((f) => aboutLinks(now[f]) === '<a href="/about/">About</a> <a href="/about/">About</a>'), all.map((f) => aboutLinks(now[f])));
-      await waitFor(() => inFrame(`Boolean(document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'))`));
-      await inFrame(`document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]').click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); 0`);
+      await clickAbout();
       await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
       await shot("copy-link").catch(() => {});
       await setLink("https://example.com/about-acme"); await settle();
