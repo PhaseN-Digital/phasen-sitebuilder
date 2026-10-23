@@ -24,7 +24,8 @@ app.on("browser-window-created", (_e, win) => {
   win.webContents.once("did-finish-load", async () => {
     const run = (js) => win.webContents.executeJavaScript(js);
     const frame = () => win.webContents.mainFrame.frames[0];
-    const inFrame = (js) => frame().executeJavaScript(js);
+    // Times out: a call into a frame that's being replaced by a reload can otherwise never settle.
+    const inFrame = (js) => Promise.race([frame().executeJavaScript(js), sleep(5000).then(() => { throw new Error("preview frame didn't answer"); })]);
     const shot = async (name) => fs.writeFileSync(path.join(SB_SHOTS, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     // Polls fn until it returns something truthy; returns the last value either way.
     const waitFor = async (fn, ms = 15000) => {
@@ -39,7 +40,7 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { createSite, wordpressImport, elementorEditable, exactCopy };
+    const steps = { updateBanner, createSite, wordpressImport, elementorEditable, exactCopy };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -48,6 +49,15 @@ app.on("browser-window-created", (_e, win) => {
     } finally {
       fs.writeFileSync(SB_RESULT, JSON.stringify(result, null, 2));
       app.quit();
+    }
+
+    // ---------- 0. update banner, from test/fakes.js's latest.json ----------
+    async function updateBanner() {
+      const text = await waitFor(() => run(`document.querySelector("#update-banner")?.textContent`));
+      check("update check: banner shows the newer version", text?.includes("Version 99.0.0 is available") && text.includes("Download"), text);
+      await shot("update-banner");
+      await clickButton("Dismiss");
+      check("update check: banner dismisses", !(await run(`Boolean(document.querySelector("#update-banner"))`)));
     }
 
     // ---------- 1. a site made in the app ----------
@@ -155,8 +165,9 @@ app.on("browser-window-created", (_e, win) => {
 
       const home = read(path.join(M, "index.html"));
       const form = s.forms[0];
-      check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false]]), s.forms);
+      check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false], ["form_fields[services][]", "choice", false], ["form_fields[other]", "text", false]]), s.forms);
       check("exact copy: form re-wired", form && home.includes(`data-form="${form.id}"`) && !home.includes("admin-ajax") && home.includes("cf-turnstile") && home.includes('name="website"') && home.includes("/form.js"));
+      check("exact copy: hidden branch loses only its required attribute", home.includes('placeholder="Other, not required">'));
       check("exact copy: search form left alone", /<form role="search"(?![^>]*data-form)/.test(home));
 
       // Copy vs structure tagging.
@@ -215,6 +226,30 @@ app.on("browser-window-created", (_e, win) => {
       check("revert: save state", (await run(`document.querySelector(".save-state").textContent`)) === "Page reverted");
       await clickButton("Undo last change"); await settle();
       check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
+
+      // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
+      // Find and click in one poll: a separate click call can land on a frame the undo reload is replacing and hang.
+      const clickAbout = () => waitFor(() => inFrame(`{ const a = document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'); if (a) { a.click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); } Boolean(a) }`));
+      const aboutLinks = (html) => (html.match(/<a href="([^"]*)">About<\/a>/g) || []).join(" ");
+      await clickAbout();
+      const shown = await waitFor(() => run(`document.querySelector(".copy-link input")?.value`), 5000);
+      check("copy link: panel shows the current target", shown === "/about/", shown);
+      const setLink = (v) => run(`{ const i = document.querySelector(".copy-link input"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("change")); 0 }`);
+      const beforeBad = grab();
+      for (const bad of ["javascript:alert(1)", "/not-a-page/", "ftp://x.example/"]) { await setLink(bad); await settle(); }
+      check("copy link: invalid targets refused", /Use a web address/.test(await run(`document.querySelector(".copy-link .error")?.textContent`)) && JSON.stringify(grab()) === JSON.stringify(beforeBad));
+      await setLink("/contact-us/"); await settle();
+      now = grab();
+      check("copy link: site-wide change on every page", all.every((f) => aboutLinks(now[f]) === '<a href="/contact-us/">About</a> <a href="/contact-us/">About</a>'), all.map((f) => aboutLinks(now[f])));
+      check("copy link: preview updated", await waitFor(() => inFrame(`document.querySelectorAll('a[href="/about/"]').length === 0`), 3000));
+      await clickButton("Undo last change"); await settle();
+      now = grab();
+      check("copy link: undone everywhere", all.every((f) => aboutLinks(now[f]) === '<a href="/about/">About</a> <a href="/about/">About</a>'), all.map((f) => aboutLinks(now[f])));
+      await clickAbout();
+      await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
+      await shot("copy-link").catch(() => {});
+      await setLink("https://example.com/about-acme"); await settle();
+      check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
     }
   });
 });

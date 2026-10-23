@@ -13,8 +13,9 @@ npm run test:regression   # end-to-end suite, see "Regression tests"
 npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 ```
 
-Installers for both platforms are attached to each GitHub release, see
-"Commits and releases".
+Users download installers from the public
+[phasen-sitebuilder-releases](https://github.com/PhaseN-Digital/phasen-sitebuilder-releases/releases/latest)
+repo (this one is private), see "Commits and releases".
 
 ## Roadmap and issues
 
@@ -58,6 +59,22 @@ use `scripts/check-commit.js`.
   `regression-failed` label and a comment, and is never merged. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
+- Public downloads and update check (#37): once `build` succeeds for a
+  release, `publish-installers` copies the installers and a generated
+  `latest.json` (`version`, `notes` URL, `downloads` keyed
+  `<platform>-<arch>`: `win32-x64`, `darwin-arm64`, `darwin-x64`) to a
+  release with the same tag in the public
+  `PhaseN-Digital/phasen-sitebuilder-releases` repo, with this release's
+  changelog section as its notes. No source goes there. It authenticates
+  with the `RELEASES_TOKEN` secret (fine-grained, Contents read/write on
+  that repo only). The app fetches
+  `releases/latest/download/latest.json` from it at startup, at most once a
+  day (`updateCheck` in settings.json), and if that version is newer shows a
+  dismissible "Version X is available" banner in the sidebar whose Download
+  button opens the installer for this platform in the browser (only https
+  github.com URLs). Offline or any error, it stays silent and tries again
+  next time. `SITEBUILDER_UPDATE_URL` overrides the URL in unpackaged runs
+  only (the regression suite uses it).
 - Code signing switches on per OS once that OS's certificate secret exists
   (repo Settings > Secrets and variables > Actions); without it the
   installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
@@ -72,7 +89,8 @@ use `scripts/check-commit.js`.
 checks the whole app end to end with no accounts, against fake sites in
 `test/fakes.js`:
 
-- the real app, driven headlessly by `test/drive.js`: create a site, preview,
+- the real app, driven headlessly by `test/drive.js`: the update banner
+  (from a fake `latest.json`), create a site, preview,
   edit + rebuild, theme switch, image upload; editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
   Elementor site (kit colours/font, header logo); exact copy of a fake
@@ -173,8 +191,15 @@ so far (`test/fakes.js`).
 POST forms are re-wired in place, keeping their markup and styling: the
 questions are read from the form's fields, and the form gets a `data-form`
 id, honeypot and Turnstile widget. The same form on many pages (a footer
-newsletter form) becomes one form. Log-in forms (anything with a password
-field) are left alone. `runtime/form.js` listens in the capture
+newsletter form) becomes one form. Log-in, search, cart/checkout and comment
+forms (by password field, class or WordPress field names) are left alone.
+Plugin honeypot fields (Akismet, Fluent Forms) aren't questions. Fields
+inside an element hidden when the page loads (conditional branches: inline
+`display:none`, `hidden`, Fluent's `has-conditions`, Gravity/Divi
+`data-conditional-logic`) aren't required, in the Worker or in the markup.
+Checkboxes, radios and selects are `choice` questions; a ticked checkbox
+group or multi-select is posted as an array and joined in the email.
+`runtime/form.js` listens in the capture
 phase so the page builder's own submit handler (which would post to
 WordPress) never runs. Turnstile key and thank-you message are filled in at
 build time.
@@ -190,6 +215,11 @@ all of them. Everything else gets a per-page `p-` key. Layout elements are
 never tagged. `app/copy-edit-frame.js` is injected into the preview to make
 tagged elements editable. Edits are written into the stored HTML (not the
 live DOM, which page scripts have modified), and the build strips the tags.
+Clicking a tagged text element that is (or is inside, or holds exactly one)
+link also shows a Link panel for changing where it points, applied like any
+other edit (site-wide for `s-` keys, undoable). Targets must be an http(s)
+address, `mailto:`, `tel:` or a copied page's path. Links on images (e.g. a
+logo) can't be changed yet.
 Before a page's file is first edited, its HTML is kept in
 `sites/<id>/mirror-original/`, for "Revert this page to the original" (which
 also drops that page's share of site-wide edits; they stay on other pages).
@@ -257,6 +287,10 @@ in the Publish tab.
 
 ## Known gaps
 
+- Updates are notify-only: the user downloads and runs the new installer
+  themselves. Silent auto-update (electron-updater) needs signed macOS
+  builds (#6). Dismissing the banner lasts until the app restarts.
+
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
@@ -270,8 +304,8 @@ in the Publish tab.
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
   application password), but not yet against a client site. Known problems
-  from that: re-wired forms with conditional or checkbox-group fields, and
-  cart/comment forms (#22); editable
-  import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
+  from that: conditional-field detection in re-wired forms is built from
+  plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
+  Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); copied analytics tags and remote Google
   Fonts (#45).

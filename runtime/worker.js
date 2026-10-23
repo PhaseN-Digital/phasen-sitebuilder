@@ -6,7 +6,7 @@ import forms from "./forms.json";
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const RESEND_URL = "https://api.resend.com/emails";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_LENGTHS = { text: 200, email: 254, tel: 40, textarea: 5000 };
+const MAX_LENGTHS = { text: 200, email: 254, tel: 40, textarea: 5000, choice: 1000 };
 
 export default {
   async fetch(request, env) {
@@ -84,7 +84,9 @@ export default {
   },
 };
 
+// Checkbox groups and multi-selects arrive as arrays of strings: joined, never just the last one.
 function clean(value) {
+  if (Array.isArray(value)) return value.map((v) => (typeof v === "string" ? v.trim() : "")).filter(Boolean).join(", ");
   return typeof value === "string" ? value.trim() : "";
 }
 

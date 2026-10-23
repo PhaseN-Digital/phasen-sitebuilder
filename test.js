@@ -83,8 +83,17 @@ const site = {
     <input type="email" name="f[email]" placeholder="Email" aria-required="true"><input type="radio" name="pick" value="a"><input type="radio" name="pick" value="b"><textarea name="msg"></textarea><button type="submit">Go</button>`), [
     { id: "f[name]", label: "Name", type: "text", required: true },
     { id: "f[email]", label: "Email", type: "email", required: true },
-    { id: "pick", label: "pick", type: "text", required: false },
+    { id: "pick", label: "pick", type: "choice", required: false },
     { id: "msg", label: "msg", type: "textarea", required: false },
+  ]);
+  // Conditional branches (hidden at first) aren't required; checkbox groups are one question; plugin honeypots aren't questions (#22).
+  assert.deepStrictEqual(formFields(`<div class="ff-el-group has-conditions"><p><input name="why" required></div>
+    <div data-conditional-logic="visible"><input name="phone" type="tel" required></div><label for="c">Colours</label><span><input type="checkbox" name="c[]" id="c-0" required><label for="c-0">Red</label></span><input type="checkbox" name="c[]" id="c-1">
+    <select name="size" multiple><option>S</option></select><textarea name="ak_hp_textarea"></textarea><input name="item_1__fluent_sf">`), [
+    { id: "why", label: "why", type: "text", required: false },
+    { id: "phone", label: "phone", type: "tel", required: true },
+    { id: "c[]", label: "Colours", type: "choice", required: true },
+    { id: "size", label: "size", type: "choice", required: false },
   ]);
   // Builder detection looks for the builder's markup, not just its name (an image called Elementor-Logo.svg).
   const { detectBuilder } = require("./lib/mirror");
@@ -186,6 +195,20 @@ const site = {
   fs.writeFileSync(path.join(tdir, "Bad_Id", "preview.png"), "not a png");
   const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
   for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
+
+  // Update check (#37): version compare and installer pick.
+  const { isNewer, pickDownload } = require("./lib/update");
+  for (const [a, b] of [["0.4.0", "0.3.9"], ["v1.0.0", "0.10.0"], ["0.10.0", "0.9.0"], ["1.2.10", "1.2.9"]]) assert(isNewer(a, b), `${a} > ${b}`);
+  for (const [a, b] of [["0.3.0", "0.3.0"], ["0.9.0", "0.10.0"], ["1.0", "0.1.0"], ["x.y.z", "0.1.0"], [undefined, "0.1.0"], ["2.0.0", "1.0.0.0"]]) assert(!isNewer(a, b), `${a} !> ${b}`);
+  const gh = "https://github.com/PhaseN-Digital/phasen-sitebuilder-releases/releases/download/v1/";
+  const downloads = { "win32-x64": gh + "a.exe", "darwin-arm64": gh + "b.dmg", "darwin-x64": "http://github.com/c.dmg", "linux-x64": "https://evil.example/github.com/d" };
+  assert.strictEqual(pickDownload(downloads, "win32", "x64"), gh + "a.exe");
+  assert.strictEqual(pickDownload(downloads, "win32", "arm64"), gh + "a.exe");
+  assert.strictEqual(pickDownload(downloads, "darwin", "arm64"), gh + "b.dmg");
+  assert.strictEqual(pickDownload(downloads, "darwin", "x64"), null, "http refused");
+  assert.strictEqual(pickDownload(downloads, "linux", "x64"), null, "other hosts refused");
+  assert.strictEqual(pickDownload({ "darwin-x64": "https://github.com.evil.example/x" }, "darwin", "x64"), null);
+  assert.strictEqual(pickDownload(undefined, "darwin", "arm64"), null);
 
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {

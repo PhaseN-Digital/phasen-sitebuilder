@@ -131,6 +131,15 @@ are not, so add them yourself.
   don't start new workflow runs. A manual dispatch still builds installers
   without a release (it gates the release PR too if release-please updates
   it).
+- `publish-installers` (#37) copies each release's installers plus a
+  generated `latest.json` to the same tag in the public
+  `PhaseN-Digital/phasen-sitebuilder-releases` repo using `RELEASES_TOKEN`
+  (only on that one step). The app's update check (`lib/update.js`,
+  `update:check` in main.js) reads `releases/latest/download/latest.json`
+  there, so `latest.json`'s shape (`version`, `notes`, `downloads` keyed
+  `<platform>-<arch>`) and the asset names in it are a contract with
+  installed apps: change both sides together. Never copy source or private
+  links beyond the changelog text to that repo.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
@@ -160,6 +169,9 @@ are not, so add them yourself.
   may be absent. Empty secrets must be unset before `npm run dist`
   (electron-builder treats an empty `CSC_LINK` as set, and Windows falls back
   to `CSC_LINK`), as the "Build installer" step does.
+- The update banner's Download URL must stay limited to https github.com
+  (`pickDownload`), and `SITEBUILDER_UPDATE_URL` must stay ignored when
+  `app.isPackaged`.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.

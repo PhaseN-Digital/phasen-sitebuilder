@@ -12,6 +12,15 @@ window.onTurnstileLoad = () => {
   });
 };
 
+// Ticked checkboxes and multi-selects share a name: send those as arrays, not just the last value.
+function formData(form) {
+  const data = {};
+  for (const [name, value] of new FormData(form)) {
+    if (typeof value === "string") data[name] = name in data ? [].concat(data[name], value) : value;
+  }
+  return data;
+}
+
 // Listens on window in the capture phase so it runs before, and stops, any
 // handler a copied WordPress page brings along (Elementor, Contact Form 7…)
 // that would otherwise also try to post to WordPress.
@@ -33,7 +42,7 @@ window.addEventListener("submit", async (event) => {
     const response = await fetch(`/api/forms/${form.dataset.form}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      body: JSON.stringify(formData(form)),
     });
     const result = await response.json();
     if (!result.ok) throw new Error(result.error);
