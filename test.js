@@ -203,6 +203,40 @@ const site = {
   const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
   for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
 
+  // Theme sources (#58), against the fake GitHub API in test/fakes.js.
+  const ts = require("./lib/theme-sources");
+  assert.deepStrictEqual(ts.parseSource("https://github.com/Acme/Themes.x/"), { owner: "Acme", repo: "Themes.x", folder: null, branch: null, spec: "Acme/Themes.x" });
+  assert.strictEqual(ts.parseSource(" acme/t/a/b@feature/x ").spec, "acme/t/a/b@feature/x");
+  for (const bad of ["acme", "acme/t x", "../x", "acme/t/../y", "a/b?c"]) assert.throws(() => ts.parseSource(bad), /owner\/repo/, bad);
+  const fakeGh = await require("./test/fakes").startGitHub();
+  try {
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sb-theme-cache-"));
+    const opts = { cacheRoot, api: fakeGh.url };
+    const pub = await ts.fetchSource(ts.PUBLIC_SOURCE, opts);
+    assert.deepStrictEqual(Object.keys(pub.themes).sort(), ["broken", "clean", "retro"]);
+    assert.deepStrictEqual(pub.themes.retro.errors, []);
+    assert(pub.themes.retro.preview.startsWith("data:image/png;base64,") && pub.themes.retro.label === "Retro");
+    assert(pub.themes.broken.errors.join().includes("evil.js") && !pub.themes.broken.label);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, opts), /private repository, add an access token/);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /token has Contents/);
+    await assert.rejects(ts.fetchSource("limited/repo", opts), /download limit/);
+    await assert.rejects(ts.fetchSource(`${ts.PUBLIC_SOURCE}/nope`, opts), /no theme folders in nope\//);
+    fakeGh.requests.length = 0;
+    const priv = await ts.fetchSource(fakeGh.privateSpec, { ...opts, token: fakeGh.token });
+    assert.deepStrictEqual(Object.keys(priv.themes), ["night"]);
+    assert.deepStrictEqual(priv.themes.night.errors, []);
+    assert.deepStrictEqual(fakeGh.requests.map(([host, , auth]) => [host === fakeGh.host, auth]), [[true, `Bearer ${fakeGh.token}`], [false, null]], "token only sent to the API host");
+    await assert.rejects(ts.installTheme(ts.PUBLIC_SOURCE, "broken", cacheRoot, siteDir), /isn't available/);
+    await ts.installTheme(fakeGh.privateSpec, "night", cacheRoot, siteDir);
+    fs.rmSync(cacheRoot, { recursive: true }); // builds never need the cache
+    const out2 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themed-"));
+    await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
+    const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
+    assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+  } finally {
+    await fakeGh.close();
+  }
+
   // Update check (#37): version compare and installer pick.
   const { isNewer, pickDownload } = require("./lib/update");
   for (const [a, b] of [["0.4.0", "0.3.9"], ["v1.0.0", "0.10.0"], ["0.10.0", "0.9.0"], ["1.2.10", "1.2.9"]]) assert(isNewer(a, b), `${a} > ${b}`);

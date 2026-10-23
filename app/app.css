@@ -105,3 +105,8 @@ a { color: var(--primary); cursor: pointer; }
 .swatch { width: 22px; height: 14px; border: 2px dashed; border-radius: 3px; flex: none; }
 .swatch.page { border-color: #2563eb; }
 .swatch.site { border-color: #ea580c; }
+.theme-preview { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 4px; margin-bottom: 6px; display: block; }
+.sources { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
+.sources summary { cursor: pointer; font-weight: 600; }
+.source { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.source .hint, .source .error { margin: 4px 0 0; }

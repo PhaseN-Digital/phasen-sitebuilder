@@ -121,6 +121,7 @@ async function openSite(id) {
   pageId = site.pages[0].id;
   formId = site.forms[0]?.id;
   paths = await call("sites:save", site);
+  THEMES = await call("themes"); // the build registers a theme source's font
   await loadSites(id);
   renderEditor();
 }
@@ -172,22 +173,106 @@ function designTab() {
     text("Google Analytics measurement ID (optional)", site, "analyticsId", "Looks like G-XXXXXXXXXX, from Admin › Data streams in Google Analytics. Visitors are asked to accept analytics cookies first, and your privacy page explains them." +
       (site.mirror ? " Pages copied from WordPress aren't covered." : ""), { placeholder: "G-XXXXXXXXXX" }),
     h("h3", { className: "section-title" }, "Theme"),
-    h("div", { className: "themes" }, Object.entries(themes).map(([id, t]) =>
-      h("button", { className: `theme${site.theme === id ? " active" : ""}`, onclick: () => {
-        if (site.theme === id) return;
-        Object.assign(site, { theme: id, colors: { ...t.colors }, font: t.font });
-        save(); renderTab();
-      } },
-        h("strong", {}, t.label),
-        h("div", { className: "swatches" }, Object.values(t.colors).map((c) => h("i", { style: `background:${c}` }))),
-        h("small", {}, t.about)))),
+    h("div", { className: "themes" }, Object.entries(themes).map(([id, t]) => themeButton(t, !site.themeSource && site.theme === id, () => {
+      delete site.themeSource;
+      Object.assign(site, { theme: id, colors: { ...t.colors }, font: t.font });
+    }))),
+    sourceThemes(),
     h("p", { className: "hint", style: "margin-top:8px" }, "Picking a theme resets colours and font to that theme's defaults."),
     h("h3", { className: "section-title" }, "Colours"),
     h("div", { className: "grid2" }, [["background", "Background"], ["text", "Text"], ["primary", "Main colour"], ["accent", "Buttons"]].map(([key, label]) =>
       labelled(label, h("input", { type: "color", value: site.colors[key], oninput: (e) => { site.colors[key] = e.target.value; save(); } })))),
     select("Font", site, "font", Object.entries(fonts).map(([id, f]) => [id, f.label])),
     imageField("Logo", site, "logo", 600, "Shown at the top of every page instead of your website name. A wide image with a transparent background works best."),
+    themeSourcesSettings(),
   ];
+}
+
+function themeButton(t, active, choose) {
+  return h("button", { className: `theme${active ? " active" : ""}`, onclick: async () => {
+    if (active) return;
+    try { await choose(); } catch (e) { return alert(errorText(e)); }
+    save(); renderTab();
+  } },
+    t.preview && h("img", { className: "theme-preview", src: t.preview, alt: "" }),
+    h("strong", {}, t.label),
+    h("div", { className: "swatches" }, Object.values(t.colors).map((c) => h("i", { style: `background:${c}` }))),
+    h("small", {}, t.about));
+}
+
+// Themes from theme sources (#58, main.js listSources). Choosing one copies it
+// into the site folder; "Update theme" fetches the source again.
+let SOURCES = [], sourcesOpen = false, themeNote = "";
+const loadSources = (p = call("themes:sources")) => p.then((s) => { SOURCES = s; if (site && tab === "design" && $("#tab")) renderTab(); });
+const sourceThemeList = (src) => Object.entries(src.themes || {}).filter(([id, t]) => !t.errors.length && !(src.public && THEMES.themes[id]));
+
+function sourceThemes() {
+  const useTheme = async (channel, spec, id) => {
+    const r = await call(channel, site.id, spec, id);
+    THEMES.fonts = r.fonts;
+    return r.theme;
+  };
+  const status = h("p", { className: "hint" }, themeNote);
+  themeNote = "";
+  const current = site.themeSource && SOURCES.find((s) => s.spec === site.themeSource)?.themes?.[site.theme];
+  return [
+    SOURCES.filter((src) => !src.hidden && sourceThemeList(src).length).map((src) => [
+      h("p", { className: "hint", style: "margin:12px 0 6px" }, `From ${src.spec}`),
+      h("div", { className: "themes" }, sourceThemeList(src).map(([id, t]) => themeButton(t, site.themeSource === src.spec && site.theme === id, async () => {
+        const theme = await useTheme("themes:use", src.spec, id);
+        Object.assign(site, { theme: id, themeSource: src.spec, colors: { ...theme.colors }, font: theme.font });
+      }))),
+    ]),
+    site.themeSource && h("div", { className: "inline", style: "align-items:center;margin-top:8px" },
+      h("button", { onclick: async (e) => {
+        e.target.disabled = true; status.textContent = "Checking for a newer version…";
+        try {
+          const theme = await useTheme("themes:update", site.themeSource, site.theme);
+          themeNote = `Updated "${theme.label}"${theme.version ? ` to version ${theme.version}` : ""}. Your colours and font are unchanged.`;
+          save(); await loadSources().catch(renderTab); return; // re-renders with the note
+        } catch (err) { status.textContent = errorText(err); }
+        e.target.disabled = false;
+      } }, "Update theme"),
+      h("span", { className: "hint" }, `"${current?.label || site.theme}" from ${site.themeSource}${current?.version ? `, version ${current.version}` : ""}. A copy is kept with your website.`)),
+    status,
+  ];
+}
+
+function themeSourcesSettings() {
+  const act = async (btn, error, channel, ...args) => {
+    btn.disabled = true; error.textContent = "";
+    try { SOURCES = await call(channel, ...args); renderTab(); }
+    catch (e) { error.textContent = errorText(e); btn.disabled = false; }
+  };
+  const repo = h("input", { placeholder: "owner/repo" });
+  const token = h("input", { type: "password", placeholder: "Access token (private repositories only)" });
+  const addError = h("p", { className: "error" });
+  const add = h("button", { className: "primary", onclick: () => act(add, addError, "themes:add", repo.value, token.value) }, "Add");
+  return h("details", { className: "sources", open: sourcesOpen, ontoggle: (e) => { sourcesOpen = e.target.open; } },
+    h("summary", {}, "Theme sources"),
+    h("p", { className: "hint" }, "Extra themes come from GitHub repositories. Choosing one keeps a copy with your website, so it keeps working even if the repository changes or disappears."),
+    SOURCES.map((src) => {
+      const error = h("p", { className: "error" }, src.error || "");
+      const bad = Object.entries(src.themes || {}).filter(([, t]) => t.errors.length);
+      const row = h("div", { className: "source" },
+        h("div", { className: "inline", style: "align-items:center" },
+          h("strong", { style: "flex:1" }, src.spec, src.public ? " (built in)" : "", src.hasToken ? " (private, token saved)" : ""),
+          !src.hidden && h("button", { onclick: (e) => act(e.target, error, "themes:refresh", src.spec) }, "Refresh"),
+          src.public
+            ? h("button", { onclick: (e) => act(e.target, error, "themes:hide-public", !src.hidden) }, src.hidden ? "Show" : "Hide")
+            : h("button", { className: "danger", onclick: (e) => act(e.target, error, "themes:remove", src.spec) }, "Remove")),
+        src.hidden ? h("p", { className: "hint" }, "Hidden from the theme list.")
+          : src.themes && h("p", { className: "hint" }, `${sourceThemeList(src).length} theme(s)${src.fetchedAt ? `, checked ${new Date(src.fetchedAt).toLocaleString()}` : ""}.`),
+        bad.map(([id, t]) => h("p", { className: "hint" }, `"${id}" can't be used: ${t.errors.join("; ")}`)),
+        error);
+      return row;
+    }),
+    h("h4", {}, "Add a repository"),
+    h("div", { className: "inline" }, repo, add),
+    labelled("", token, ["Only needed for a private repository. On GitHub, create a ", link("fine-grained token", "https://github.com/settings/personal-access-tokens/new"),
+      " with access to just that repository and ", h("b", {}, "Contents: Read-only"), ". It's stored encrypted on this computer and only ever sent to api.github.com."]),
+    h("p", { className: "hint" }, "Themes go in a themes/ folder, one folder per theme (see the PhaseN-Digital/phasen-sitebuilder-themes repository). For another folder or branch, write owner/repo/folder@branch."),
+    addError);
 }
 
 // ---------- Pages ----------
@@ -456,4 +541,5 @@ setInterval(checkForUpdate, 6 * 3600e3);
 (async () => {
   [THEMES, settings] = await Promise.all([call("themes"), call("settings:get")]);
   await loadSites();
+  loadSources().catch(() => {}); // may download, so not awaited
 })();

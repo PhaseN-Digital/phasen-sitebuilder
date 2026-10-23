@@ -8,9 +8,13 @@ const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite } = require("./lib/mirror");
 const update = require("./lib/update");
+const themeSources = require("./lib/theme-sources");
+const { loadTheme } = require("./lib/themes");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
+// Same for the fake GitHub API (theme sources, #58).
+const GITHUB_API = (!app.isPackaged && process.env.SITEBUILDER_GITHUB_API) || themeSources.GITHUB_API;
 
 // preview://<site-id>/... serves the last preview build so the editor can
 // show the real generated site in an iframe, no local web server needed.
@@ -137,6 +141,35 @@ async function publish(id, log) {
   return state.url;
 }
 
+// Theme sources (#58): the public repo (hideable via settings.hidePublicThemes)
+// plus settings.themeSources, [{ spec, token? (sealed) }]. Tokens never leave
+// the main process. Returns [{ spec, public, hidden, hasToken, error?, ...cached listing }].
+const themeCache = () => data("theme-cache");
+const sourcesOf = (s) => [{ spec: themeSources.PUBLIC_SOURCE, public: true, hidden: Boolean(s.hidePublicThemes) }, ...(s.themeSources || [])];
+const findSource = async (spec) => {
+  const source = sourcesOf(await loadSettings()).find((x) => x.spec === spec);
+  if (!source) throw new Error(`${spec} isn't one of your theme sources.`);
+  return source;
+};
+const fetchSource = (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token), api: GITHUB_API });
+// Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
+async function listSources() {
+  return Promise.all(sourcesOf(await loadSettings()).map(async (source) => {
+    const info = { spec: source.spec, public: Boolean(source.public), hidden: Boolean(source.hidden), hasToken: Boolean(source.token) };
+    if (source.hidden) return info;
+    try {
+      return { ...info, ...((await themeSources.readSource(source.spec, themeCache())) || (await fetchSource(source))) };
+    } catch (e) {
+      return { ...info, error: e.message };
+    }
+  }));
+}
+// Copies a theme into the site folder; returns the theme (font registered) and the font list.
+async function useTheme(id, spec, themeId) {
+  await themeSources.installTheme(spec, themeId, themeCache(), siteDir(id));
+  return { theme: loadTheme(path.join(siteDir(id), "theme"), themeId), fonts };
+}
+
 function publicSettings(s) {
   return {
     cloudflare: s.cloudflare && { accountId: s.cloudflare.accountId, accounts: s.cloudflare.accounts, warnings: s.cloudflare.warnings },
@@ -147,6 +180,41 @@ function publicSettings(s) {
 
 const handlers = {
   themes: () => ({ themes, fonts }),
+  "themes:sources": listSources,
+  "themes:add": async (spec, token) => {
+    spec = themeSources.parseSource(spec).spec;
+    const s = await loadSettings();
+    if (sourcesOf(s).some((x) => x.spec === spec)) throw new Error(`${spec} is already in your theme sources.`);
+    const source = { spec, ...(String(token || "").trim() && { token: seal(String(token).trim()) }) };
+    await fetchSource(source); // throws with GitHub's reason, so a wrong name or token is never saved
+    const latest = await loadSettings();
+    latest.themeSources = [...(latest.themeSources || []), source];
+    await saveSettings(latest);
+    return listSources();
+  },
+  "themes:remove": async (spec) => {
+    const s = await loadSettings();
+    s.themeSources = (s.themeSources || []).filter((x) => x.spec !== spec);
+    await saveSettings(s);
+    await fs.rm(path.join(themeCache(), themeSources.cacheKey(spec)), { recursive: true, force: true });
+    return listSources();
+  },
+  "themes:hide-public": async (hidden) => {
+    const s = await loadSettings();
+    s.hidePublicThemes = Boolean(hidden);
+    await saveSettings(s);
+    return listSources();
+  },
+  "themes:refresh": async (spec) => {
+    await fetchSource(await findSource(spec));
+    return listSources();
+  },
+  "themes:use": (id, spec, themeId) => useTheme(id, spec, themeId),
+  // Fetches the source again and replaces the site's copy; colours and font are left alone.
+  "themes:update": async (id, spec, themeId) => {
+    await fetchSource(await findSource(spec));
+    return useTheme(id, spec, themeId);
+  },
 
   "sites:list": async () => {
     const ids = await fs.readdir(data("sites")).catch(() => []);

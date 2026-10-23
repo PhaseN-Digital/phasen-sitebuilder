@@ -11,7 +11,8 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor, startUpdates } = require("./fakes");
+const { startWordPress, startElementor, startUpdates, startGitHub } = require("./fakes");
+const themeSources = require("../lib/theme-sources");
 
 const ROOT = path.join(__dirname, "..");
 const ELECTRON = require("electron"); // the binary's path, when required from Node
@@ -39,12 +40,12 @@ function start(cmd, args, opts = {}) {
   return child;
 }
 
-async function driveApp(wp, el, updates) {
+async function driveApp(wp, el, updates, gh) {
   const result = path.join(OUT, "drive.json"), shots = path.join(OUT, "screenshots");
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl };
+  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -100,13 +101,34 @@ async function formChecks(label, { base, child }, formId, valid) {
   check(`${label}: message logged instead of sent without RESEND_API_KEY`, sent() === 1 && Object.values(valid).every((v) => child.output.includes(v)), child.output.slice(-1500));
 }
 
+// A theme from a theme source (#58): downloaded from the fake GitHub API,
+// copied into the site folder and built from there, with the cache gone.
+async function sourceTheme(siteId) {
+  const gh = await startGitHub();
+  const cacheRoot = path.join(OUT, "theme-cache");
+  try {
+    const listing = await themeSources.fetchSource(themeSources.PUBLIC_SOURCE, { cacheRoot, api: gh.url });
+    check("theme source: public repo listed and validated", listing.themes.retro?.errors.length === 0 && listing.themes.broken?.errors.length > 0, listing.themes);
+    const priv = await themeSources.fetchSource(gh.privateSpec, { cacheRoot, api: gh.url, token: gh.token });
+    check("theme source: private repo with a token, token never sent off the API host", priv.themes.night?.errors.length === 0
+      && gh.requests.every(([host, , auth]) => host === gh.host || !auth), gh.requests);
+    await themeSources.installTheme(themeSources.PUBLIC_SOURCE, "retro", cacheRoot, path.join(OUT, "userdata", "sites", siteId));
+  } finally {
+    await gh.close();
+    fs.rmSync(cacheRoot, { recursive: true, force: true });
+  }
+  return { theme: "retro", themeSource: themeSources.PUBLIC_SOURCE, font: "theme-retro" };
+}
+
 async function workerChecks(sites) {
   if (sites.created) {
-    const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1" });
+    const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1", ...(await sourceTheme(sites.created)) });
     try {
       const home = await get(s.base, "/");
       check("worker (made in app): home page", home.status === 200 && home.text.includes("Edited headline") && home.text.includes("/styles.css"), home.status);
       const img = home.text.match(/\/assets\/[a-f0-9]+\.webp/)?.[0];
+      const css = (await get(s.base, "/styles.css")).text;
+      check("worker (made in app): theme from a theme source", css.includes("retro-theme-css") && css.includes('--font: "Courier New"'), css.slice(0, 300));
       check("worker (made in app): uploaded image served", img && (await get(s.base, img)).status === 200, img);
       const contact = await get(s.base, "/contact");
       check("worker (made in app): contact page with form", contact.status === 200 && contact.text.includes('data-form="contact"') && contact.text.includes('data-sitekey="REAL_SITEKEY"'), contact.status);
@@ -149,15 +171,15 @@ async function workerChecks(sites) {
 (async () => {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
-  const wp = await startWordPress(), el = await startElementor(), updates = await startUpdates();
+  const wp = await startWordPress(), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
   try {
-    const sites = await driveApp(wp, el, updates);
+    const sites = await driveApp(wp, el, updates, gh);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {
-    await wp.close(); await el.close(); await updates.close();
+    await wp.close(); await el.close(); await updates.close(); await gh.close();
   }
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed in ${Math.round((Date.now() - started) / 1000)}s.`);
