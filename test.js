@@ -108,6 +108,12 @@ const site = {
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
   globalThis.fetch = realFetch;
 
+  const { bump } = require("./scripts/release-bump");
+  for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],
+    ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
+    assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
