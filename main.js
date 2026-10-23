@@ -122,6 +122,10 @@ async function publish(id, log) {
   log("Uploading website…\n");
   await cf.deployWorker(publishDir(id), { token, accountId }, { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) }, log);
 
+  // The site is already live by now, so a missing token permission only costs the www redirect.
+  if (site.domain) await cf.ensureWwwRedirect(token, site.domain, log).catch((e) =>
+    log(`Couldn't set up the www redirect (${e.message}). Add Zone · Single Redirect · Edit to your Cloudflare token and publish again.\n`));
+
   state.url = `https://${hostname}`;
   state.publishedAt = new Date().toISOString();
   await writeState(id, state);

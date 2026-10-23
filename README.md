@@ -37,7 +37,8 @@ use `scripts/check-commit.js`.
   on PRs.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
-  the `build` job then builds the Windows and macOS installers and attaches
+  the `build` job then builds the Windows installer and the macOS installers
+  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and attaches
   them to it. Running the workflow by hand ("Run workflow") builds
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
@@ -165,9 +166,16 @@ https and aren't stored.
 4. Creates a sending-only Resend key for the site's Worker.
 5. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
    Resend key.
+6. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
+   (`http_request_dynamic_redirect` phase) sending `www.<domain>` to the apex,
+   as phasen.digital's Terraform does. An existing `www` record or existing
+   redirect rules are left alone (logged, not overwritten). If this step fails,
+   e.g. the token lacks the permission, publishing still succeeds and the log
+   says why.
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
-Account › Turnstile › Edit and Zone › DNS › Edit. The app lists these steps
+Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
+Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
 ## Known gaps
@@ -175,8 +183,6 @@ in the Publish tab.
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
-- The macOS build is Apple Silicon only (`macos-latest`). Add an Intel runner
-  to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect or analytics/cookie banner.
+- No analytics/cookie banner.
