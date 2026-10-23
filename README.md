@@ -145,14 +145,21 @@ otherwise.
 
 ### Exact copy (`lib/mirror.js`)
 
-Crawls the rendered site from `/` (same-site links only, up to 500 pages and
-5,000 files) and saves each page's HTML plus every same-site CSS, JS, font
+Crawls the rendered site from the address given (same-site links only, up to
+500 pages and 5,000 files) and saves each page's HTML plus every same-site CSS, JS, font
 and image at its original path under `sites/<id>/mirror/`. Since paths are
 kept, the only rewrite needed is stripping the site's domain from URLs
 (including JSON-escaped ones in inline scripts), so links, CSS `url()`s and
 srcsets keep working. Redirects found while crawling go into Cloudflare's
 `_redirects` file, and WordPress's own 404 page is copied (with its own
 stylesheets and images).
+
+A WordPress installed in a subfolder (`example.com/blog/`) is copied from that
+folder only: its pages keep their `/blog/...` paths, so addresses match the old
+site, and the copy's `/` redirects to `/blog/`. The folder is taken from the
+address given, so giving an inner page's address (`example.com/about/`)
+copies only that part of the site. Tried only against a fake subfolder site
+so far (`test/fakes.js`).
 
 POST forms are re-wired in place, keeping their markup and styling: the
 questions are read from the form's fields, and the form gets a `data-form`
@@ -250,7 +257,7 @@ in the Publish tab.
   one Elementor 4 site of the maintainer's own (both imports, with an
   application password), but not yet against a client site. Known problems
   from that: re-wired forms with conditional or checkbox-group fields, and
-  cart/comment forms (#22); WordPress installed in a subfolder (#23); editable
+  cart/comment forms (#22); editable
   import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
   colours, font and logo (#42); pages rendered as the logged-in user when an
