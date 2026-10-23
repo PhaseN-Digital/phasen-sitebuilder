@@ -35,8 +35,8 @@ the roadmap.
    If none exists, create one (label `bug`, `enhancement` or `task`) and add
    it to the project. Don't start untracked work, however small.
 2. **Move it to In Progress** when work starts, **Testing** once the change
-   is in a PR or on `main` but not yet verified in the real app or against
-   real services, and **Done** once verified. Closing the issue (via
+   is in a PR awaiting review or merged but not yet verified in the real app
+   or against real services, and **Done** once merged and verified. Closing the issue (via
    `Closes #n` in the PR) is not enough on its own; also set Status.
 3. **Reference the issue** in commits (`fix(publish): retry DNS (#12)`) and
    put `Closes #n` in the PR description.
@@ -84,6 +84,11 @@ are not, so add them yourself.
   CI and release-please run on. The `pre-commit` hook refuses commits on
   `main`. The same applies to release-please's own release PR: merge it, don't
   push version bumps by hand.
+- **Every change needs the maintainer's review.** Open the PR, wait for CI,
+  move the issue to Testing, and stop. Never merge a PR yourself, including
+  release-please's. GitHub can't enforce this yet (branch protection needs a
+  paid plan for this private repo, see #5), so it's a rule to follow, not a
+  safety net.
 - Commit messages must be Conventional Commits (`feat:`, `fix(scope):`,
   `feat!:` …). The `commit-msg` hook and CI's `commits` job both run
   `scripts/check-commit.js`. release-please silently skips anything else,
