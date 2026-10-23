@@ -199,6 +199,11 @@ inside an element hidden when the page loads (conditional branches: inline
 `data-conditional-logic`) aren't required, in the Worker or in the markup.
 Checkboxes, radios and selects are `choice` questions; a ticked checkbox
 group or multi-select is posted as an array and joined in the email.
+A question's wording comes from its `<label>` (by `for` or wrapping it),
+`aria-labelledby`, `aria-label`, text just before it in the same paragraph
+(Contact Form 7's `<p>Your Message<br><textarea>`), its placeholder, and
+last a tidied field name (`your-message` becomes "Your message"). Copied
+questions can't be renamed in the app yet.
 `runtime/form.js` listens in the capture
 phase so the page builder's own submit handler (which would post to
 WordPress) never runs. Turnstile key and thank-you message are filled in at
