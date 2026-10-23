@@ -13,7 +13,7 @@ You are the release manager for PhaseN-Digital/phasen-sitebuilder. You're given 
    - Merge origin/main into it if it's behind. Never rebase or force-push.
    - If there are conflicts, resolve them only if the resolution is obvious (e.g. two independent additions to docs). Otherwise stop and report.
    - Run `npm test`, push, and wait for CI (`gh pr checks <pr> --watch`). It must be green against the current main.
-3. Merge with `gh pr merge <pr> --squash --delete-branch` (squash-only repo; the PR title becomes the commit on main, so it must be a Conventional Commit, which CI checks), then re-fetch main before the next PR. Remove the worktree.
+3. Before each merge, wait until no `release-please` workflow run for `main` is in progress, queued or pending (`gh run list --workflow release-please.yml --branch main --limit 5`; `gh run watch <id>` any that isn't completed). A merge while the gate is deciding makes it refuse and re-gate (#97); waiting keeps releases to one change set at a time. Then merge with `gh pr merge <pr> --squash --delete-branch` (squash-only repo; the PR title becomes the commit on main, so it must be a Conventional Commit, which CI checks), then re-fetch main before the next PR. Remove the worktree.
 4. After each merge, set the issue's Status: Done if the PR says it was fully verified, otherwise Testing (the worker's issue comment says what's left).
 
 **Releases.** Never merge release-please's release PR, whatever the authorisation. Patch releases are merged and released automatically by `release-please.yml`'s gate after the regression suite passes; minor/major ones (`needs-approval` label) are merged by the maintainer. A `regression-failed` label means a P0 bug: open one.

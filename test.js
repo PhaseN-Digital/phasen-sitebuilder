@@ -180,6 +180,14 @@ const site = {
     ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
     assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
   }
+  // #97: never merge onto a main that moved after regression ran.
+  const { staleReason } = require("./scripts/release-bump");
+  const ok = { startMain: "m1", main: "m1", base: "m1", tested: "h1", head: "h1", containsMain: "true" };
+  assert.strictEqual(staleReason(ok), "");
+  for (const [change, want] of [[{ main: "m2", base: "m2" }, "main moved"], [{ base: "m0" }, "base"], [{ head: "h2" }, "head moved"],
+    [{ containsMain: "false" }, "isn't based on main"], [{ startMain: "" }, "missing"], [{ tested: undefined }, "missing"]]) {
+    assert(staleReason({ ...ok, ...change }).includes(want), `stale: ${JSON.stringify(change)}`);
+  }
 
   // Theme packages: the bundled ones are valid, bad ones are caught, and a
   // font stack instead of a font id still loads.
