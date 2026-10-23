@@ -56,7 +56,10 @@ use `scripts/check-commit.js`.
   workflow and released and built in that same run. A **minor/major**
   release that passes gets the `needs-approval` label and a comment, and is
   released when the maintainer merges it. A failure gets the
-  `regression-failed` label and a comment, and is never merged. This all
+  `regression-failed` label and a comment, and is never merged. The gate
+  only merges if `main` is still exactly what the regression run tested
+  against (#97); if anything landed on `main` meanwhile it comments and
+  leaves the PR to the next run, which re-gates it with the new commits. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -310,6 +313,11 @@ Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app
 in the Publish tab.
 
 ## Known gaps
+
+- Release gate: GitHub's merge API can't require an unchanged base, so a
+  push to `main` in the second between the gate's last check and its merge
+  still lands under the squash. The gate catches it and doesn't release from
+  that run, but the next run would (#99).
 
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
