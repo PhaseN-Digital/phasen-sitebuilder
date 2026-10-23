@@ -27,13 +27,15 @@ jobs:
   # events trigger other workflows, so such a workflow would never run.
   # Each OS builds its own installer: wrangler's esbuild/workerd binaries are
   # platform-specific npm optional deps, so they can't be cross-built.
+  # That includes CPU arch: macos-latest is Apple Silicon (arm64 dmg) and
+  # macos-15-intel is Intel (x64 dmg); electron-builder builds for the host arch.
   # A manual dispatch builds installers as run artifacts without a release.
   build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch' }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
