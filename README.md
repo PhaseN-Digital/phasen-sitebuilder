@@ -37,7 +37,8 @@ use `scripts/check-commit.js`.
   on PRs.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
-  the `build` job then builds the Windows and macOS installers and attaches
+  the `build` job then builds the Windows installer and the macOS installers
+  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and attaches
   them to it. Running the workflow by hand ("Run workflow") builds
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
@@ -175,8 +176,6 @@ in the Publish tab.
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
-- The macOS build is Apple Silicon only (`macos-latest`). Add an Intel runner
-  to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
 - No `www` → apex redirect or analytics/cookie banner.

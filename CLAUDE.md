@@ -101,7 +101,8 @@ are not, so add them yourself.
   `on: release`/tag workflow: release-please's GITHUB_TOKEN tags can't
   trigger other workflows, so a separate one would never run.
 - Installers must be built on each OS (platform-specific esbuild/workerd
-  binaries), which is why `build` is a matrix.
+  binaries), which is why `build` is a matrix. The same goes for CPU arch:
+  the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
 - `package.json`'s `allowScripts` approves the dependency install scripts
   those binaries need (esbuild, workerd, electron-winstaller, fsevents on
   macOS). Newer npm blocks unapproved install scripts, which would ship
