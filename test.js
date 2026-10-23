@@ -80,6 +80,15 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  const sub = await require("./test/fakes").startSubfolder();
+  const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
+  const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
+  assert.deepStrictEqual(copied.pages.map((p) => [p.path, p.title, p.file]), [["/blog/", "Home", "blog/index.html"], ["/blog/about/", "About", "blog/about/index.html"]]);
+  assert.deepStrictEqual(sub.forbidden, []);
+  assert(fs.existsSync(path.join(subOut, "blog/wp-content/uploads/a.png")) && fs.readFileSync(path.join(subOut, "404.html"), "utf8").includes("No such post"));
+  assert.strictEqual(fs.readFileSync(path.join(subOut, "_redirects"), "utf8"), "/blog/old/ /blog/about/ 301\n/ /blog/ 301\n");
+
   // Syntax-check every script, including the renderer ones nothing above loads.
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
   const { ensureWwwRedirect } = require("./lib/publish");

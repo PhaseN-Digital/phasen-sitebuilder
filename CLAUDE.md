@@ -15,7 +15,7 @@ process. Read it before changing anything substantial.
 ```
 npm install      # also points git at .githooks (commit-msg check)
 npm start        # run the app
-npm test         # builder/form-parser self-check + syntax check of every script
+npm test         # builder/form-parser/subfolder-copy self-check + syntax check of every script
 npm run test:regression  # end-to-end: real app under xvfb + built sites under wrangler dev
 npm run dist     # installer for the current OS
 ```
