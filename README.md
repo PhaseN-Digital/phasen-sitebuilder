@@ -132,7 +132,9 @@ published always-pass test secret, so that one step needs internet access.
 - `themes/`: `base.css`, `fonts.json` (the Font choices) and one package per
   theme, `themes/<id>/theme.json` (label, about, colours, font id or CSS font
   stack, optional version) plus `theme.css` (small overrides on top of
-  `base.css`; CSS only, no JS or HTML). `lib/themes.js` loads them for both
+  `base.css`; CSS only, no JS or HTML). Below 760px `base.css` collapses the
+  header nav behind a Menu button (a small inline script in `lib/build.js`
+  adds it; without JS the nav just stays visible). `lib/themes.js` loads them for both
   the build and the Design tab; colours/fonts are CSS variables the user picks
   there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
   themes`); an identical copy is vendored into the public
