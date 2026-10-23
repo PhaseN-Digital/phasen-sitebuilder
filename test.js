@@ -83,18 +83,25 @@ const site = {
     <input type="email" name="f[email]" placeholder="Email" aria-required="true"><input type="radio" name="pick" value="a"><input type="radio" name="pick" value="b"><textarea name="msg"></textarea><button type="submit">Go</button>`), [
     { id: "f[name]", label: "Name", type: "text", required: true },
     { id: "f[email]", label: "Email", type: "email", required: true },
-    { id: "pick", label: "pick", type: "choice", required: false },
-    { id: "msg", label: "msg", type: "textarea", required: false },
+    { id: "pick", label: "Pick", type: "choice", required: false },
+    { id: "msg", label: "Msg", type: "textarea", required: false },
   ]);
   // Conditional branches (hidden at first) aren't required; checkbox groups are one question; plugin honeypots aren't questions (#22).
   assert.deepStrictEqual(formFields(`<div class="ff-el-group has-conditions"><p><input name="why" required></div>
     <div data-conditional-logic="visible"><input name="phone" type="tel" required></div><label for="c">Colours</label><span><input type="checkbox" name="c[]" id="c-0" required><label for="c-0">Red</label></span><input type="checkbox" name="c[]" id="c-1">
     <select name="size" multiple><option>S</option></select><textarea name="ak_hp_textarea"></textarea><input name="item_1__fluent_sf">`), [
-    { id: "why", label: "why", type: "text", required: false },
-    { id: "phone", label: "phone", type: "tel", required: true },
+    { id: "why", label: "Why", type: "text", required: false },
+    { id: "phone", label: "Phone", type: "tel", required: true },
     { id: "c[]", label: "Colours", type: "choice", required: true },
-    { id: "size", label: "size", type: "choice", required: false },
+    { id: "size", label: "Size", type: "choice", required: false },
   ]);
+  // Unlabelled questions take a wrapping <label>, aria-labelledby, CF7's <p> text, the placeholder, then a tidied field name (#29).
+  assert.deepStrictEqual(formFields(`<h2>Get in touch</h2><p><label>Your name <span>*</span><br><input name="your-name"></label></p>
+    <span id="q">Phone number</span><input type="tel" name="tel-1" aria-labelledby="q"><p>Your Message<br><span class="wpcf7-form-control-wrap"><textarea name="your-message">Hi</textarea></span></p>
+    <p>Pick one<br><span class="wpcf7-radio"><span><label><input type="radio" name="menu" value="A"><span>A</span></label></span><span><label><input type="radio" name="menu" value="B"><span>B</span></label></span></span></p>
+    <p><span class="wpcf7-acceptance"><label><input type="checkbox" name="acceptance-1"><span>I agree to the privacy policy</span></label></span></p>
+    <div><input name="city" placeholder="Town"></div><div><input name="f[first_name]"></div><div><select name="budget[]"><option>£1k</option></select></div>`).map((f) => f.label),
+    ["Your name *", "Phone number", "Your Message", "Pick one", "I agree to the privacy policy", "Town", "First name", "Budget"]);
   // Builder detection looks for the builder's markup, not just its name (an image called Elementor-Logo.svg).
   const { detectBuilder } = require("./lib/mirror");
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
