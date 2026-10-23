@@ -15,9 +15,18 @@ npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 Installers for both platforms are attached to each GitHub release, see
 "Commits and releases".
 
+## Roadmap and issues
+
+Bugs, features and the roadmap live in the
+[PhaseN Site Builder project](https://github.com/orgs/PhaseN-Digital/projects/3)
+(Priority P0/P1/P2, Status Todo → In Progress → Testing → Done). File issues
+with the bug/feature forms, which add them to the project automatically.
+CLAUDE.md describes how changes are tracked.
+
 ## Commits and releases
 
-Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/)
+Changes go through PRs only, never direct commits to `main` (a `pre-commit`
+hook refuses them). Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat: …`, `fix(publish): …`, `feat!: …` for breaking changes).
 release-please silently skips anything else, so the change would be missing
 from the changelog and version bump. `npm install` sets up a `commit-msg` hook
