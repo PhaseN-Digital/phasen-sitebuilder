@@ -9,6 +9,7 @@
     "start": "electron .",
     "dist": "electron-builder --publish never",
     "test": "node test.js",
+    "test:regression": "node test/regression.js",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
@@ -40,6 +41,7 @@
     },
     "mac": {
       "target": "dmg",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "category": "public.app-category.productivity"
     }
   },

@@ -81,8 +81,35 @@ const site = {
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
   // Syntax-check every script, including the renderer ones nothing above loads.
+  // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
+  const { ensureWwwRedirect } = require("./lib/publish");
+  const realFetch = globalThis.fetch;
+  const runRedirect = async (zone) => {
+    const calls = [], logs = [];
+    globalThis.fetch = async (url, { method, body }) => {
+      calls.push({ method, url: url.replace("https://api.cloudflare.com/client/v4", ""), body: body && JSON.parse(body) });
+      const result = method !== "GET" ? {} : url.includes("dns_records") ? zone.records : zone.rules && { rules: zone.rules };
+      return { status: 200, json: async () => (result ? { success: true, result } : { success: false, errors: [{ message: "not found" }] }) };
+    };
+    await ensureWwwRedirect("t", { id: "z1", name: "bob.com" }, (l) => logs.push(l));
+    return { writes: calls.filter((c) => c.method !== "GET"), logs: logs.join("") };
+  };
+  let r = await runRedirect({ records: [] });
+  assert.deepStrictEqual(r.writes[0], { method: "POST", url: "/zones/z1/dns_records", body: { type: "CNAME", name: "www.bob.com", content: "bob.com", ttl: 1, proxied: true, comment: "PhaseN Site Builder: redirects to the apex" } });
+  assert.deepStrictEqual(r.writes[1].url, "/zones/z1/rulesets/phases/http_request_dynamic_redirect/entrypoint");
+  assert.deepStrictEqual(r.writes[1].body.rules[0], { ref: "sitebuilder_www_to_apex", description: "Redirect www.bob.com to bob.com",
+    expression: '(http.host eq "www.bob.com")', action: "redirect",
+    action_parameters: { from_value: { status_code: 301, preserve_query_string: true, target_url: { expression: 'concat("https://bob.com", http.request.uri.path)' } } } });
+  r = await runRedirect({ records: [{ type: "A", content: "1.2.3.4" }], rules: [{ ref: "theirs" }] });
+  assert(!r.writes.length && r.logs.includes("already has a DNS record") && r.logs.includes("already has redirect rules"), "existing www record/rules untouched");
+  r = await runRedirect({ records: [{ type: "CNAME", content: "bob.com", proxied: true }], rules: [{ ref: "sitebuilder_www_to_apex" }] });
+  assert(!r.writes.length && !r.logs, "republish is a no-op");
+  r = await runRedirect({ records: [], rules: [] });
+  assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
+  globalThis.fetch = realFetch;
+
   const { execFileSync } = require("node:child_process");
-  for (const dir of [".", "app", "lib", "runtime", "scripts"]) {
+  for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
   }
 

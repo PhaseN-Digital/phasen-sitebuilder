@@ -9,6 +9,7 @@ form API (`POST /api/forms/<id>`) with honeypot, Turnstile and Resend email.
 npm install
 npm start        # run the app
 npm test         # builder self-check
+npm run test:regression   # end-to-end suite, see "Regression tests"
 npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 ```
 
@@ -35,9 +36,14 @@ use `scripts/check-commit.js`.
 
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
   on PRs.
+- `regression.yml`: `npm run test:regression` on release-please's release
+  PRs (branches starting `release-please--`), by hand ("Run workflow") and
+  via `workflow_call`. On failure the screenshots, wrangler logs and
+  results are uploaded as the `regression-output` artifact.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
-  the `build` job then builds the Windows and macOS installers and attaches
+  the `build` job then builds the Windows installer and the macOS installers
+  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and attaches
   them to it. Running the workflow by hand ("Run workflow") builds
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
@@ -49,6 +55,29 @@ use `scripts/check-commit.js`.
   `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarisation.
   Windows: `WIN_CSC_LINK` (base64 .pfx) and `WIN_CSC_KEY_PASSWORD`; Azure
   Trusted Signing or a cloud-HSM certificate needs extra config (#32).
+
+## Regression tests
+
+`npm run test:regression` (`test/regression.js`, about 10 seconds locally)
+checks the whole app end to end with no accounts, against fake sites in
+`test/fakes.js`:
+
+- the real app, driven headlessly by `test/drive.js`: create a site, preview,
+  edit + rebuild, theme switch, image upload; editable WordPress import from
+  a fake WordPress (REST, global styles, hostile HTML); exact copy of a fake
+  Elementor site (no origin URLs left, forms re-wired, copy vs structure
+  tagging, page edit, site-wide edit, image replace, undo, revert);
+- the sites it made, built as publishing builds them and run under the
+  bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
+  the copied site's redirect, and form POSTs (honeypot, validation, captcha,
+  a valid message logged instead of emailed since `RESEND_API_KEY` is unset).
+
+It prints one line per check and a summary, and exits non-zero on any
+failure. On Linux without a display it runs Electron under `xvfb-run`
+(`apt install xvfb`). Set `SB_OUT=<dir>` to keep the output somewhere
+fixed; otherwise it's a temp folder, named in the summary. The Worker's
+Turnstile check calls Cloudflare's real siteverify endpoint with the
+published always-pass test secret, so that one step needs internet access.
 
 ## How it fits together
 
@@ -172,9 +201,16 @@ https and aren't stored.
 4. Creates a sending-only Resend key for the site's Worker.
 5. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
    Resend key.
+6. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
+   (`http_request_dynamic_redirect` phase) sending `www.<domain>` to the apex,
+   as phasen.digital's Terraform does. An existing `www` record or existing
+   redirect rules are left alone (logged, not overwritten). If this step fails,
+   e.g. the token lacks the permission, publishing still succeeds and the log
+   says why.
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
-Account › Turnstile › Edit and Zone › DNS › Edit. The app lists these steps
+Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
+Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
 ## Known gaps
@@ -182,11 +218,9 @@ in the Publish tab.
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
-- The macOS build is Apple Silicon only (`macos-latest`). Add an Intel runner
-  to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect or analytics/cookie banner.
+- No analytics/cookie banner.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an

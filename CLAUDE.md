@@ -16,12 +16,16 @@ process. Read it before changing anything substantial.
 npm install      # also points git at .githooks (commit-msg check)
 npm start        # run the app
 npm test         # builder/form-parser self-check + syntax check of every script
+npm run test:regression  # end-to-end: real app under xvfb + built sites under wrangler dev
 npm run dist     # installer for the current OS
 ```
 
-`npm test` doesn't cover the editor UI or the Electron main process. For
-UI changes, launch the app and exercise them (it can be driven headlessly
-with `xvfb-run` and `executeJavaScript`, as during development).
+`npm test` doesn't cover the editor UI or the Electron main process;
+`npm run test:regression` does (README "Regression tests"). When a change
+alters a flow it covers, extend `test/drive.js` (UI, via `executeJavaScript`)
+or `test/regression.js` (built site under `wrangler dev`), and the fakes in
+`test/fakes.js` if needed. For anything else in the UI, launch the app and
+exercise it (headlessly with `xvfb-run` and `executeJavaScript`).
 
 ## Tracking work: required for every change
 
@@ -86,22 +90,32 @@ are not, so add them yourself.
   push version bumps by hand.
 - **Every change needs the maintainer's review.** Open the PR, wait for CI,
   move the issue to Testing, and stop. Never merge a PR yourself, including
-  release-please's. GitHub can't enforce this yet (branch protection needs a
-  paid plan for this private repo, see #5), so it's a rule to follow, not a
-  safety net.
+  release-please's, unless you are the `release-manager` agent and the
+  maintainer has authorised merging for the current session.
+- **Agents** (`.claude/agents/`): when working through issues, run one fresh
+  `issue-worker` per issue (it implements, tests and opens a PR, but never
+  merges) and hand ready PRs to the `release-manager`. The release manager
+  is the only thing that merges, one PR at a time and in dependency order,
+  each brought up to date with `main` and green in CI first, and it says which
+  issues are safe to start next. Workers declare `Depends on #n` and
+  `Files:` in their PR bodies. GitHub can't enforce any of this yet
+  (branch protection needs a paid plan for this private repo, see #5).
 - Commit messages must be Conventional Commits (`feat:`, `fix(scope):`,
   `feat!:` …). The `commit-msg` hook and CI's `commits` job both run
   `scripts/check-commit.js`. release-please silently skips anything else,
   dropping it from the changelog and version bump. Don't bypass the hook with
   `--no-verify`.
 - `ci.yml` runs `npm test` on PRs and pushes to `main`.
+- `regression.yml` runs `npm run test:regression` on release-please PRs
+  (`release-please--` branches), on "Run workflow" and via `workflow_call`.
 - `release-please.yml` keeps a release PR open. Merging it creates the GitHub
   release, and its `build` job builds and attaches the Windows/macOS
   installers. Builds deliberately live in that workflow, not an
   `on: release`/tag workflow: release-please's GITHUB_TOKEN tags can't
   trigger other workflows, so a separate one would never run.
 - Installers must be built on each OS (platform-specific esbuild/workerd
-  binaries), which is why `build` is a matrix.
+  binaries), which is why `build` is a matrix. The same goes for CPU arch:
+  the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
 - `package.json`'s `allowScripts` approves the dependency install scripts
   those binaries need (esbuild, workerd, electron-winstaller, fsevents on
   macOS). Newer npm blocks unapproved install scripts, which would ship
