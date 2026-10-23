@@ -48,6 +48,15 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
+- Release gate: whenever release-please opens or updates the release PR,
+  the same run calls `regression.yml` on the PR's head. A **patch** release
+  (`scripts/release-bump.js`: same major.minor) that passes is merged by the
+  workflow and released and built in that same run. A **minor/major**
+  release that passes gets the `needs-approval` label and a comment, and is
+  released when the maintainer merges it. A failure gets the
+  `regression-failed` label and a comment, and is never merged. This all
+  happens in one run because release-please's PR updates and a
+  `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Code signing switches on per OS once that OS's certificate secret exists
   (repo Settings > Secrets and variables > Actions); without it the
   installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
@@ -113,6 +122,18 @@ not legal advice. Exact-copy pages keep their own footer, so there the user
 is told the address and adds the link themselves; the notice doesn't cover
 third-party services the copied pages load.
 
+## Analytics and cookie consent
+
+Design › Google Analytics measurement ID (optional, `site.analyticsId`, must
+look like `G-XXXX`, anything else is ignored). When set, every page built
+from the site's own themes gets a cookie banner and `runtime/consent.js`
+(copied to `/consent.js`, ID passed in `data-ga-id`). Following UK PECR, the
+Google tag only loads after the visitor clicks Accept; the choice is kept in
+`localStorage` and a footer "Cookie preferences" link reopens the banner.
+Nothing loads in the in-app preview. The site then always gets the privacy
+page, which gains an "Analytics and cookies" section (and drops the form
+parts if there are no forms). Exact-copy pages don't get the banner (#45).
+
 ## Importing from WordPress
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
@@ -124,14 +145,21 @@ otherwise.
 
 ### Exact copy (`lib/mirror.js`)
 
-Crawls the rendered site from `/` (same-site links only, up to 500 pages and
-5,000 files) and saves each page's HTML plus every same-site CSS, JS, font
+Crawls the rendered site from the address given (same-site links only, up to
+500 pages and 5,000 files) and saves each page's HTML plus every same-site CSS, JS, font
 and image at its original path under `sites/<id>/mirror/`. Since paths are
 kept, the only rewrite needed is stripping the site's domain from URLs
 (including JSON-escaped ones in inline scripts), so links, CSS `url()`s and
 srcsets keep working. Redirects found while crawling go into Cloudflare's
 `_redirects` file, and WordPress's own 404 page is copied (with its own
 stylesheets and images).
+
+A WordPress installed in a subfolder (`example.com/blog/`) is copied from that
+folder only: its pages keep their `/blog/...` paths, so addresses match the old
+site, and the copy's `/` redirects to `/blog/`. The folder is taken from the
+address given, so giving an inner page's address (`example.com/about/`)
+copies only that part of the site. Tried only against a fake subfolder site
+so far (`test/fakes.js`).
 
 POST forms are re-wired in place, keeping their markup and styling: the
 questions are read from the form's fields, and the form gets a `data-form`
@@ -220,15 +248,18 @@ in the Publish tab.
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
   is wired up but untested, since no certificates exist yet (#6).
-- `asar` is off and workerd (only used by `wrangler dev`) is bundled because
-  wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No analytics/cookie banner.
+- `asar` is off, so installs are still about 330 MB unpacked (mostly
+  Electron). workerd's binary, which only `wrangler dev` runs, is replaced
+  with a stub at package time (`scripts/after-pack.js`), so the packaged app
+  can't run `wrangler dev`.
+- Analytics consent covers only pages built from the themes, not exact-copy
+  pages (#45), and only Google Analytics.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
   application password), but not yet against a client site. Known problems
   from that: re-wired forms with conditional or checkbox-group fields, and
-  cart/comment forms (#22); WordPress installed in a subfolder (#23); editable
+  cart/comment forms (#22); editable
   import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
   colours, font and logo (#42); copied analytics tags and remote Google

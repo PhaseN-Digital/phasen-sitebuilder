@@ -63,6 +63,17 @@ const site = {
   await build({ ...site, privacy: { owner: "Bob Ltd", retention: "A year." } }, siteDir, out, {});
   assert(read("public/privacy.html").includes("run by Bob Ltd") && read("public/privacy.html").includes("<p>A year.</p>") && read("public/privacy.html").includes("contact us through the form"));
 
+  // Analytics: consent banner + consent.js only with a valid ID, never gtag before consent; analytics alone still gets a privacy page.
+  assert(!home.includes("cookie-banner") && !fs.existsSync(path.join(out, "public/consent.js")), "no banner without an ID");
+  await build({ ...site, pages: site.pages.slice(0, 1), analyticsId: " g-abc123 " }, siteDir, out, {});
+  const gaHome = read("public/index.html"), gaPrivacy = read("public/privacy.html");
+  assert(gaHome.includes('id="cookie-banner" class="cookie-banner" hidden') && gaHome.includes('<script src="/consent.js" data-ga-id="G-ABC123">') && gaHome.includes("reopenCookieBanner()"));
+  for (const f of ["public/index.html", "public/404.html", "public/privacy.html"]) assert(!/googletagmanager|gtag\(/.test(read(f)), `no gtag before consent in ${f}`);
+  assert(read("public/consent.js").includes("googletagmanager") && gaHome.includes('<a href="/privacy">Privacy</a>'));
+  assert(gaPrivacy.includes("Google Analytics") && gaPrivacy.includes("Cookie preferences") && !gaPrivacy.includes("Resend") && !gaPrivacy.includes("Turnstile"));
+  await build({ ...site, analyticsId: "UA-1234" }, siteDir, out, {});
+  assert(!read("public/index.html").includes("cookie-banner") && !read("public/privacy.html").includes("Google Analytics"), "malformed ID ignored");
+
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
 
@@ -104,6 +115,15 @@ const site = {
     } finally { globalThis.fetch = realFetch; }
   }
 
+  // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  const sub = await require("./test/fakes").startSubfolder();
+  const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
+  const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
+  assert.deepStrictEqual(copied.pages.map((p) => [p.path, p.title, p.file]), [["/blog/", "Home", "blog/index.html"], ["/blog/about/", "About", "blog/about/index.html"]]);
+  assert.deepStrictEqual(sub.forbidden, []);
+  assert(fs.existsSync(path.join(subOut, "blog/wp-content/uploads/a.png")) && fs.readFileSync(path.join(subOut, "404.html"), "utf8").includes("No such post"));
+  assert.strictEqual(fs.readFileSync(path.join(subOut, "_redirects"), "utf8"), "/blog/old/ /blog/about/ 301\n/ /blog/ 301\n");
+
   // Syntax-check every script, including the renderer ones nothing above loads.
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
   const { ensureWwwRedirect } = require("./lib/publish");
@@ -131,6 +151,12 @@ const site = {
   r = await runRedirect({ records: [], rules: [] });
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
   globalThis.fetch = realFetch;
+
+  const { bump } = require("./scripts/release-bump");
+  for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],
+    ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
+    assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
+  }
 
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {

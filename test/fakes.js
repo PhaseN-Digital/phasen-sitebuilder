@@ -99,4 +99,25 @@ ${body}
   return { ...site, forbidden };
 }
 
-module.exports = { startWordPress, startElementor, PNG };
+// WordPress in a subfolder (/blog/) under an unrelated root site. `forbidden`
+// collects requests outside the folder or into WordPress's admin.
+async function startSubfolder() {
+  let B;
+  const forbidden = [];
+  const site = await listen((req, res) => {
+    const u = new URL(req.url, B);
+    const html = (status, title, body) => { res.writeHead(status, { "content-type": "text/html" }); res.end(`<!doctype html><html><head><title>${title} &#8211; Sub Blog</title><meta property="og:site_name" content="Sub Blog"><link rel="https://api.w.org/" href="${B}/blog/wp-json/"></head><body>${body}</body></html>`); };
+    if (u.pathname === "/blog") { res.writeHead(301, { location: `${B}/blog/` }); return res.end(); }
+    if (u.pathname === "/blog/") return html(200, "Home", `<a href="${B}/blog/about/">About</a> <a href="/">Main site</a> <a href="${B}/shop/">Shop</a> <a href="${B}/blog/wp-admin/">Admin</a> <img src="${B}/blog/wp-content/uploads/a.png">`);
+    if (u.pathname === "/blog/about/") return html(200, "About", `<a href="${B}/blog/">Home</a> <a href="${B}/blog/old/">Old</a>`);
+    if (u.pathname === "/blog/old/") { res.writeHead(301, { location: `${B}/blog/about/` }); return res.end(); }
+    if (u.pathname === "/blog/wp-content/uploads/a.png") { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+    if (!u.pathname.startsWith("/blog/") || u.pathname.startsWith("/blog/wp-admin")) forbidden.push(u.pathname);
+    if (u.pathname.startsWith("/blog/")) return html(404, "Not found", "<h1>No such post</h1>");
+    res.writeHead(404); res.end();
+  });
+  B = site.url;
+  return { ...site, forbidden };
+}
+
+module.exports = { startWordPress, startElementor, startSubfolder, PNG };
