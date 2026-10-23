@@ -75,6 +75,10 @@ const site = {
     { id: "pick", label: "pick", type: "text", required: false },
     { id: "msg", label: "msg", type: "textarea", required: false },
   ]);
+  // Builder detection looks for the builder's markup, not just its name (an image called Elementor-Logo.svg).
+  const { detectBuilder } = require("./lib/mirror");
+  assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
+  assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
   // Syntax-check every script, including the renderer ones nothing above loads.
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
@@ -103,6 +107,12 @@ const site = {
   r = await runRedirect({ records: [], rules: [] });
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
   globalThis.fetch = realFetch;
+
+  const { bump } = require("./scripts/release-bump");
+  for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],
+    ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
+    assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
+  }
 
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
