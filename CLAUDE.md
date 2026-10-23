@@ -172,6 +172,12 @@ are not, so add them yourself.
 - The update banner's Download URL must stay limited to https github.com
   (`pickDownload`), and `SITEBUILDER_UPDATE_URL` must stay ignored when
   `app.isPackaged`.
+- Theme sources (`lib/theme-sources.js`): a GitHub token must only ever be
+  sent to the API host, which is why the tarball request uses
+  `redirect: "manual"` and fetches the redirect without it (test.js asserts
+  this). `SITEBUILDER_GITHUB_API` (the fake in the regression suite) must stay
+  ignored when `app.isPackaged`. A site using a source theme builds from its
+  own copy in `sites/<id>/theme/` (`site.themeSource`), never from the cache.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.

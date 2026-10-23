@@ -83,18 +83,25 @@ const site = {
     <input type="email" name="f[email]" placeholder="Email" aria-required="true"><input type="radio" name="pick" value="a"><input type="radio" name="pick" value="b"><textarea name="msg"></textarea><button type="submit">Go</button>`), [
     { id: "f[name]", label: "Name", type: "text", required: true },
     { id: "f[email]", label: "Email", type: "email", required: true },
-    { id: "pick", label: "pick", type: "choice", required: false },
-    { id: "msg", label: "msg", type: "textarea", required: false },
+    { id: "pick", label: "Pick", type: "choice", required: false },
+    { id: "msg", label: "Msg", type: "textarea", required: false },
   ]);
   // Conditional branches (hidden at first) aren't required; checkbox groups are one question; plugin honeypots aren't questions (#22).
   assert.deepStrictEqual(formFields(`<div class="ff-el-group has-conditions"><p><input name="why" required></div>
     <div data-conditional-logic="visible"><input name="phone" type="tel" required></div><label for="c">Colours</label><span><input type="checkbox" name="c[]" id="c-0" required><label for="c-0">Red</label></span><input type="checkbox" name="c[]" id="c-1">
     <select name="size" multiple><option>S</option></select><textarea name="ak_hp_textarea"></textarea><input name="item_1__fluent_sf">`), [
-    { id: "why", label: "why", type: "text", required: false },
-    { id: "phone", label: "phone", type: "tel", required: true },
+    { id: "why", label: "Why", type: "text", required: false },
+    { id: "phone", label: "Phone", type: "tel", required: true },
     { id: "c[]", label: "Colours", type: "choice", required: true },
-    { id: "size", label: "size", type: "choice", required: false },
+    { id: "size", label: "Size", type: "choice", required: false },
   ]);
+  // Unlabelled questions take a wrapping <label>, aria-labelledby, CF7's <p> text, the placeholder, then a tidied field name (#29).
+  assert.deepStrictEqual(formFields(`<h2>Get in touch</h2><p><label>Your name <span>*</span><br><input name="your-name"></label></p>
+    <span id="q">Phone number</span><input type="tel" name="tel-1" aria-labelledby="q"><p>Your Message<br><span class="wpcf7-form-control-wrap"><textarea name="your-message">Hi</textarea></span></p>
+    <p>Pick one<br><span class="wpcf7-radio"><span><label><input type="radio" name="menu" value="A"><span>A</span></label></span><span><label><input type="radio" name="menu" value="B"><span>B</span></label></span></span></p>
+    <p><span class="wpcf7-acceptance"><label><input type="checkbox" name="acceptance-1"><span>I agree to the privacy policy</span></label></span></p>
+    <div><input name="city" placeholder="Town"></div><div><input name="f[first_name]"></div><div><select name="budget[]"><option>£1k</option></select></div>`).map((f) => f.label),
+    ["Your name *", "Phone number", "Your Message", "Pick one", "I agree to the privacy policy", "Town", "First name", "Budget"]);
   // Builder detection looks for the builder's markup, not just its name (an image called Elementor-Logo.svg).
   const { detectBuilder } = require("./lib/mirror");
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
@@ -195,6 +202,40 @@ const site = {
   fs.writeFileSync(path.join(tdir, "Bad_Id", "preview.png"), "not a png");
   const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
   for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
+
+  // Theme sources (#58), against the fake GitHub API in test/fakes.js.
+  const ts = require("./lib/theme-sources");
+  assert.deepStrictEqual(ts.parseSource("https://github.com/Acme/Themes.x/"), { owner: "Acme", repo: "Themes.x", folder: null, branch: null, spec: "Acme/Themes.x" });
+  assert.strictEqual(ts.parseSource(" acme/t/a/b@feature/x ").spec, "acme/t/a/b@feature/x");
+  for (const bad of ["acme", "acme/t x", "../x", "acme/t/../y", "a/b?c"]) assert.throws(() => ts.parseSource(bad), /owner\/repo/, bad);
+  const fakeGh = await require("./test/fakes").startGitHub();
+  try {
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sb-theme-cache-"));
+    const opts = { cacheRoot, api: fakeGh.url };
+    const pub = await ts.fetchSource(ts.PUBLIC_SOURCE, opts);
+    assert.deepStrictEqual(Object.keys(pub.themes).sort(), ["broken", "clean", "retro"]);
+    assert.deepStrictEqual(pub.themes.retro.errors, []);
+    assert(pub.themes.retro.preview.startsWith("data:image/png;base64,") && pub.themes.retro.label === "Retro");
+    assert(pub.themes.broken.errors.join().includes("evil.js") && !pub.themes.broken.label);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, opts), /private repository, add an access token/);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /token has Contents/);
+    await assert.rejects(ts.fetchSource("limited/repo", opts), /download limit/);
+    await assert.rejects(ts.fetchSource(`${ts.PUBLIC_SOURCE}/nope`, opts), /no theme folders in nope\//);
+    fakeGh.requests.length = 0;
+    const priv = await ts.fetchSource(fakeGh.privateSpec, { ...opts, token: fakeGh.token });
+    assert.deepStrictEqual(Object.keys(priv.themes), ["night"]);
+    assert.deepStrictEqual(priv.themes.night.errors, []);
+    assert.deepStrictEqual(fakeGh.requests.map(([host, , auth]) => [host === fakeGh.host, auth]), [[true, `Bearer ${fakeGh.token}`], [false, null]], "token only sent to the API host");
+    await assert.rejects(ts.installTheme(ts.PUBLIC_SOURCE, "broken", cacheRoot, siteDir), /isn't available/);
+    await ts.installTheme(fakeGh.privateSpec, "night", cacheRoot, siteDir);
+    fs.rmSync(cacheRoot, { recursive: true }); // builds never need the cache
+    const out2 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themed-"));
+    await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
+    const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
+    assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+  } finally {
+    await fakeGh.close();
+  }
 
   // Update check (#37): version compare and installer pick.
   const { isNewer, pickDownload } = require("./lib/update");

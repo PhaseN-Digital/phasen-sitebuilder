@@ -91,14 +91,17 @@ checks the whole app end to end with no accounts, against fake sites in
 
 - the real app, driven headlessly by `test/drive.js`: the update banner
   (from a fake `latest.json`), create a site, preview,
-  edit + rebuild, theme switch, image upload; editable WordPress import from
+  edit + rebuild, theme switch, image upload (theme sources point at a fake
+  GitHub API with a public and a token-protected repo, so nothing reaches
+  GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
   Elementor site (kit colours/font, header logo); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert);
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
-  the copied site's redirect, and form POSTs (honeypot, validation, captcha,
+  a theme from a theme source (downloaded from the fake GitHub API, then
+  built from the site's own copy), the copied site's redirect, and form POSTs (honeypot, validation, captcha,
   a valid message logged instead of emailed since `RESEND_API_KEY` is unset).
 
 It prints one line per check and a summary, and exits non-zero on any
@@ -135,6 +138,22 @@ published always-pass test secret, so that one step needs internet access.
   themes`); an identical copy is vendored into the public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo for its CI, so **keep the two copies in sync**: change both together.
+- Theme sources (`lib/theme-sources.js`, Design tab › Theme sources): extra
+  themes from GitHub repos. The public
+  [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
+  repo is always listed (it can be hidden, not removed); users add
+  `owner/repo`, optionally `owner/repo/folder@branch` (default folder:
+  `themes/` if present, else the repo root). Each source is downloaded as one
+  tarball through the GitHub REST API (one request per refresh, so the
+  unauthenticated 60/hour limit goes a long way), every theme in it is
+  validated with `lib/theme-validate.js`, and the result is cached in
+  `userData/theme-cache`. Private repos use a fine-grained token (Contents:
+  Read-only) saved per source with `safeStorage`; it's only ever sent to
+  api.github.com, and the download link GitHub redirects to is fetched
+  without it. Choosing a theme copies it to `sites/<id>/theme/` and sets
+  `site.themeSource`, so builds and publishes never need the repo or the
+  cache; "Update theme" downloads the source again and replaces the copy
+  (colours and font stay as the user set them).
 
 ## Privacy page
 
@@ -199,6 +218,11 @@ inside an element hidden when the page loads (conditional branches: inline
 `data-conditional-logic`) aren't required, in the Worker or in the markup.
 Checkboxes, radios and selects are `choice` questions; a ticked checkbox
 group or multi-select is posted as an array and joined in the email.
+A question's wording comes from its `<label>` (by `for` or wrapping it),
+`aria-labelledby`, `aria-label`, text just before it in the same paragraph
+(Contact Form 7's `<p>Your Message<br><textarea>`), its placeholder, and
+last a tidied field name (`your-message` becomes "Your message"). Copied
+questions can't be renamed in the app yet.
 `runtime/form.js` listens in the capture
 phase so the page builder's own submit handler (which would post to
 WordPress) never runs. Turnstile key and thank-you message are filled in at
@@ -286,6 +310,13 @@ Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app
 in the Publish tab.
 
 ## Known gaps
+
+- Theme sources: a public-repo theme with the same id as a built-in one is
+  hidden (the built-in wins), so built-in themes can't be updated from the
+  repo. Sources are only downloaded when first listed, on "Refresh" and on
+  "Update theme"; there's no automatic check for newer versions. Tested
+  against a fake GitHub API and the real public repo, not yet with a real
+  private repo and token.
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

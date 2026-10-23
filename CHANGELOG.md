@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.0...phasen-sitebuilder-v0.4.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* read copied form questions from nearby text, not raw field names ([#89](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/89)) ([f692a46](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/f692a46651e580d6ffbebc77b75459352903b949))
+
 ## [0.4.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.3.0...phasen-sitebuilder-v0.4.0) (2026-10-23)
 
 
