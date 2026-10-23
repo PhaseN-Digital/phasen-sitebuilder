@@ -42,11 +42,20 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
+- Code signing switches on per OS once that OS's certificate secret exists
+  (repo Settings > Secrets and variables > Actions); without it the
+  installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
+  Developer ID Application .p12) and `CSC_KEY_PASSWORD`, plus `APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarisation.
+  Windows: `WIN_CSC_LINK` (base64 .pfx) and `WIN_CSC_KEY_PASSWORD`; Azure
+  Trusted Signing or a cloud-HSM certificate needs extra config (#32).
 
 ## How it fits together
 
 - `main.js`: Electron main process. Stores sites under the app's user-data
-  folder (`sites/<id>/site.json` + `assets/`), serves the live preview through a
+  folder (`sites/<id>/site.json` + `assets/`; uploads nothing uses any more
+  are left out of published/exported sites and deleted at the next startup
+  once a day old), serves the live preview through a
   `preview://` protocol, and holds API keys encrypted with the OS keychain
   (`safeStorage`).
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
@@ -61,6 +70,19 @@ use `scripts/check-commit.js`.
 - `runtime/`: the form Worker and browser script copied into every site.
 - `themes/`: `base.css` plus one small override file per theme. Colours/fonts
   are CSS variables the user picks in the Design tab.
+
+## Privacy page
+
+Sites with a form (built-in or copied) get a generated, `noindex` privacy
+notice at `/privacy` (`renderPrivacy` in `lib/build.js`), linked from the
+footer of built pages. It names the business, the contact email (the first
+used form's "Send messages to", else Publish › Form messages), what each form
+collects, Cloudflare/Turnstile and Resend as processors, how long messages
+are kept and the visitor's UK GDPR rights. The business name and retention
+sentence are set in Publish › Privacy page, which says it's a starting point,
+not legal advice. Exact-copy pages keep their own footer, so there the user
+is told the address and adds the link themselves; the notice doesn't cover
+third-party services the copied pages load.
 
 ## Importing from WordPress
 
@@ -102,7 +124,13 @@ all of them. Everything else gets a per-page `p-` key. Layout elements are
 never tagged. `app/copy-edit-frame.js` is injected into the preview to make
 tagged elements editable. Edits are written into the stored HTML (not the
 live DOM, which page scripts have modified), and the build strips the tags.
-There's no undo yet: re-import to start over.
+Before a page's file is first edited, its HTML is kept in
+`sites/<id>/mirror-original/`, for "Revert this page to the original" (which
+also drops that page's share of site-wide edits; they stay on other pages).
+"Undo last change" restores every file the last edit or revert wrote,
+from an in-memory stack of 20 per site, so undo history is lost when the app
+restarts. Sites edited before this existed keep their state at the first edit
+since then as the "original".
 
 Not copied: anything only reachable
 via a query string (`?p=123` permalinks, search results), files only loaded
@@ -151,18 +179,22 @@ in the Publish tab.
 
 ## Known gaps
 
-- Installers are unsigned: Windows SmartScreen and macOS Gatekeeper will warn.
-  Add signing (Apple Developer ID + notarisation, a Windows code-signing
-  certificate) before giving the app to clients.
+- Installers are unsigned until the signing secrets are added (see "Commits
+  and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing
+  is wired up but untested, since no certificates exist yet (#6).
 - The macOS build is Apple Silicon only (`macos-latest`). Add an Intel runner
   to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect, analytics/cookie banner, privacy page, or
-  removal of unused uploaded images.
+- No `www` → apex redirect or analytics/cookie banner.
 - Imports have been tried against a handful of public WordPress sites
-  (Elementor, Divi, block theme, classic theme with the REST API hidden), but
-  not yet against a real client site. Known problems from that: re-wired forms
-  with conditional or checkbox-group fields, and cart/comment forms (#22);
-  WordPress installed in a subfolder (#23); editable import of Divi/WPBakery
-  pages, block-theme home pages and SVG logos (#24).
+  (Elementor, Divi, block theme, classic theme with the REST API hidden) and
+  one Elementor 4 site of the maintainer's own (both imports, with an
+  application password), but not yet against a client site. Known problems
+  from that: re-wired forms with conditional or checkbox-group fields, and
+  cart/comment forms (#22); WordPress installed in a subfolder (#23); editable
+  import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
+  Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
+  colours, font and logo (#42); pages rendered as the logged-in user when an
+  application password is given (#43); copied analytics tags and remote Google
+  Fonts (#45).

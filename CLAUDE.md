@@ -35,8 +35,8 @@ the roadmap.
    If none exists, create one (label `bug`, `enhancement` or `task`) and add
    it to the project. Don't start untracked work, however small.
 2. **Move it to In Progress** when work starts, **Testing** once the change
-   is in a PR or on `main` but not yet verified in the real app or against
-   real services, and **Done** once verified. Closing the issue (via
+   is in a PR awaiting review or merged but not yet verified in the real app
+   or against real services, and **Done** once merged and verified. Closing the issue (via
    `Closes #n` in the PR) is not enough on its own; also set Status.
 3. **Reference the issue** in commits (`fix(publish): retry DNS (#12)`) and
    put `Closes #n` in the PR description.
@@ -84,6 +84,11 @@ are not, so add them yourself.
   CI and release-please run on. The `pre-commit` hook refuses commits on
   `main`. The same applies to release-please's own release PR: merge it, don't
   push version bumps by hand.
+- **Every change needs the maintainer's review.** Open the PR, wait for CI,
+  move the issue to Testing, and stop. Never merge a PR yourself, including
+  release-please's. GitHub can't enforce this yet (branch protection needs a
+  paid plan for this private repo, see #5), so it's a rule to follow, not a
+  safety net.
 - Commit messages must be Conventional Commits (`feat:`, `fix(scope):`,
   `feat!:` …). The `commit-msg` hook and CI's `commits` job both run
   `scripts/check-commit.js`. release-please silently skips anything else,
@@ -97,19 +102,44 @@ are not, so add them yourself.
   trigger other workflows, so a separate one would never run.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix.
+- `package.json`'s `allowScripts` approves the dependency install scripts
+  those binaries need (esbuild, workerd, electron-winstaller, fsevents on
+  macOS). Newer npm blocks unapproved install scripts, which would ship
+  installers without working binaries. If `npm ci` warns about a package
+  "not yet covered by allowScripts", review it and run
+  `npm install-scripts approve --no-allow-scripts-pin <pkg>` (or `deny`).
 
 ## Things that are easy to break
 
 - Wrangler runs on Electron's own Node (`ELECTRON_RUN_AS_NODE`) and needs
   `lib/wrangler-argv-fix.js` preloaded. Without it, yargs misreads argv
-  under Electron.
+  under Electron. That's also why signed macOS builds rely on
+  electron-builder's defaults: hardened runtime with its stock entitlements
+  (allow-jit, allow-unsigned-executable-memory, disable-library-validation),
+  which the self-spawned Node also needs, and the RunAsNode fuse left on.
+  Don't add `electronFuses.runAsNode: false` or a narrower entitlements file.
+- Signing in `release-please.yml`'s `build` job is driven by secrets that
+  may be absent. Empty secrets must be unset before `npm run dist`
+  (electron-builder treats an empty `CSC_LINK` as set, and Windows falls back
+  to `CSC_LINK`), as the "Build installer" step does.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
 - Copied (exact-copy) pages are edited in their stored HTML via
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed
-  without migrating existing sites.
+  without migrating existing sites. Every write to a copied page goes
+  through `mirror:keep-original` first and pushes onto the undo stack
+  (`applyCopyEdit`), or undo/revert will miss it.
+- `pagePaths` in `lib/build.js` always reserves the generated privacy page's
+  slug and returns it under the `privacy` key (page ids are hex, so it can't
+  clash); `build()` drops it when the site has no forms, and the editor uses
+  `paths.privacy` to decide whether to show the Privacy page settings.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
+- Uploaded images are found by `usedAssets` (`lib/build.js`) searching
+  site.json and the `mirror`/`mirror-original` HTML for `assets/<name>`. A
+  new place that stores an image reference must be covered there, or
+  publishing drops the image and startup deletes it. Never prune while the
+  editor is running: copied-page undo history lives in its memory.

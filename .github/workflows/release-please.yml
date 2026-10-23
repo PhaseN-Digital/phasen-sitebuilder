@@ -16,7 +16,7 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           config-file: release-please-config.json
@@ -38,18 +38,48 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned until certificates exist, see README
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run dist
-      - uses: actions/upload-artifact@v4
+      # Signing switches on by itself once the secrets exist (see README).
+      # A missing secret expands to "", which electron-builder doesn't treat as
+      # unset (an empty CSC_LINK is still imported on macOS), so empty ones are
+      # unset here, along with the other OS's certificate: Windows falls back
+      # to CSC_LINK when WIN_CSC_LINK is missing. With no certificate for this
+      # OS, CSC_IDENTITY_AUTO_DISCOVERY=false keeps the build unsigned.
+      # Notarisation runs when the APPLE_* vars are set too (macOS only).
+      - name: Build installer
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            cert=WIN_CSC_LINK
+          else
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+            cert=CSC_LINK
+          fi
+          for v in CSC_LINK CSC_KEY_PASSWORD WIN_CSC_LINK WIN_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          if [ -z "${!cert}" ]; then
+            echo "No $cert secret: building unsigned"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID # can't notarise unsigned
+          fi
+          npm run dist
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           path: |
