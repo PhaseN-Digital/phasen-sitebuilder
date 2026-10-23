@@ -189,3 +189,58 @@ jobs:
         run: |
           shopt -s nullglob
           gh release upload "$TAG" dist/*.exe dist/*.dmg --clobber
+
+  # Public downloads and the app's update check (#37). This repo is private,
+  # so its release assets aren't downloadable by users: each release's
+  # installers plus a latest.json (read by lib/update.js) also go to a release
+  # with the same tag in the public, releases-only repo. Only built files and
+  # the release notes are copied there, never source.
+  # RELEASES_TOKEN is a fine-grained token with Contents read/write on that
+  # repo only. It is set on the one step that needs it and never echoed
+  # (GitHub masks secrets in logs anyway).
+  publish-installers:
+    needs: [release-please, release, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.release-please.outputs.release_created == 'true' || needs.release.outputs.release_created == 'true') }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name || needs.release.outputs.tag_name }}
+      PUBLIC_REPO: PhaseN-Digital/phasen-sitebuilder-releases
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: dist
+      # Same names GitHub gives the private release's assets (spaces become
+      # dots), so the URLs in latest.json are exactly what gets uploaded. ls
+      # fails the job if an installer is missing rather than publishing a
+      # latest.json that points nowhere.
+      - name: Write latest.json and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          for f in *' '*; do [ -e "$f" ] && mv "$f" "${f// /.}"; done
+          exe=$(ls *.exe)
+          arm=$(ls *-arm64.dmg)
+          x64=$(ls *-x64.dmg)
+          base="https://github.com/$PUBLIC_REPO/releases/download/$TAG"
+          jq -n --arg version "${TAG##*-v}" --arg notes "https://github.com/$PUBLIC_REPO/releases/tag/$TAG" \
+            --arg win "$base/$exe" --arg arm "$base/$arm" --arg x64 "$base/$x64" \
+            '{version: $version, notes: $notes, downloads: {"win32-x64": $win, "darwin-arm64": $arm, "darwin-x64": $x64}}' > latest.json
+          cat latest.json
+          # The changelog section for this version, from the private release.
+          gh release view "$TAG" --json body -q .body > ../notes.md
+      # Created with its files in one go (gh publishes it once they're up), so
+      # releases/latest/download/latest.json never points at a release without
+      # installers. On a rerun the release exists, so the files are replaced.
+      - name: Publish to the public releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if gh release view "$TAG" -R "$PUBLIC_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$PUBLIC_REPO" dist/* --clobber
+          else
+            gh release create "$TAG" -R "$PUBLIC_REPO" dist/* --title "PhaseN Site Builder ${TAG##*-v}" --notes-file notes.md --latest
+          fi

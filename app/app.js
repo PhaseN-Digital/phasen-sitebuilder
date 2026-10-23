@@ -436,6 +436,23 @@ function publishTab() {
 let logSink = () => {};
 onPublishLog((line) => logSink(line));
 
+// "Version X is available" (#37). Main only goes online once a day, so asking
+// every few hours is cheap and catches releases while the app stays open.
+// Dismissing hides that version until the app restarts.
+let dismissedUpdate;
+async function checkForUpdate() {
+  const u = await call("update:check").catch(() => null);
+  if (!u || u.version === dismissedUpdate) return;
+  $("#update-banner")?.remove();
+  $(".sidebar").append(h("div", { id: "update-banner", className: "update-banner", role: "status" },
+    h("span", {}, `Version ${u.version} is available`),
+    h("div", { className: "inline" },
+      h("button", { className: "primary", onclick: () => call("open", u.url) }, "Download"),
+      h("button", { onclick: () => { dismissedUpdate = u.version; $("#update-banner").remove(); } }, "Dismiss"))));
+}
+checkForUpdate();
+setInterval(checkForUpdate, 6 * 3600e3);
+
 (async () => {
   [THEMES, settings] = await Promise.all([call("themes"), call("settings:get")]);
   await loadSites();
