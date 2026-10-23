@@ -154,7 +154,8 @@ const handlers = {
   "sites:get": async (id) => ({ site: await readSite(id), url: (await readState(id)).url || null }),
   "sites:save": async (site) => {
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
-    return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true })); // page id -> preview path
+    const defaultTo = (await loadSettings()).email; // the privacy page's contact address
+    return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true, defaultTo })); // page id -> preview path
   },
   "sites:delete": async (id) => {
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });

@@ -115,6 +115,10 @@ are not, so add them yourself.
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed
   without migrating existing sites.
+- `pagePaths` in `lib/build.js` always reserves the generated privacy page's
+  slug and returns it under the `privacy` key (page ids are hex, so it can't
+  clash); `build()` drops it when the site has no forms, and the editor uses
+  `paths.privacy` to decide whether to show the Privacy page settings.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.

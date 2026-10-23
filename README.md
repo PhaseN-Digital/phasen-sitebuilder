@@ -62,6 +62,19 @@ use `scripts/check-commit.js`.
 - `themes/`: `base.css` plus one small override file per theme. Colours/fonts
   are CSS variables the user picks in the Design tab.
 
+## Privacy page
+
+Sites with a form (built-in or copied) get a generated, `noindex` privacy
+notice at `/privacy` (`renderPrivacy` in `lib/build.js`), linked from the
+footer of built pages. It names the business, the contact email (the first
+used form's "Send messages to", else Publish › Form messages), what each form
+collects, Cloudflare/Turnstile and Resend as processors, how long messages
+are kept and the visitor's UK GDPR rights. The business name and retention
+sentence are set in Publish › Privacy page, which says it's a starting point,
+not legal advice. Exact-copy pages keep their own footer, so there the user
+is told the address and adds the link themselves; the notice doesn't cover
+third-party services the copied pages load.
+
 ## Importing from WordPress
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
@@ -151,5 +164,5 @@ in the Publish tab.
   to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect, analytics/cookie banner, privacy page, or
-  removal of unused uploaded images.
+- No `www` → apex redirect, analytics/cookie banner, or removal of unused
+  uploaded images.

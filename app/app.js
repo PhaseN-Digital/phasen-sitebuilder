@@ -406,6 +406,15 @@ function publishTab() {
         site.domain
           ? `Your site will be at https://${site.domain.name}. Email records are added for you automatically.`
           : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."])),
+    paths.privacy && step("5. Privacy page", Boolean(site.privacy?.owner),
+      h("p", {}, "Because your site has a form, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
+        site.mirror ? "Copied pages keep their own footer, so add a link to it there if you can." : "It's linked from the footer of every page.",
+        " It uses the email address form messages are sent to."),
+      h("div", { className: "warn" }, "This is a starting point, not legal advice. Read it and check it matches how you handle people's information.",
+        site.mirror ? " Copied pages may also load other services (analytics, maps, videos) that it doesn't mention." : ""),
+      text("Business or legal name", site.privacy ||= {}, "owner", "Who's responsible for the information people send, e.g. \"Smith Plumbing Ltd\" or \"Jane Smith, trading as Smith Plumbing\". Leave blank to use the website name.", { placeholder: site.name }),
+      area("How long you keep messages", site.privacy, "retention", "Leave blank to say you keep them only as long as you need to deal with the enquiry."),
+      h("button", { onclick: () => { $("#preview").src = `preview://${site.id}${paths.privacy}?t=${Date.now()}`; } }, "Show it in the preview")),
     h("div", { className: "inline", style: "align-items:center;margin-top:8px" }, publishBtn,
       h("button", { onclick: async () => { try { await call("sites:export", site.id); } catch (e) { status.textContent = errorText(e); } } }, "Save as package…")),
     status,
