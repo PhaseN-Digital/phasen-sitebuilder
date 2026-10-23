@@ -7,6 +7,10 @@ const { build, pruneAssets, themes, fonts } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite } = require("./lib/mirror");
+const update = require("./lib/update");
+
+// The regression suite points this at a fake latest.json; never honoured in a packaged build.
+const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
 
 // preview://<site-id>/... serves the last preview build so the editor can
 // show the real generated site in an iframe, no local web server needed.
@@ -256,6 +260,26 @@ const handlers = {
       await fs.rm(dir, { recursive: true, force: true });
       throw e;
     }
+  },
+  // Fetches latest.json at most once a day; the result is kept in settings so
+  // a restart the same day still shows the banner. Offline or any error: no
+  // banner, and the next call tries again.
+  "update:check": async () => {
+    let { updateCheck } = await loadSettings();
+    if (!updateCheck || Date.now() - updateCheck.at > 24 * 3600e3) {
+      try {
+        const res = await net.fetch(UPDATE_URL, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) return null;
+        const latest = await res.json();
+        updateCheck = { at: Date.now(), version: String(latest.version), url: update.pickDownload(latest.downloads, process.platform, process.arch) };
+      } catch {
+        return null;
+      }
+      const s = await loadSettings(); // re-read: settings may have changed during the fetch
+      s.updateCheck = updateCheck;
+      await saveSettings(s);
+    }
+    return updateCheck.url && update.isNewer(updateCheck.version, app.getVersion()) ? { version: updateCheck.version, url: updateCheck.url } : null;
   },
   open: (url) => /^https:\/\//.test(url) && shell.openExternal(url),
 };

@@ -11,7 +11,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor } = require("./fakes");
+const { startWordPress, startElementor, startUpdates } = require("./fakes");
 
 const ROOT = path.join(__dirname, "..");
 const ELECTRON = require("electron"); // the binary's path, when required from Node
@@ -39,12 +39,12 @@ function start(cmd, args, opts = {}) {
   return child;
 }
 
-async function driveApp(wp, el) {
+async function driveApp(wp, el, updates) {
   const result = path.join(OUT, "drive.json"), shots = path.join(OUT, "screenshots");
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url };
+  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -129,14 +129,15 @@ async function workerChecks(sites) {
       const form = s.site.forms[0];
       check("worker (exact copy): home page", home.status === 200 && home.text.includes(`data-form="${form.id}"`), home.status);
       check("worker (exact copy): editor tags and placeholders gone", !/data-sb-edit|__TURNSTILE_SITEKEY__|__FORM_SUCCESS__/.test(home.text) && home.text.includes('data-sitekey="REAL_SITEKEY"'));
-      check("worker (exact copy): copied page", (await get(s.base, "/about/")).status === 200);
+      const about = await get(s.base, "/about/");
+      check("worker (exact copy): copied page", about.status === 200);
+      check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);
       const missing = await get(s.base, "/no-such-page/");
       check("worker (exact copy): copied 404 page", missing.status === 404 && missing.text.includes("Oops, nothing here"), missing.status);
       await formChecks("worker (exact copy) form", s, form.id, { "form_fields[name]": "Regression Name", "form_fields[email]": "jo@example.com", "form_fields[message]": "Regression message body" });
-      const about = await get(s.base, "/about/");
       check("worker (exact copy): cart and comment forms not re-wired", s.site.forms.length === 1 && !about.text.includes("data-form="), s.site.forms.map((f) => f.name));
       const r = await post(s.base, `/api/forms/${form.id}`, { "form_fields[name]": "Ticker", "form_fields[email]": "jo@example.com", "form_fields[services][]": ["Design", "Build"], "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
       await sleep(500);
@@ -148,15 +149,15 @@ async function workerChecks(sites) {
 (async () => {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
-  const wp = await startWordPress(), el = await startElementor();
+  const wp = await startWordPress(), el = await startElementor(), updates = await startUpdates();
   try {
-    const sites = await driveApp(wp, el);
+    const sites = await driveApp(wp, el, updates);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {
-    await wp.close(); await el.close();
+    await wp.close(); await el.close(); await updates.close();
   }
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed in ${Math.round((Date.now() - started) / 1000)}s.`);

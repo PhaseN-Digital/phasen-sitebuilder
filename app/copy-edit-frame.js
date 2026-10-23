@@ -20,6 +20,8 @@
     const el = event.target.closest("[data-sb-edit]");
     if (!el || el.isContentEditable) return;
     if (el.tagName === "IMG") return send({ type: "image", key: el.dataset.sbEdit, alt: el.alt, src: el.currentSrc || el.src });
+    const links = el.closest("a") ? [el.closest("a")] : el.querySelectorAll("a");
+    send({ type: "link", key: el.dataset.sbEdit, href: links.length === 1 ? links[0].getAttribute("href") || "" : null });
     const before = el.innerHTML;
     el.contentEditable = "true";
     el.focus();
@@ -46,7 +48,13 @@
   }, true);
 
   window.addEventListener("message", (event) => {
-    if (event.source !== parent || event.data?.sb !== true || event.data.type !== "image-updated") return;
+    if (event.source !== parent || event.data?.sb !== true) return;
+    if (event.data.type === "link-updated") {
+      // Kept in step with the stored page, or a later text edit would send the old link back.
+      for (const el of document.querySelectorAll(`[data-sb-edit="${CSS.escape(event.data.key)}"]`)) (el.closest("a") || el.querySelector("a"))?.setAttribute("href", event.data.href);
+      return;
+    }
+    if (event.data.type !== "image-updated") return;
     document.querySelectorAll(`img[data-sb-edit="${CSS.escape(event.data.key)}"]`).forEach((img) => {
       ["srcset", "sizes", "data-src", "data-srcset"].forEach((a) => img.removeAttribute(a));
       img.src = event.data.src;

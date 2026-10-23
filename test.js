@@ -189,6 +189,20 @@ const site = {
   const errs = validateTheme(path.join(tdir, "Bad_Id")).join("\n");
   for (const want of ["folder name", "evil.js", '"label"', '"font"', "colors.background", "colors.accent", '"extra"', "@import", "javascript:", "'<'", "not a PNG"]) assert(errs.includes(want), want);
 
+  // Update check (#37): version compare and installer pick.
+  const { isNewer, pickDownload } = require("./lib/update");
+  for (const [a, b] of [["0.4.0", "0.3.9"], ["v1.0.0", "0.10.0"], ["0.10.0", "0.9.0"], ["1.2.10", "1.2.9"]]) assert(isNewer(a, b), `${a} > ${b}`);
+  for (const [a, b] of [["0.3.0", "0.3.0"], ["0.9.0", "0.10.0"], ["1.0", "0.1.0"], ["x.y.z", "0.1.0"], [undefined, "0.1.0"], ["2.0.0", "1.0.0.0"]]) assert(!isNewer(a, b), `${a} !> ${b}`);
+  const gh = "https://github.com/PhaseN-Digital/phasen-sitebuilder-releases/releases/download/v1/";
+  const downloads = { "win32-x64": gh + "a.exe", "darwin-arm64": gh + "b.dmg", "darwin-x64": "http://github.com/c.dmg", "linux-x64": "https://evil.example/github.com/d" };
+  assert.strictEqual(pickDownload(downloads, "win32", "x64"), gh + "a.exe");
+  assert.strictEqual(pickDownload(downloads, "win32", "arm64"), gh + "a.exe");
+  assert.strictEqual(pickDownload(downloads, "darwin", "arm64"), gh + "b.dmg");
+  assert.strictEqual(pickDownload(downloads, "darwin", "x64"), null, "http refused");
+  assert.strictEqual(pickDownload(downloads, "linux", "x64"), null, "other hosts refused");
+  assert.strictEqual(pickDownload({ "darwin-x64": "https://github.com.evil.example/x" }, "darwin", "x64"), null);
+  assert.strictEqual(pickDownload(undefined, "darwin", "arm64"), null);
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);

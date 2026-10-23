@@ -13,8 +13,9 @@ npm run test:regression   # end-to-end suite, see "Regression tests"
 npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 ```
 
-Installers for both platforms are attached to each GitHub release, see
-"Commits and releases".
+Users download installers from the public
+[phasen-sitebuilder-releases](https://github.com/PhaseN-Digital/phasen-sitebuilder-releases/releases/latest)
+repo (this one is private), see "Commits and releases".
 
 ## Roadmap and issues
 
@@ -58,6 +59,22 @@ use `scripts/check-commit.js`.
   `regression-failed` label and a comment, and is never merged. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
+- Public downloads and update check (#37): once `build` succeeds for a
+  release, `publish-installers` copies the installers and a generated
+  `latest.json` (`version`, `notes` URL, `downloads` keyed
+  `<platform>-<arch>`: `win32-x64`, `darwin-arm64`, `darwin-x64`) to a
+  release with the same tag in the public
+  `PhaseN-Digital/phasen-sitebuilder-releases` repo, with this release's
+  changelog section as its notes. No source goes there. It authenticates
+  with the `RELEASES_TOKEN` secret (fine-grained, Contents read/write on
+  that repo only). The app fetches
+  `releases/latest/download/latest.json` from it at startup, at most once a
+  day (`updateCheck` in settings.json), and if that version is newer shows a
+  dismissible "Version X is available" banner in the sidebar whose Download
+  button opens the installer for this platform in the browser (only https
+  github.com URLs). Offline or any error, it stays silent and tries again
+  next time. `SITEBUILDER_UPDATE_URL` overrides the URL in unpackaged runs
+  only (the regression suite uses it).
 - Code signing switches on per OS once that OS's certificate secret exists
   (repo Settings > Secrets and variables > Actions); without it the
   installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
@@ -72,7 +89,8 @@ use `scripts/check-commit.js`.
 checks the whole app end to end with no accounts, against fake sites in
 `test/fakes.js`:
 
-- the real app, driven headlessly by `test/drive.js`: create a site, preview,
+- the real app, driven headlessly by `test/drive.js`: the update banner
+  (from a fake `latest.json`), create a site, preview,
   edit + rebuild, theme switch, image upload; editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
@@ -196,6 +214,11 @@ all of them. Everything else gets a per-page `p-` key. Layout elements are
 never tagged. `app/copy-edit-frame.js` is injected into the preview to make
 tagged elements editable. Edits are written into the stored HTML (not the
 live DOM, which page scripts have modified), and the build strips the tags.
+Clicking a tagged text element that is (or is inside, or holds exactly one)
+link also shows a Link panel for changing where it points, applied like any
+other edit (site-wide for `s-` keys, undoable). Targets must be an http(s)
+address, `mailto:`, `tel:` or a copied page's path. Links on images (e.g. a
+logo) can't be changed yet.
 Before a page's file is first edited, its HTML is kept in
 `sites/<id>/mirror-original/`, for "Revert this page to the original" (which
 also drops that page's share of site-wide edits; they stay on other pages).
@@ -259,6 +282,10 @@ Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app
 in the Publish tab.
 
 ## Known gaps
+
+- Updates are notify-only: the user downloads and runs the new installer
+  themselves. Silent auto-update (electron-updater) needs signed macOS
+  builds (#6). Dismissing the banner lasts until the app restarts.
 
 - Installers are unsigned until the signing secrets are added (see "Commits
   and releases"): Windows SmartScreen and macOS Gatekeeper will warn. Signing

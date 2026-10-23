@@ -123,4 +123,18 @@ async function startSubfolder() {
   return { ...site, forbidden };
 }
 
-module.exports = { startWordPress, startElementor, startSubfolder, PNG };
+// A releases host serving latest.json for the update check (#37), so the app
+// shows its "Version 99.0.0 is available" banner. Has an installer for every
+// platform/arch the suite runs on.
+async function startUpdates() {
+  const dl = "https://github.com/PhaseN-Digital/phasen-sitebuilder-releases/releases/download/v99.0.0/";
+  const latest = { version: "99.0.0", notes: dl, downloads: Object.fromEntries(["win32", "darwin", "linux"].flatMap((p) => ["x64", "arm64"].map((a) => [`${p}-${a}`, `${dl}${p}-${a}`]))) };
+  const site = await listen((req, res) => {
+    if (req.url !== "/latest.json") { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(latest));
+  });
+  return { ...site, latestUrl: `${site.url}/latest.json` };
+}
+
+module.exports = { startWordPress, startElementor, startSubfolder, startUpdates, PNG };
