@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.1...phasen-sitebuilder-v0.4.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **release:** only auto-merge a patch release onto the main it tested ([#101](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/101)) ([032888f](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/032888fda79ad923ac9e172bdadaf665e730ace6))
+
 ## [0.4.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.0...phasen-sitebuilder-v0.4.1) (2026-10-23)
 
 
