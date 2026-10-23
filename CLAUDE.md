@@ -114,7 +114,9 @@ are not, so add them yourself.
 - Copied (exact-copy) pages are edited in their stored HTML via
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed
-  without migrating existing sites.
+  without migrating existing sites. Every write to a copied page goes
+  through `mirror:keep-original` first and pushes onto the undo stack
+  (`applyCopyEdit`), or undo/revert will miss it.
 - `pagePaths` in `lib/build.js` always reserves the generated privacy page's
   slug and returns it under the `privacy` key (page ids are hex, so it can't
   clash); `build()` drops it when the site has no forms, and the editor uses
