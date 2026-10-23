@@ -69,6 +69,8 @@ async function startElementor() {
   const form = () => `<form class="elementor-form" method="post" name="Enquiry" action="${B}/wp-admin/admin-ajax.php" novalidate>
 <input type="hidden" name="post_id" value="5"><label for="form-field-name">Your Name</label><input type="text" name="form_fields[name]" id="form-field-name" required="required">
 <input type="email" name="form_fields[email]" placeholder="Email Address" aria-required="true"><textarea name="form_fields[message]" placeholder="Message"></textarea>
+<label for="form-field-services">Services</label><input type="checkbox" name="form_fields[services][]" id="form-field-services-0" value="Design"><label for="form-field-services-0">Design</label><input type="checkbox" name="form_fields[services][]" id="form-field-services-1" value="Build"><label for="form-field-services-1">Build</label>
+<div class="elementor-field-group" style="display:none"><input type="text" name="form_fields[other]" placeholder="Other, not required" required></div><textarea name="ak_hp_textarea" style="display:none"></textarea>
 <button type="submit" class="elementor-button">Send</button></form>`;
   const menu = (title) => `<ul class="elementor-nav-menu">${[["Home", B], ["About", "/about/"], ["Contact", B + "/contact/"]].map(([t, h]) => `<li class="menu-item${t === title ? " current-menu-item" : ""}"><a href="${h}">${t}</a></li>`).join("")}</ul>`;
   const page = (title, body) => `<!doctype html><html><head><title>${title} &#8211; Acme Ltd</title><meta property="og:site_name" content="Acme Ltd">
@@ -88,7 +90,8 @@ ${body}
 <script>document.addEventListener("submit", function(){ window.__elementorPosted = true; });</script></body></html>`;
   const routes = () => ({
     "/": page("Home", `<h1 class="elementor-heading-title">Welcome to Acme</h1>${form()}`),
-    "/about/": page("About", "<h2>About us</h2>"),
+    "/about/": page("About", `<h2>About us</h2><form class="cart" method="post" enctype="multipart/form-data"><input type="number" name="quantity" value="1"><button type="submit" name="add-to-cart" value="7">Add to basket</button></form>
+<form action="${B}/wp-comments-post.php" method="post" id="commentform" class="comment-form"><textarea id="comment" name="comment" required></textarea><input id="author" name="author" required><input type="hidden" name="comment_post_ID" value="5"><input type="submit" value="Post Comment"></form>`),
     "/contact-us/": page("Contact", form()),
     "/wp-content/uploads/elementor/css/post-5.css": `@import "extra.css";\n.elementor-section{background:url(../../2024/01/bg.png) no-repeat}\n@font-face{font-family:Acme;src:url("/wp-content/themes/hello/fonts/acme.woff2") format("woff2")}\nbody{font-family:Acme;background:#102030;color:#fff}`,
     "/wp-content/uploads/elementor/css/extra.css": `.elementor-heading-title{color:#ff9900;background-image:url(data:image/png;base64,AAAA)}`,
