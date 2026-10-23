@@ -187,6 +187,11 @@ are not, so add them yourself.
   without migrating existing sites. Every write to a copied page goes
   through `mirror:keep-original` first and pushes onto the undo stack
   (`applyCopyEdit`), or undo/revert will miss it.
+- `page.path` (set only by the editable WordPress import) is the page's
+  address and wins over its title, so renames never move it; `pagePaths`
+  returns `{ paths, redirects }` and `build()` writes the redirects (old
+  addresses it couldn't keep) to `_redirects`. Don't derive kept pages'
+  addresses from titles.
 - `pagePaths` in `lib/build.js` always reserves the generated privacy page's
   slug and returns it under the `privacy` key (page ids are hex, so it can't
   clash); `build()` drops it when the site has no forms and no valid
