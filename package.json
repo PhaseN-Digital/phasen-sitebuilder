@@ -43,7 +43,8 @@
       "target": "dmg",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "category": "public.app-category.productivity"
-    }
+    },
+    "afterPack": "scripts/after-pack.js"
   },
   "engines": {
     "node": ">=24"
