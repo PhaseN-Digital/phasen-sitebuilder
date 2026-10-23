@@ -31,7 +31,8 @@ hook refuses them). Commit messages must follow [Conventional Commits](https://w
 (`feat: …`, `fix(publish): …`, `feat!: …` for breaking changes).
 release-please silently skips anything else, so the change would be missing
 from the changelog and version bump. `npm install` sets up a `commit-msg` hook
-(`.githooks/`) that checks this locally; CI checks every commit in a PR. Both
+(`.githooks/`) that checks this locally; CI checks every commit in a PR and the PR title. PRs
+are squash merged, so the PR title becomes the commit on `main`. Both
 use `scripts/check-commit.js`.
 
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check

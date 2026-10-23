@@ -104,9 +104,12 @@ are not, so add them yourself.
   issues are safe to start next. Workers declare `Depends on #n` and
   `Files:` in their PR bodies. GitHub can't enforce any of this yet
   (branch protection needs a paid plan for this private repo, see #5).
-- Commit messages must be Conventional Commits (`feat:`, `fix(scope):`,
-  `feat!:` …). The `commit-msg` hook and CI's `commits` job both run
-  `scripts/check-commit.js`. release-please silently skips anything else,
+- Commit messages and PR titles must be Conventional Commits (`feat:`,
+  `fix(scope):`, `feat!:` …). PRs are squash merged (`gh pr merge <n>
+  --squash --delete-branch`; the repo allows squash merges only, with
+  `allow_merge_commit=false`), so the PR title becomes the one commit on
+  `main` that release-please reads. The `commit-msg` hook and CI's `commits`
+  job (PR title plus every commit) both run `scripts/check-commit.js`. release-please silently skips anything else,
   dropping it from the changelog and version bump. Don't bypass the hook with
   `--no-verify`.
 - `ci.yml` runs `npm test` on PRs and pushes to `main`.
@@ -120,7 +123,7 @@ are not, so add them yourself.
 - Release gate (same workflow, #47): when release-please opens or updates
   the release PR (`prs_created`), `regression` calls `regression.yml` on the
   PR's head sha, `release-gate` labels/comments or, for a passing patch
-  (`scripts/release-bump.js`), merges it with `--match-head-commit`, and
+  (`scripts/release-bump.js`), squash-merges it with `--match-head-commit`, and
   `release` runs release-please again to create the release. `build` runs on
   either release-please job's `release_created` and checks out the tag
   (after a gate merge `github.sha` is the pre-release commit). It all stays
