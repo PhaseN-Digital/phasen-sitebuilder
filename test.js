@@ -184,6 +184,9 @@ const site = {
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
   }
+  const titleOk = (t) => { try { execFileSync(process.execPath, ["scripts/check-commit.js", "--message", t], { stdio: "ignore" }); return true; } catch { return false; } };
+  for (const t of ["feat: x", "fix(publish): y", "ci!: z"]) assert(titleOk(t), t);
+  for (const t of ["Add thing", "Merge branch x", 'Revert "feat: x"', "", "feat:x"]) assert(!titleOk(t), t);
 
   console.log("ok:", out);
 })();
