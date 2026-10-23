@@ -1,0 +1,29 @@
+name: Bug report
+description: Something in the app or a generated site doesn't work as expected.
+labels: [bug]
+projects: ["PhaseN-Digital/3"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Editor, Themes / design, Forms, Images, Publishing (Cloudflare / Resend), WordPress import, Exact-copy editing, Installer / app startup, Generated website]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version and OS
+      placeholder: 0.2.0 on Windows 11
+  - type: textarea
+    id: details
+    attributes:
+      label: Error messages, publish log, screenshots
+      description: Paste the publish/import log if there is one. Remove any API keys first.
