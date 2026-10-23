@@ -24,7 +24,8 @@ app.on("browser-window-created", (_e, win) => {
   win.webContents.once("did-finish-load", async () => {
     const run = (js) => win.webContents.executeJavaScript(js);
     const frame = () => win.webContents.mainFrame.frames[0];
-    const inFrame = (js) => frame().executeJavaScript(js);
+    // Times out: a call into a frame that's being replaced by a reload can otherwise never settle.
+    const inFrame = (js) => Promise.race([frame().executeJavaScript(js), sleep(5000).then(() => { throw new Error("preview frame didn't answer"); })]);
     const shot = async (name) => fs.writeFileSync(path.join(SB_SHOTS, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     // Polls fn until it returns something truthy; returns the last value either way.
     const waitFor = async (fn, ms = 15000) => {
@@ -200,6 +201,30 @@ app.on("browser-window-created", (_e, win) => {
       check("revert: save state", (await run(`document.querySelector(".save-state").textContent`)) === "Page reverted");
       await clickButton("Undo last change"); await settle();
       check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
+
+      // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
+      const aboutLinks = (html) => (html.match(/<a href="([^"]*)">About<\/a>/g) || []).join(" ");
+      await waitFor(() => inFrame(`Boolean(document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'))`));
+      await inFrame(`document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]').click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); 0`);
+      const shown = await waitFor(() => run(`document.querySelector(".copy-link input")?.value`), 5000);
+      check("copy link: panel shows the current target", shown === "/about/", shown);
+      const setLink = (v) => run(`{ const i = document.querySelector(".copy-link input"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("change")); 0 }`);
+      const beforeBad = grab();
+      for (const bad of ["javascript:alert(1)", "/not-a-page/", "ftp://x.example/"]) { await setLink(bad); await settle(); }
+      check("copy link: invalid targets refused", /Use a web address/.test(await run(`document.querySelector(".copy-link .error")?.textContent`)) && JSON.stringify(grab()) === JSON.stringify(beforeBad));
+      await setLink("/contact-us/"); await settle();
+      now = grab();
+      check("copy link: site-wide change on every page", all.every((f) => aboutLinks(now[f]) === '<a href="/contact-us/">About</a> <a href="/contact-us/">About</a>'), all.map((f) => aboutLinks(now[f])));
+      check("copy link: preview updated", await waitFor(() => inFrame(`document.querySelectorAll('a[href="/about/"]').length === 0`), 3000));
+      await clickButton("Undo last change"); await settle();
+      now = grab();
+      check("copy link: undone everywhere", all.every((f) => aboutLinks(now[f]) === '<a href="/about/">About</a> <a href="/about/">About</a>'), all.map((f) => aboutLinks(now[f])));
+      await waitFor(() => inFrame(`Boolean(document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'))`));
+      await inFrame(`document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]').click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); 0`);
+      await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
+      await shot("copy-link").catch(() => {});
+      await setLink("https://example.com/about-acme"); await settle();
+      check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
     }
   });
 });
