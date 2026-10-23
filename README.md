@@ -53,7 +53,9 @@ use `scripts/check-commit.js`.
 ## How it fits together
 
 - `main.js`: Electron main process. Stores sites under the app's user-data
-  folder (`sites/<id>/site.json` + `assets/`), serves the live preview through a
+  folder (`sites/<id>/site.json` + `assets/`; uploads nothing uses any more
+  are left out of published/exported sites and deleted at the next startup
+  once a day old), serves the live preview through a
   `preview://` protocol, and holds API keys encrypted with the OS keychain
   (`safeStorage`).
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
@@ -177,5 +179,4 @@ in the Publish tab.
   to the matrix if needed.
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect, analytics/cookie banner, or removal of unused
-  uploaded images.
+- No `www` → apex redirect or analytics/cookie banner.

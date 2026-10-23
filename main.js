@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { build, themes } = require("./lib/build");
+const { build, pruneAssets, themes } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite } = require("./lib/mirror");
@@ -261,6 +261,9 @@ for (const [channel, fn] of Object.entries(handlers)) {
 }
 
 app.whenReady().then(() => {
+  // Replaced/removed images (#14); see pruneAssets for why only at startup.
+  handlers["sites:list"]().then((sites) => Promise.all(sites.map(async ({ id }) => pruneAssets(await readSite(id), siteDir(id)))))
+    .catch((e) => console.error("Couldn't remove unused images:", e));
   protocol.handle("preview", async (request) => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host)) return new Response("Not found", { status: 404 });
