@@ -54,5 +54,11 @@ const site = {
     { id: "msg", label: "msg", type: "textarea", required: false },
   ]);
 
+  // Syntax-check every script, including the renderer ones nothing above loads.
+  const { execFileSync } = require("node:child_process");
+  for (const dir of [".", "app", "lib", "runtime", "scripts"]) {
+    for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
+  }
+
   console.log("ok:", out);
 })();

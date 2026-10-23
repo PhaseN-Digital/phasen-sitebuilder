@@ -12,8 +12,27 @@ npm test         # builder self-check
 npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
 ```
 
-Installers for both platforms: run the `build` workflow (Actions tab), or push a
-`v*` tag.
+Installers for both platforms are attached to each GitHub release, see
+"Commits and releases".
+
+## Commits and releases
+
+Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat: …`, `fix(publish): …`, `feat!: …` for breaking changes).
+release-please silently skips anything else, so the change would be missing
+from the changelog and version bump. `npm install` sets up a `commit-msg` hook
+(`.githooks/`) that checks this locally; CI checks every commit in a PR. Both
+use `scripts/check-commit.js`.
+
+- `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
+  on PRs.
+- `release-please.yml`: maintains a release PR (version bump in
+  `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
+  the `build` job then builds the Windows and macOS installers and attaches
+  them to it. Running the workflow by hand ("Run workflow") builds
+  installers as run artifacts without releasing. Builds live in this
+  workflow, not a tag-triggered one, because GitHub won't trigger workflows
+  from release-please's `GITHUB_TOKEN` tags.
 
 ## How it fits together
 
