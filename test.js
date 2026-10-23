@@ -63,6 +63,17 @@ const site = {
   await build({ ...site, privacy: { owner: "Bob Ltd", retention: "A year." } }, siteDir, out, {});
   assert(read("public/privacy.html").includes("run by Bob Ltd") && read("public/privacy.html").includes("<p>A year.</p>") && read("public/privacy.html").includes("contact us through the form"));
 
+  // Analytics: consent banner + consent.js only with a valid ID, never gtag before consent; analytics alone still gets a privacy page.
+  assert(!home.includes("cookie-banner") && !fs.existsSync(path.join(out, "public/consent.js")), "no banner without an ID");
+  await build({ ...site, pages: site.pages.slice(0, 1), analyticsId: " g-abc123 " }, siteDir, out, {});
+  const gaHome = read("public/index.html"), gaPrivacy = read("public/privacy.html");
+  assert(gaHome.includes('id="cookie-banner" class="cookie-banner" hidden') && gaHome.includes('<script src="/consent.js" data-ga-id="G-ABC123">') && gaHome.includes("reopenCookieBanner()"));
+  for (const f of ["public/index.html", "public/404.html", "public/privacy.html"]) assert(!/googletagmanager|gtag\(/.test(read(f)), `no gtag before consent in ${f}`);
+  assert(read("public/consent.js").includes("googletagmanager") && gaHome.includes('<a href="/privacy">Privacy</a>'));
+  assert(gaPrivacy.includes("Google Analytics") && gaPrivacy.includes("Cookie preferences") && !gaPrivacy.includes("Resend") && !gaPrivacy.includes("Turnstile"));
+  await build({ ...site, analyticsId: "UA-1234" }, siteDir, out, {});
+  assert(!read("public/index.html").includes("cookie-banner") && !read("public/privacy.html").includes("Google Analytics"), "malformed ID ignored");
+
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
 
