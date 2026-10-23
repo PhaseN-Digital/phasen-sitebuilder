@@ -1,0 +1,38 @@
+name: regression
+
+# End-to-end suite (npm run test:regression, see test/regression.js). Too slow
+# for every PR, so it runs on release-please's release PRs, by hand, and from
+# other workflows via workflow_call (the release gate, #47).
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: npm ci
+      - run: npm run test:regression
+        env:
+          SB_OUT: ${{ runner.temp }}/regression
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-output
+          path: |
+            ${{ runner.temp }}/regression/screenshots
+            ${{ runner.temp }}/regression/*.log
+            ${{ runner.temp }}/regression/drive.json
+          if-no-files-found: ignore

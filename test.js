@@ -105,7 +105,7 @@ const site = {
   globalThis.fetch = realFetch;
 
   const { execFileSync } = require("node:child_process");
-  for (const dir of [".", "app", "lib", "runtime", "scripts"]) {
+  for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
   }
 
