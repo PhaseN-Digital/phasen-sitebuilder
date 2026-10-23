@@ -138,6 +138,10 @@ async function workerChecks(sites) {
       const missing = await get(s.base, "/no-such-page/");
       check("worker (exact copy): copied 404 page", missing.status === 404 && missing.text.includes("Oops, nothing here"), missing.status);
       await formChecks("worker (exact copy) form", s, form.id, { "form_fields[name]": "Regression Name", "form_fields[email]": "jo@example.com", "form_fields[message]": "Regression message body" });
+      check("worker (exact copy): cart and comment forms not re-wired", s.site.forms.length === 1 && !about.text.includes("data-form="), s.site.forms.map((f) => f.name));
+      const r = await post(s.base, `/api/forms/${form.id}`, { "form_fields[name]": "Ticker", "form_fields[email]": "jo@example.com", "form_fields[services][]": ["Design", "Build"], "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
+      await sleep(500);
+      check("worker (exact copy): checkbox group sent whole, hidden branch not required", r.json?.ok === true && s.child.output.includes("Services: Design, Build"), r);
     } finally { await s.child.stop(); }
   }
 }

@@ -151,8 +151,9 @@ app.on("browser-window-created", (_e, win) => {
 
       const home = read(path.join(M, "index.html"));
       const form = s.forms[0];
-      check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false]]), s.forms);
+      check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false], ["form_fields[services][]", "choice", false], ["form_fields[other]", "text", false]]), s.forms);
       check("exact copy: form re-wired", form && home.includes(`data-form="${form.id}"`) && !home.includes("admin-ajax") && home.includes("cf-turnstile") && home.includes('name="website"') && home.includes("/form.js"));
+      check("exact copy: hidden branch loses only its required attribute", home.includes('placeholder="Other, not required">'));
       check("exact copy: search form left alone", /<form role="search"(?![^>]*data-form)/.test(home));
 
       // Copy vs structure tagging.

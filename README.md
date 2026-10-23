@@ -190,8 +190,15 @@ so far (`test/fakes.js`).
 POST forms are re-wired in place, keeping their markup and styling: the
 questions are read from the form's fields, and the form gets a `data-form`
 id, honeypot and Turnstile widget. The same form on many pages (a footer
-newsletter form) becomes one form. Log-in forms (anything with a password
-field) are left alone. `runtime/form.js` listens in the capture
+newsletter form) becomes one form. Log-in, search, cart/checkout and comment
+forms (by password field, class or WordPress field names) are left alone.
+Plugin honeypot fields (Akismet, Fluent Forms) aren't questions. Fields
+inside an element hidden when the page loads (conditional branches: inline
+`display:none`, `hidden`, Fluent's `has-conditions`, Gravity/Divi
+`data-conditional-logic`) aren't required, in the Worker or in the markup.
+Checkboxes, radios and selects are `choice` questions; a ticked checkbox
+group or multi-select is posted as an array and joined in the email.
+`runtime/form.js` listens in the capture
 phase so the page builder's own submit handler (which would post to
 WordPress) never runs. Turnstile key and thank-you message are filled in at
 build time.
@@ -293,9 +300,9 @@ in the Publish tab.
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
   application password), but not yet against a client site. Known problems
-  from that: re-wired forms with conditional or checkbox-group fields, and
-  cart/comment forms (#22); editable
-  import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
+  from that: conditional-field detection in re-wired forms is built from
+  plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
+  Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
   Elementor 3 runtime-loaded scripts (#11); editable import of Elementor
   colours, font and logo (#42); copied analytics tags and remote Google
   Fonts (#45).
