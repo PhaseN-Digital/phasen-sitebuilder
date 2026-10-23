@@ -185,8 +185,12 @@ app.on("browser-window-created", (_e, win) => {
       check("tagging: layout untagged", !/<(section|div) class="elementor-(section|container|column)[^"]*"[^>]*data-sb-edit/.test(home));
       check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(path.join(M, f)).includes(`data-sb-edit="${footer}"`)));
 
-      // Preview: our submit handler wins over Elementor's.
-      await waitFor(() => inFrame(`Boolean(document.querySelector(".elementor-form"))`));
+      // Preview: our submit handler wins over Elementor's. The editor opens on site.pages[0], which is
+      // whichever page the crawl finished first (not always the one with the form), so load the home
+      // page explicitly and wait for that load (by its ?t=) to have run /form.js, which comes after the form.
+      const since = Date.now();
+      await run(`pageId = site.pages.find((p) => p.mirror === "/").id; refreshPreview(); 0`);
+      await waitFor(() => inFrame(`+new URLSearchParams(location.search).get("t") >= ${since} && typeof onTurnstileLoad === "function" && Boolean(document.querySelector(".elementor-form"))`));
       await inFrame(`document.querySelector("#form-field-name").value = "A"; document.querySelector('[name="form_fields[email]"]').value = "a@b.co"; document.querySelector(".elementor-form").requestSubmit()`).catch(() => {});
       const status = await waitFor(() => inFrame(`document.querySelector(".form-status").textContent`), 3000);
       check("exact copy: preview form doesn't post to WordPress", /once your website is published/.test(status || "") && !(await inFrame("window.__elementorPosted || false")), status);
