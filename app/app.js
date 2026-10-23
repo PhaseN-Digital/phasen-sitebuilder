@@ -1,6 +1,6 @@
 // The whole editor UI. State lives in `site`; text inputs mutate it in place
 // (so typing never loses focus), structural changes call renderTab().
-const { call, onPublishLog } = window.cms;
+const { call, onPublishLog, onImportLog } = window.cms;
 
 let THEMES, site, publishedUrl, paths = {}, settings;
 let tab = "design", pageId = null, formId = null, previewMobile = false, publishing = false, publishLog = "";
@@ -35,14 +35,18 @@ const move = (list, i, d) => { const j = i + d; if (j < 0 || j >= list.length) r
 const thumbUrl = (src) => `preview://${site.id}/${src}`;
 
 // Resize in the browser with canvas: no native image library to package.
+async function saveImage(siteId, blob, max) {
+  const bmp = await createImageBitmap(blob);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const canvas = new OffscreenCanvas(Math.round(bmp.width * scale), Math.round(bmp.height * scale));
+  canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  const webp = await canvas.convertToBlob({ type: "image/webp", quality: 0.85 });
+  return call("images:save", siteId, new Uint8Array(await webp.arrayBuffer()));
+}
+
 async function processImage(file, max) {
   try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-    const canvas = new OffscreenCanvas(Math.round(bmp.width * scale), Math.round(bmp.height * scale));
-    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const blob = await canvas.convertToBlob({ type: "image/webp", quality: 0.85 });
-    return await call("images:save", site.id, new Uint8Array(await blob.arrayBuffer()));
+    return await saveImage(site.id, file, max);
   } catch {
     alert(`Sorry, "${file.name}" couldn't be used. Try a JPG or PNG photo.`);
     return null;
@@ -98,7 +102,8 @@ function save() {
 
 function refreshPreview() {
   const frame = $("#preview");
-  if (frame) frame.src = `preview://${site.id}${paths[pageId] || "/"}?t=${Date.now()}`;
+  const editingCopy = tab === "pages" && site.pages.find((p) => p.id === pageId)?.mirror;
+  if (frame) frame.src = `preview://${site.id}${paths[pageId] || "/"}?t=${Date.now()}${editingCopy ? "&sb-edit" : ""}`;
 }
 
 // ---------- sites ----------
@@ -136,7 +141,7 @@ function renderEditor() {
       h("header", { className: "panel-head" },
         h("div", { className: "row" }, h("h1", {}, site.name), h("span", { className: "save-state" }, "All changes saved")),
         h("div", { className: "tabs" }, tabs.map(([id, label]) =>
-          h("button", { className: tab === id ? "active" : "", onclick: () => { tab = id; renderEditor(); } }, label)))),
+          h("button", { className: tab === id ? "active" : "", onclick: () => { tab = id; selectedCopyImage = null; renderEditor(); } }, label)))),
       h("div", { className: "panel-body", id: "tab" })),
     h("section", { className: `preview${previewMobile ? " mobile" : ""}` },
       h("div", { className: "preview-bar" },
@@ -161,6 +166,7 @@ function renderTab() {
 function designTab() {
   const { themes, fonts } = THEMES;
   return [
+    site.mirror && h("div", { className: "warn" }, "Pages copied from WordPress keep their original design. These settings only apply to pages you add here."),
     text("Website name", site, "name"),
     area("Short description", site, "description", "Shown under your site's name in Google search results."),
     h("h3", { className: "section-title" }, "Theme"),
@@ -186,6 +192,7 @@ function designTab() {
 const SECTION_TYPES = {
   hero: { label: "Banner", make: () => ({ heading: "A big headline", text: "", image: null, buttonText: "", buttonPage: "" }) },
   text: { label: "Text & image", make: () => ({ heading: "A heading", text: "Your text here.", image: null, imageLeft: false }) },
+  richtext: { label: "Rich text", make: () => ({ html: "<h2>A heading</h2><p>Your text here.</p>" }) },
   gallery: { label: "Photo gallery", make: () => ({ heading: "Gallery", images: [] }) },
   form: { label: "Form", make: () => ({ heading: "Get in touch", text: "", formId: site.forms[0]?.id || "", buttonText: "Send" }) },
 };
@@ -217,6 +224,15 @@ function sectionEditor(s) {
           save(); renderTab();
         }) }, "Add photos…"))];
     }
+    case "richtext": {
+      // Stored images are "assets/x.webp"; the editor shows them via preview://.
+      const viewPrefix = `preview://${site.id}/assets/`;
+      const editor = h("div", { className: "rich", contentEditable: "true", innerHTML: s.html.replaceAll('src="assets/', `src="${viewPrefix}`),
+        oninput: () => { s.html = sanitizeHtml(editor.innerHTML.replaceAll(viewPrefix, "assets/")); save(); } });
+      const tool = (label, command, arg) => h("button", { className: "icon", title: label, onmousedown: (e) => { e.preventDefault(); document.execCommand(command, false, arg); } }, label);
+      return [h("div", { className: "inline toolbar" }, tool("Bold", "bold"), tool("Italic", "italic"), tool("Heading", "formatBlock", "h2"),
+        tool("Subheading", "formatBlock", "h3"), tool("Paragraph", "formatBlock", "p"), tool("• List", "insertUnorderedList"), tool("1. List", "insertOrderedList")), editor];
+    }
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
         h("p", { className: "hint" }, "Edit the form's questions in the Forms tab.")];
@@ -226,14 +242,15 @@ function sectionEditor(s) {
 function pagesTab() {
   const page = site.pages.find((p) => p.id === pageId) || site.pages[0];
   const index = site.pages.indexOf(page);
+  const copied = page.mirror && copiedPageCard(page);
   return [
     h("div", { className: "chips" },
-      site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
+      site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
       h("button", { onclick: () => {
         const p = { id: rid(), title: "New page", sections: [{ id: rid(), type: "text", ...SECTION_TYPES.text.make() }] };
         site.pages.push(p); pageId = p.id; save(); renderTab();
       } }, "+ Add page")),
-    h("div", { className: "card" },
+    copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
       h("div", { className: "inline" },
         h("button", { disabled: index === 0, onclick: () => move(site.pages, index, -1) }, "Move left in menu"),
@@ -255,7 +272,7 @@ function pagesTab() {
           } }, "✕")),
         sectionEditor(s))),
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
-      h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`))),
+      h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
 }
 
@@ -273,7 +290,7 @@ function formsTab() {
     } }, "+ New form"));
   if (!form) return [chips, h("p", {}, "No forms yet.")];
 
-  const used = site.pages.filter((p) => p.sections.some((s) => s.type === "form" && s.formId === form.id)).map((p) => p.title);
+  const used = [...(form.shownOn || []), ...site.pages.filter((p) => p.sections.some((s) => s.type === "form" && s.formId === form.id)).map((p) => p.title)];
   return [
     chips,
     h("p", { className: "hint" }, used.length ? `Shown on: ${used.join(", ")}` : "Not on any page yet. Add a Form section in the Pages tab to show it."),
@@ -281,7 +298,10 @@ function formsTab() {
     text("Send messages to", form, "to", "Leave blank to use the address in Publish › Form messages.", { type: "email", placeholder: settings.email || "you@example.com" }),
     text("Thank-you message", form, "success"),
     h("h3", { className: "section-title" }, "Questions"),
-    form.fields.map((f, i) =>
+    form.mirrored ? [
+      h("p", { className: "hint" }, "This form was copied with your WordPress design, so its questions are set by the page and can't be changed here."),
+      h("ul", {}, form.fields.map((f) => h("li", {}, `${f.label}${f.required ? " (required)" : ""}`))),
+    ] : [form.fields.map((f, i) =>
       h("div", { className: "field-row" },
         h("input", { value: f.label, "aria-label": "Question", oninput: (e) => { f.label = e.target.value; save(); } }),
         h("select", { "aria-label": "Answer type", onchange: (e) => { f.type = e.target.value; save(); } },
@@ -290,9 +310,9 @@ function formsTab() {
         h("button", { className: "icon", title: "Move up", onclick: () => move(form.fields, i, -1) }, "↑"),
         h("button", { className: "icon", title: "Move down", onclick: () => move(form.fields, i, 1) }, "↓"),
         h("button", { className: "icon danger", title: "Delete question", disabled: form.fields.length === 1, onclick: () => { form.fields.splice(i, 1); save(); renderTab(); } }, "✕"))),
-    h("button", { onclick: () => { form.fields.push({ id: rid(), label: "New question", type: "text", required: false }); save(); renderTab(); } }, "+ Add question"),
+    h("button", { onclick: () => { form.fields.push({ id: rid(), label: "New question", type: "text", required: false }); save(); renderTab(); } }, "+ Add question")],
     h("hr", { style: "margin:24px 0;border:0;border-top:1px solid var(--line)" }),
-    h("button", { className: "danger", onclick: () => {
+    h("button", { className: "danger", disabled: Boolean(form.mirrored), onclick: () => {
       if (!confirm(`Delete the "${form.name}" form?${used.length ? " It will disappear from your pages." : ""}`)) return;
       site.forms.splice(site.forms.indexOf(form), 1); formId = site.forms[0]?.id; save(); renderTab();
     } }, "Delete this form"),

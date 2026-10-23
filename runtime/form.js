@@ -12,36 +12,39 @@ window.onTurnstileLoad = () => {
   });
 };
 
-document.querySelectorAll("form[data-form]").forEach((form) => {
+// Listens on window in the capture phase so it runs before, and stops, any
+// handler a copied WordPress page brings along (Elementor, Contact Form 7…)
+// that would otherwise also try to post to WordPress.
+window.addEventListener("submit", async (event) => {
+  const form = event.target.closest?.("form[data-form]");
+  if (!form) return;
+  event.preventDefault();
+  event.stopPropagation();
   const status = form.querySelector(".form-status");
-  const button = form.querySelector("button");
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!LIVE) {
-      status.textContent = "Forms start sending once your website is published.";
-      return;
-    }
-    status.className = "form-status";
-    status.textContent = "Sending…";
-    button.disabled = true;
-    try {
-      const response = await fetch(`/api/forms/${form.dataset.form}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(Object.fromEntries(new FormData(form))),
-      });
-      const result = await response.json();
-      if (!result.ok) throw new Error(result.error);
-      form.reset();
-      status.textContent = form.dataset.success;
-    } catch (error) {
-      status.className = "form-status error";
-      status.textContent = error.message || "Something went wrong, please try again.";
-    } finally {
-      button.disabled = false;
-      const widget = form.querySelector(".cf-turnstile");
-      if (window.turnstile && widget) turnstile.reset(widget.dataset.widgetId);
-    }
-  });
-});
+  const button = form.querySelector('[type="submit"]') || form.querySelector("button");
+  if (!LIVE) {
+    status.textContent = "Forms start sending once your website is published.";
+    return;
+  }
+  status.className = "form-status";
+  status.textContent = "Sending…";
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(`/api/forms/${form.dataset.form}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+    });
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.error);
+    form.reset();
+    status.textContent = form.dataset.success;
+  } catch (error) {
+    status.className = "form-status error";
+    status.textContent = error.message || "Something went wrong, please try again.";
+  } finally {
+    if (button) button.disabled = false;
+    const widget = form.querySelector(".cf-turnstile");
+    if (window.turnstile && widget) turnstile.reset(widget.dataset.widgetId);
+  }
+}, true);

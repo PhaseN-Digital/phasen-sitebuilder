@@ -21,7 +21,9 @@ Installers for both platforms: run the `build` workflow (Actions tab), or push a
   folder (`sites/<id>/site.json` + `assets/`), serves the live preview through a
   `preview://` protocol, and holds API keys encrypted with the OS keychain
   (`safeStorage`).
-- `app/`: the editor UI (plain HTML/CSS/JS, no framework).
+- `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
+  is the WordPress import screen and HTML sanitizer; `app/copied.js` and
+  `app/copy-edit-frame.js` edit exact-copy pages.
 - `lib/build.js`: `site.json` → `public/`, `worker/`, `wrangler.toml`. The
   preview, publish and "Save as package" all use it.
 - `lib/publish.js`: Cloudflare and Resend API calls, plus the bundled
@@ -31,6 +33,69 @@ Installers for both platforms: run the `build` workflow (Actions tab), or push a
 - `runtime/`: the form Worker and browser script copied into every site.
 - `themes/`: `base.css` plus one small override file per theme. Colours/fonts
   are CSS variables the user picks in the Design tab.
+
+## Importing from WordPress
+
+"Import from WordPress…" offers two kinds of import. "Decide for me" picks an
+exact copy when the home page shows a page builder (Elementor, Divi, Beaver
+Builder, WPBakery, Bricks, Oxygen, Avada) or there's no REST API, and the
+editable import otherwise.
+
+### Exact copy (`lib/mirror.js`)
+
+Crawls the rendered site from `/` (same-site links only, up to 500 pages and
+5,000 files) and saves each page's HTML plus every same-site CSS, JS, font
+and image at its original path under `sites/<id>/mirror/`. Since paths are
+kept, the only rewrite needed is stripping the site's domain from URLs
+(including JSON-escaped ones in inline scripts), so links, CSS `url()`s and
+srcsets keep working. Redirects found while crawling go into Cloudflare's
+`_redirects` file, and WordPress's own 404 page is copied.
+
+POST forms are re-wired in place, keeping their markup and styling: the
+questions are read from the form's fields, and the form gets a `data-form`
+id, honeypot and Turnstile widget. `runtime/form.js` listens in the capture
+phase so the page builder's own submit handler (which would post to
+WordPress) never runs. Turnstile key and thank-you message are filled in at
+build time.
+
+Copied pages are edited in place in the preview (Pages tab). `app/copied.js`
+separates copy from theme structure once, right after import: it tags text
+blocks (headings, paragraphs, list items, button text, page-builder text
+widgets) and images with a `data-sb-edit` key. Anything inside the header,
+menu, footer or sidebar (landmarks plus Elementor/Divi/Beaver/theme
+conventions) gets a site-wide `s-` key derived from its original text, so the
+same menu item or logo matches on every page and an edit there is applied to
+all of them. Everything else gets a per-page `p-` key. Layout elements are
+never tagged. `app/copy-edit-frame.js` is injected into the preview to make
+tagged elements editable. Edits are written into the stored HTML (not the
+live DOM, which page scripts have modified), and the build strips the tags.
+There's no undo yet: re-import to start over.
+
+Not copied: anything only reachable
+via a query string (`?p=123` permalinks, search results), files only loaded
+by JS at runtime (some page-builder widget scripts), feeds, file uploads in
+forms. Third-party assets (Google Fonts, CDNs) stay remote.
+
+### Editable import
+
+Uses the WordPress REST API. Credentials (username + application password) are optional:
+only needed if the site blocks public REST access. They're only sent over
+https and aren't stored.
+
+- Content: every published page becomes a page with a "Rich text" section.
+  `lib/wordpress.js` fetches; `app/wordpress.js` sanitizes with an allowlist
+  (scripts, iframes, forms, inline styles/handlers and `javascript:` links
+  are removed). Images are downloaded and re-encoded like uploads. Links
+  between imported pages are rewritten to the new pages; other links (posts,
+  files) keep pointing at the old site.
+- Pages that contained a WordPress form (Contact Form 7 etc.) get the
+  built-in contact form instead.
+- "Theme": WordPress themes are PHP, so only the name, tagline, logo,
+  colours and font style are copied, from the home page's global styles
+  (block themes). Classic themes mostly don't expose these, so they get a
+  built-in theme's defaults.
+- Not imported: blog posts, menus (page order follows WordPress's page
+  order), page layouts, plugins.
 
 ## What publishing does
 

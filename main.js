@@ -5,6 +5,8 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { build, themes } = require("./lib/build");
 const cf = require("./lib/publish");
+const wp = require("./lib/wordpress");
+const { mirrorSite } = require("./lib/mirror");
 
 // preview://<site-id>/... serves the last preview build so the editor can
 // show the real generated site in an iframe, no local web server needed.
@@ -17,6 +19,13 @@ const siteDir = (id) => {
   return data("sites", id);
 };
 const previewDir = (id) => data("preview", id);
+// A copied page's HTML file (exact-copy import), for app/copied.js to edit.
+const mirrorFile = (id, file) => {
+  const root = path.join(siteDir(id), "mirror");
+  const target = path.join(root, String(file));
+  if (!target.startsWith(root + path.sep) || !target.endsWith(".html")) throw new Error("Bad file");
+  return target;
+};
 const publishDir = (id) => data("publish", id);
 
 const readJson = (file, fallback) => fs.readFile(file, "utf8").then(JSON.parse, () => fallback);
@@ -37,6 +46,8 @@ const writeState = (id, s) => writeJson(path.join(siteDir(id), "publish.json"), 
 let buildQueue = Promise.resolve();
 const queueBuild = (fn) => (buildQueue = buildQueue.then(fn, fn));
 
+const workerNameFor = (name) => `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "site"}-${hex(2)}`;
+
 function newSite(name, theme) {
   const t = themes[theme] || themes.clean;
   const home = { id: hex(4), title: "Home", sections: [] };
@@ -55,7 +66,7 @@ function newSite(name, theme) {
     font: t.font,
     logo: null,
     domain: null,
-    workerName: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "site"}-${hex(2)}`,
+    workerName: workerNameFor(name),
     pages: [home, contact],
     forms: [
       {
@@ -137,13 +148,13 @@ const handlers = {
     const site = newSite(String(name).trim() || "My website", theme);
     await fs.mkdir(path.join(siteDir(site.id), "assets"), { recursive: true });
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
-    await queueBuild(() => build(site, siteDir(site.id), previewDir(site.id)));
+    await queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true }));
     return site;
   },
   "sites:get": async (id) => ({ site: await readSite(id), url: (await readState(id)).url || null }),
   "sites:save": async (site) => {
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
-    return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id))); // page id -> preview path
+    return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true })); // page id -> preview path
   },
   "sites:delete": async (id) => {
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });
@@ -209,6 +220,30 @@ const handlers = {
     const { cloudflare } = await loadSettings();
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];
   },
+  "wp:fetch": (url, username, password) => wp.fetchWordPress(url, username, password),
+  "wp:image": (url) => wp.downloadImage(url),
+  "mirror:read": (id, file) => fs.readFile(mirrorFile(id, file), "utf8"),
+  "mirror:write": (id, file, html) => fs.writeFile(mirrorFile(id, file), String(html)),
+  // Exact-copy import: see lib/mirror.js.
+  "wp:mirror": async (url, event) => {
+    const site = newSite("Imported website", "clean");
+    const dir = siteDir(site.id);
+    await fs.mkdir(path.join(dir, "assets"), { recursive: true });
+    try {
+      const result = await mirrorSite(url, path.join(dir, "mirror"), (line) => event.sender.send("import-log", line));
+      site.name = result.name || new URL(/^https?:/i.test(url) ? url : `https://${url}`).host;
+      site.workerName = workerNameFor(site.name);
+      site.pages = result.pages.map((p) => ({ id: hex(4), title: p.title, mirror: p.path, file: p.file, sections: [] }));
+      site.forms = result.forms.map((f) => ({ id: f.id, name: f.name, to: "", success: "Thanks, your message has been sent.", fields: f.fields, mirrored: true, shownOn: f.pages }));
+      site.mirror = { formFiles: result.formFiles };
+      await writeJson(path.join(dir, "site.json"), site);
+      await queueBuild(() => build(site, dir, previewDir(site.id), { preview: true }));
+      return site.id;
+    } catch (e) {
+      await fs.rm(dir, { recursive: true, force: true });
+      throw e;
+    }
+  },
   open: (url) => /^https:\/\//.test(url) && shell.openExternal(url),
 };
 
@@ -220,19 +255,34 @@ app.whenReady().then(() => {
   protocol.handle("preview", async (request) => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host)) return new Response("Not found", { status: 404 });
-    let p = decodeURIComponent(pathname);
-    // Images come straight from the site folder so a fresh upload shows
-    // before the next preview build finishes.
-    const root = p.startsWith("/assets/") ? siteDir(host) : path.join(previewDir(host), "public");
-    if (p.endsWith("/")) p += "index.html";
-    else if (!path.extname(p)) p += ".html";
-    const file = path.join(root, path.normalize(p));
-    if (!file.startsWith(root + path.sep)) return new Response("Not found", { status: 404 });
-    const res = await net.fetch(pathToFileURL(file).href).catch(() => net.fetch(pathToFileURL(path.join(previewDir(host), "public", "404.html")).href));
+    const p = decodeURIComponent(pathname);
+    if (p === "/__sb-edit.js") {
+      return new Response(await fs.readFile(path.join(__dirname, "app", "copy-edit-frame.js")), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
+    }
+    // Uploaded images come straight from the site folder so a fresh upload
+    // shows before the next preview build finishes; exact-copy pages are
+    // served from the site folder too rather than copied on every save.
+    const roots = p.startsWith("/assets/") ? [siteDir(host)] : [path.join(siteDir(host), "mirror"), path.join(previewDir(host), "public")];
+    const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
+    const find = async (candidates) => {
+      for (const name of candidates) for (const root of roots) {
+        const file = path.join(root, path.normalize(name));
+        if (file.startsWith(root + path.sep) && (await fs.stat(file).catch(() => null))?.isFile()) return file;
+      }
+    };
+    const found = await find(names);
+    const file = found || (await find(["/404.html"]));
+    if (!file) return new Response("Not found", { status: 404 });
+    // Copied pages open in edit mode on the Pages tab (app/copied.js).
+    if (found && new URL(request.url).searchParams.has("sb-edit") && found.endsWith(".html") && found.startsWith(path.join(siteDir(host), "mirror") + path.sep)) {
+      const html = (await fs.readFile(found, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    }
+    const res = await net.fetch(pathToFileURL(file).href);
     // Every save rewrites these files, so the preview must never cache them.
     const headers = new Headers(res.headers);
     headers.set("Cache-Control", "no-store");
-    return new Response(res.body, { status: res.status, headers });
+    return new Response(res.body, { status: found ? 200 : 404, headers });
   });
 
   const win = new BrowserWindow({

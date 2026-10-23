@@ -13,7 +13,7 @@ const site = {
   pages: [
     { id: "h", title: "Home", sections: [{ type: "hero", heading: "<script>x</script>", text: "Hi\n\nThere", buttonText: "Go", buttonPage: "c" }] },
     { id: "c", title: "Contact Us!", sections: [{ type: "form", formId: "contact", heading: "Ask", buttonText: "Send" }] },
-    { id: "d", title: "404", sections: [] },
+    { id: "d", title: "404", sections: [{ type: "richtext", html: '<p><a href="#page:c">Contact</a> <img src="assets/abc123.webp" alt=""></p>' }] },
   ],
   forms: [{ id: "contact", name: "Contact", to: "", success: "Thanks", fields: [
     { id: "name", label: "Name", type: "text", required: true },
@@ -38,10 +38,21 @@ const site = {
   assert(read("public/styles.css").includes("--primary-text: #111111"), "dark text on a yellow button");
   assert.strictEqual(JSON.parse(read("worker/forms.json")).contact.to, "owner@example.com");
   assert(read("wrangler.toml").includes("workers_dev = true") && !read("wrangler.toml").includes("custom_domain"));
+  assert(read("public/404-2.html").includes('<a href="/contact-us">Contact</a> <img src="/assets/abc123.webp"'), "richtext page links + image paths resolved");
   for (const f of ["public/404.html", "public/form.js", "worker/index.js"]) assert(fs.existsSync(path.join(out, f)), f);
 
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
+
+  // Exact-copy import reads WordPress forms' questions from their markup.
+  const { formFields } = require("./lib/mirror");
+  assert.deepStrictEqual(formFields(`<input type="hidden" name="post_id"><label for="n">Name</label><input id="n" name="f[name]" required>
+    <input type="email" name="f[email]" placeholder="Email" aria-required="true"><input type="radio" name="pick" value="a"><input type="radio" name="pick" value="b"><textarea name="msg"></textarea><button type="submit">Go</button>`), [
+    { id: "f[name]", label: "Name", type: "text", required: true },
+    { id: "f[email]", label: "Email", type: "email", required: true },
+    { id: "pick", label: "pick", type: "text", required: false },
+    { id: "msg", label: "msg", type: "textarea", required: false },
+  ]);
 
   console.log("ok:", out);
 })();
