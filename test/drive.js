@@ -85,6 +85,7 @@ app.on("browser-window-created", (_e, win) => {
       check("theme switch: saved", s.theme === "elegant" && s.font === "serif" && s.colors.background === "#faf7f2", { theme: s.theme, font: s.font, colors: s.colors });
       check("theme switch: preview CSS rebuilt", read(path.join(pub, "styles.css")).includes("#faf7f2"));
       check("theme switch: preview restyled", await waitFor(() => inFrame(`getComputedStyle(document.body).backgroundColor === "rgb(250, 247, 242)"`)), "preview background isn't Elegant's");
+      await shot("designTab");
     }
 
     // ---------- 2. editable WordPress import ----------

@@ -106,8 +106,15 @@ published always-pass test secret, so that one step needs internet access.
   users install nothing else. `lib/wrangler-argv-fix.js` is required for that
   to work, see the comment in it.
 - `runtime/`: the form Worker and browser script copied into every site.
-- `themes/`: `base.css` plus one small override file per theme. Colours/fonts
-  are CSS variables the user picks in the Design tab.
+- `themes/`: `base.css`, `fonts.json` (the Font choices) and one package per
+  theme, `themes/<id>/theme.json` (label, about, colours, font id or CSS font
+  stack, optional version) plus `theme.css` (small overrides on top of
+  `base.css`; CSS only, no JS or HTML). `lib/themes.js` loads them for both
+  the build and the Design tab; colours/fonts are CSS variables the user picks
+  there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
+  themes`); an identical copy is vendored into the public
+  [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
+  repo for its CI, so **keep the two copies in sync**: change both together.
 
 ## Privacy page
 

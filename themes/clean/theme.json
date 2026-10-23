@@ -1,0 +1,12 @@
+{
+  "label": "Clean",
+  "about": "Light and simple, suits most businesses.",
+  "font": "sans",
+  "colors": {
+    "background": "#ffffff",
+    "text": "#1f2933",
+    "primary": "#1d4ed8",
+    "accent": "#f59e0b"
+  },
+  "version": "1.0.0"
+}
