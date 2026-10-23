@@ -52,10 +52,22 @@ function toHex(value) {
 }
 
 // Reads WordPress's generated global styles (block themes, WP 5.9+) from the
-// home page. Classic themes mostly don't expose these, so they keep the
-// built-in theme's defaults.
-function wordpressStyle(home) {
+// home page, falling back to Elementor's global colours and fonts (its kit
+// CSS, `kitCss`, fetched by lib/wordpress.js). Classic themes mostly expose
+// neither, so they keep the built-in theme's defaults.
+function wordpressStyle(home, kitCss = "") {
   const css = [...home.querySelectorAll("style")].map((s) => s.textContent).join("\n");
+  const wp = blockThemeStyle(css);
+  const el = elementorStyle(css + "\n" + kitCss);
+  return {
+    colors: Object.fromEntries(Object.entries(wp.colors).map(([k, v]) => [k, v || el.colors[k]])),
+    serif: wp.font ? wp.serif : el.serif,
+  };
+}
+
+const isSerif = (font) => /serif/i.test(font) && !/sans-serif/i.test(font);
+
+function blockThemeStyle(css) {
   const vars = Object.fromEntries([...css.matchAll(/(--wp--preset--[a-z0-9-]+):\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]));
   const resolve = (v) => v?.replace(/var\((--wp--preset--[a-z0-9-]+)\)/g, (_, name) => vars[name] || "").trim();
   const blocks = (re) => [...css.matchAll(re)].map((m) => m[1]).join(";");
@@ -75,7 +87,32 @@ function wordpressStyle(home) {
       // #32373c is WordPress's own default button colour, on every site, so it says nothing about the theme.
       accent: [toHex(prop(button, "background-color"))].find((c) => c !== "#32373c") || toHex(preset("secondary")) || toHex(preset("accent")),
     },
-    serif: /serif/i.test(font) && !/sans-serif/i.test(font),
+    font,
+    serif: isSerif(font),
+  };
+}
+
+// Elementor's kit: `.elementor-kit-<id>{--e-global-color-primary:…;
+// --e-global-typography-primary-font-family:"Fraunces";background-color:…}`.
+// Its fonts are bare names with no generic family, so serif is guessed by name.
+// ponytail: a short list of common serif web fonts; anything else counts as sans.
+const SERIF_NAMES = /serif|georgia|times|garamond|baskerville|playfair|lora|merriweather|fraunces|cormorant|crimson|libre caslon|spectral|cardo|prata|bitter|slab|bodoni|didot|cinzel|literata|noto serif|pt serif|dm serif|eb garamond/i;
+function elementorStyle(css) {
+  const vars = Object.fromEntries([...css.matchAll(/(--e-global-[a-z0-9-]+)\s*:\s*([^;}]+)/gi)].map((m) => [m[1], m[2].trim()]));
+  const resolve = (v) => v?.replace(/var\(\s*(--e-global-[a-z0-9-]+)\s*\)/gi, (_, name) => vars[name] || "").trim();
+  const kit = [...css.matchAll(/\.elementor-kit-\d+\s*\{([^}]*)\}/g)].map((m) => m[1]).join(";");
+  const prop = (name) => resolve([...kit.matchAll(new RegExp(`(?:^|[;\\s])${name}\\s*:\\s*([^;]+)`, "g"))].pop()?.[1]);
+  const color = (slug) => toHex(vars[`--e-global-color-${slug}`]);
+  const font = vars["--e-global-typography-primary-font-family"] || "";
+  return {
+    colors: {
+      background: toHex(prop("background-color")),
+      text: toHex(prop("color")) || color("text"),
+      primary: color("primary"),
+      // Many kits set accent to the primary colour; secondary is then the only other one.
+      accent: [color("accent")].find((c) => c && c !== color("primary")) || color("secondary"),
+    },
+    serif: SERIF_NAMES.test(font) && !/sans/i.test(font),
   };
 }
 
@@ -122,7 +159,7 @@ async function importWordPress(wp, log) {
   log(`Found "${plainText(wp.name)}" with ${wp.pages.length} page${wp.pages.length === 1 ? "" : "s"}.`);
   const home = new DOMParser().parseFromString(wp.homeHtml, "text/html");
 
-  const style = wordpressStyle(home);
+  const style = wordpressStyle(home, wp.kitCss);
   const themeId = isDark(style.colors.background) ? "bold" : style.serif ? "elegant" : "clean";
   const theme = THEMES.themes[themeId];
   const s = await call("sites:create", plainText(wp.name) || "Imported website", themeId);
@@ -143,7 +180,7 @@ async function importWordPress(wp, log) {
     return downloaded.get(abs);
   };
 
-  const logoImg = home.querySelector("img.custom-logo, .wp-block-site-logo img");
+  const logoImg = home.querySelector("img.custom-logo, .wp-block-site-logo img, .elementor-widget-theme-site-logo img, [data-elementor-type=header] img");
   if (logoImg?.getAttribute("src")) {
     log("Copying logo…");
     const src = await fetchImage(logoImg.getAttribute("src"), 600);

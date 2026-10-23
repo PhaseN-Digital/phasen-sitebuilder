@@ -124,6 +124,13 @@ const site = {
     } finally { globalThis.fetch = realFetch; }
   }
 
+  // An Elementor site's kit stylesheet (global colours/fonts) comes back with it (#42).
+  {
+    const el = await require("./test/fakes").startElementor();
+    const r = await require("./lib/wordpress").fetchWordPress(el.url).finally(el.close);
+    assert(r.builder === "Elementor" && r.kitCss.includes("--e-global-color-primary:#EE5C44"), "Elementor kit CSS fetched");
+  }
+
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));

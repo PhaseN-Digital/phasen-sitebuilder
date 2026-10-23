@@ -40,7 +40,7 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { updateBanner, createSite, wordpressImport, exactCopy };
+    const steps = { updateBanner, createSite, wordpressImport, elementorEditable, exactCopy };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -126,6 +126,20 @@ app.on("browser-window-created", (_e, win) => {
       check("wordpress: form replaced with ours", contact.sections.some((x) => x.type === "form" && x.formId === "contact") && !contact.sections[0].html.includes("<form"), contact.sections);
       const built = read(path.join(UD, "preview", id, "public", "about-team.html"));
       check("wordpress: built page", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|onclick/.test(built));
+    }
+
+    // ---------- 2b. editable import of an Elementor site: kit colours/font, site-logo widget ----------
+    async function elementorEditable() {
+      await run(`document.querySelector("#import-wp").click()`);
+      await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
+      await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.querySelector('[value="editable"]').checked = true; f.requestSubmit() }`);
+      const id = await waitFor(() => run(`site?.name === "Acme Ltd" && !site.mirror && site.id`), 30000);
+      check("elementor editable: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
+      if (!id) return;
+      await saved();
+      const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
+      check("elementor editable: kit styles mapped", s.theme === "elegant" && s.font === "serif" && JSON.stringify(s.colors) === JSON.stringify({ background: "#fff6ee", text: "#241b2f", primary: "#ee5c44", accent: "#7c6bff" }), { theme: s.theme, font: s.font, colors: s.colors });
+      check("elementor editable: header logo copied", /^assets\/[a-f0-9]+\.webp$/.test(s.logo?.src || ""), s.logo);
     }
 
     // ---------- 3. exact copy of an Elementor site ----------

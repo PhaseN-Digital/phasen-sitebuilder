@@ -77,7 +77,7 @@ async function startElementor() {
 <link rel="stylesheet" href="${B}/wp-content/uploads/elementor/css/post-5.css?ver=1"><link rel="canonical" href="${B}/">
 <script src="${B}/wp-includes/js/jquery/jquery.min.js?ver=3"></script>
 <script>var elementorFrontendConfig = {"urls":{"assets":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/","bundle":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/js\\/frontend.min.js"}};</script></head>
-<body class="elementor-page"><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
+<body class="elementor-kit-5 elementor-page"><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
 <nav class="elementor-nav-menu--main">${menu(title)}</nav><nav class="elementor-nav-menu--dropdown" aria-hidden="true">${menu(title)}</nav><a href="/feed/">RSS</a> <a href="/wp-admin/">Admin</a> <a href="/?p=5">P</a></div>
 <div data-elementor-type="wp-page" class="elementor"><section class="elementor-section"><div class="elementor-container"><div class="elementor-column"><div class="elementor-widget-wrap">
 <div class="elementor-widget elementor-widget-image"><div class="elementor-widget-container"><img src="${B}/wp-content/uploads/2024/01/hero.png" srcset="${B}/wp-content/uploads/2024/01/hero.png 40w, ${B}/wp-content/uploads/2024/01/hero-2x.png 80w" alt="Hero" width="40" height="40"></div></div>
@@ -93,7 +93,7 @@ ${body}
     "/about/": page("About", `<h2>About us</h2><form class="cart" method="post" enctype="multipart/form-data"><input type="number" name="quantity" value="1"><button type="submit" name="add-to-cart" value="7">Add to basket</button></form>
 <form action="${B}/wp-comments-post.php" method="post" id="commentform" class="comment-form"><textarea id="comment" name="comment" required></textarea><input id="author" name="author" required><input type="hidden" name="comment_post_ID" value="5"><input type="submit" value="Post Comment"></form>`),
     "/contact-us/": page("Contact", form()),
-    "/wp-content/uploads/elementor/css/post-5.css": `@import "extra.css";\n.elementor-section{background:url(../../2024/01/bg.png) no-repeat}\n@font-face{font-family:Acme;src:url("/wp-content/themes/hello/fonts/acme.woff2") format("woff2")}\nbody{font-family:Acme;background:#102030;color:#fff}`,
+    "/wp-content/uploads/elementor/css/post-5.css": `@import "extra.css";\n.elementor-kit-5{--e-global-color-primary:#EE5C44;--e-global-color-secondary:#7C6BFF;--e-global-color-text:#241B2F;--e-global-color-accent:#EE5C44;--e-global-color-80f7a2e:#FFF6EE;--e-global-typography-primary-font-family:"Fraunces";--e-global-typography-text-font-family:"Plus Jakarta Sans";background-color:var( --e-global-color-80f7a2e );color:var( --e-global-color-text );}\n.elementor-section{background:url(../../2024/01/bg.png) no-repeat}\n@font-face{font-family:Acme;src:url("/wp-content/themes/hello/fonts/acme.woff2") format("woff2")}\nbody{font-family:Acme;background:#102030;color:#fff}`,
     "/wp-content/uploads/elementor/css/extra.css": `.elementor-heading-title{color:#ff9900;background-image:url(data:image/png;base64,AAAA)}`,
     "/wp-includes/js/jquery/jquery.min.js": "/* jquery */",
     "/wp-content/plugins/elementor/assets/js/frontend.min.js": `var base="${B}/wp-content/";`,
