@@ -81,13 +81,37 @@ function cleanEdit(html) {
 
 // Edits are applied one at a time so two quick edits can't overwrite each other.
 let copyEdits = Promise.resolve();
+const copyFailed = (e) => {
+  const state = $(".save-state");
+  if (state) state.textContent = `Not saved: ${errorText(e)}`;
+};
+// Undo: per site, each entry is the files one edit wrote and their previous
+// HTML (a site-wide edit touches several). Kept in memory only, so it's gone
+// after the app restarts; "Revert this page" works from the kept original.
+const copyUndo = {};
+const UNDO_LIMIT = 20;
+function pushCopyUndo(siteId, files) {
+  const stack = (copyUndo[siteId] ||= []);
+  stack.push(files);
+  if (stack.length > UNDO_LIMIT) stack.shift();
+  const button = $(".copy-undo");
+  if (button && site?.id === siteId) button.disabled = false;
+}
+function copyRestored(siteId, message) {
+  if (site?.id !== siteId) return;
+  selectedCopyImage = null;
+  renderTab();
+  refreshPreview();
+  $(".save-state").textContent = message;
+}
+
 function applyCopyEdit(key, change) {
   const page = site.pages.find((p) => p.id === pageId);
   const files = key.startsWith("s-") ? ALL_COPY_FILES() : [page.file];
   const siteId = site.id;
   $(".save-state").textContent = files.length > 1 ? "Saving to every page…" : "Saving…";
   copyEdits = copyEdits.then(async () => {
-    let changed = 0;
+    const before = [];
     for (const file of files) {
       const html = await call("mirror:read", siteId, file).catch(() => null);
       if (!html) continue;
@@ -95,16 +119,40 @@ function applyCopyEdit(key, change) {
       const els = doc.querySelectorAll(`[data-sb-edit="${CSS.escape(key)}"]`);
       if (!els.length) continue;
       els.forEach(change);
+      await call("mirror:keep-original", siteId, file);
       await call("mirror:write", siteId, file, serialize(doc));
-      changed++;
+      before.push({ file, html });
     }
+    if (before.length) pushCopyUndo(siteId, before);
     const state = $(".save-state");
-    if (state) state.textContent = changed > 1 ? `Saved on ${changed} pages` : "All changes saved";
-  }).catch((e) => {
-    const state = $(".save-state");
-    if (state) state.textContent = `Not saved: ${errorText(e)}`;
-  });
+    if (state) state.textContent = before.length > 1 ? `Saved on ${before.length} pages` : "All changes saved";
+  }).catch(copyFailed);
   return copyEdits;
+}
+
+function undoCopyEdit() {
+  const siteId = site.id;
+  copyEdits = copyEdits.then(async () => {
+    const last = copyUndo[siteId]?.pop();
+    if (!last) return;
+    for (const { file, html } of last) await call("mirror:write", siteId, file, html);
+    copyRestored(siteId, last.length > 1 ? `Undone on ${last.length} pages` : "Undone");
+  }).catch(copyFailed);
+}
+
+// Puts the page's file back as imported, which also drops this page's share
+// of site-wide (header/menu/footer) edits. Can itself be undone.
+function revertCopiedPage(page) {
+  if (!confirm(`Revert "${page.title}" to how it was imported? All changes on this page are lost, including header, menu and footer changes made from any page. Those changes stay on your other pages.`)) return;
+  const siteId = site.id;
+  copyEdits = copyEdits.then(async () => {
+    const original = await call("mirror:original", siteId, page.file).catch(() => null);
+    const current = await call("mirror:read", siteId, page.file);
+    if (!original || original === current) return copyRestored(siteId, "This page has no changes");
+    await call("mirror:write", siteId, page.file, original);
+    pushCopyUndo(siteId, [{ file: page.file, html: current }]);
+    copyRestored(siteId, "Page reverted");
+  }).catch(copyFailed);
 }
 
 let selectedCopyImage = null; // { key, alt, src }
@@ -138,7 +186,11 @@ function copiedPageCard(page) {
       h("ul", { className: "legend" },
         h("li", {}, h("i", { className: "swatch page" }), "This page's content"),
         h("li", {}, h("i", { className: "swatch site" }), "Header, menu and footer: changes apply to every page")),
-      h("p", { className: "hint" }, "Layout and styling come from your original design and can't be changed here.")),
+      h("p", { className: "hint" }, "Layout and styling come from your original design and can't be changed here."),
+      h("div", { className: "inline", style: "margin-top:8px" },
+        h("button", { className: "copy-undo", disabled: !copyUndo[site.id]?.length, onclick: undoCopyEdit }, "Undo last change"),
+        h("button", { onclick: () => revertCopiedPage(page) }, "Revert this page to the original")),
+      h("p", { className: "hint" }, "Reverting also undoes header, menu and footer changes on this page only; they stay on your other pages.")),
     imagePanel,
   ];
 }

@@ -20,8 +20,9 @@ const siteDir = (id) => {
 };
 const previewDir = (id) => data("preview", id);
 // A copied page's HTML file (exact-copy import), for app/copied.js to edit.
-const mirrorFile = (id, file) => {
-  const root = path.join(siteDir(id), "mirror");
+// "mirror-original" holds each page's HTML as it was before its first edit.
+const mirrorFile = (id, file, dir = "mirror") => {
+  const root = path.join(siteDir(id), dir);
   const target = path.join(root, String(file));
   if (!target.startsWith(root + path.sep) || !target.endsWith(".html")) throw new Error("Bad file");
   return target;
@@ -224,6 +225,13 @@ const handlers = {
   "wp:image": (url) => wp.downloadImage(url),
   "mirror:read": (id, file) => fs.readFile(mirrorFile(id, file), "utf8"),
   "mirror:write": (id, file, html) => fs.writeFile(mirrorFile(id, file), String(html)),
+  // Kept once, before a page's first edit, for "Revert this page to the original".
+  "mirror:keep-original": async (id, file) => {
+    const original = mirrorFile(id, file, "mirror-original");
+    await fs.mkdir(path.dirname(original), { recursive: true });
+    await fs.copyFile(mirrorFile(id, file), original, fs.constants.COPYFILE_EXCL).catch((e) => { if (e.code !== "EEXIST") throw e; });
+  },
+  "mirror:original": (id, file) => fs.readFile(mirrorFile(id, file, "mirror-original"), "utf8"),
   // Exact-copy import: see lib/mirror.js.
   "wp:mirror": async (url, event) => {
     const site = newSite("Imported website", "clean");
