@@ -48,7 +48,8 @@ function annotateCopy(html) {
   const free = (el) => !el.closest(NOT_EDITABLE) && !el.parentElement?.closest("[data-sb-edit]") && !el.hasAttribute("data-sb-edit");
   const text = (el) => el.textContent.replace(/\s+/g, " ").trim();
 
-  for (const el of doc.body.querySelectorAll(RICH)) if (free(el) && text(el)) tag(el, `rich|${text(el)}`);
+  // A text widget holding a form (e.g. a contact form shortcode) isn't edited as one block; its text is tagged below.
+  for (const el of doc.body.querySelectorAll(RICH)) if (free(el) && text(el) && !el.querySelector(NOT_EDITABLE)) tag(el, `rich|${text(el)}`);
   for (const el of doc.body.querySelectorAll(TEXT)) if (free(el) && text(el) && !el.querySelector(BLOCK)) tag(el, `${el.tagName}|${text(el)}`);
   for (const img of doc.body.querySelectorAll("img")) if (free(img) && img.getAttribute("src")) tag(img, `img|${img.getAttribute("src")}`);
   return serialize(doc);
