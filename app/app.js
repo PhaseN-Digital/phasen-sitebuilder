@@ -382,7 +382,7 @@ function publishTab() {
               h("li", {}, "Create a free account at ", link("cloudflare.com", "https://dash.cloudflare.com/sign-up"), " (skip if you have one)."),
               h("li", {}, "Open ", link("API Tokens", "https://dash.cloudflare.com/profile/api-tokens"), " and click ", h("b", {}, "Create Token"), "."),
               h("li", {}, "Next to ", h("b", {}, "Edit Cloudflare Workers"), " click ", h("b", {}, "Use template"), "."),
-              h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", then ", h("b", {}, "Zone · DNS · Edit"), "."),
+              h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", ", h("b", {}, "Zone · DNS · Edit"), " and ", h("b", {}, "Zone · Single Redirect · Edit"), " (called Dynamic Redirect on some accounts)."),
               h("li", {}, "Set Account Resources and Zone Resources to ", h("b", {}, "All"), ", then ", h("b", {}, "Continue to summary › Create Token"), "."),
               h("li", {}, "Copy the token and paste it here.")),
             secretInput("Paste your Cloudflare API token", "settings:cloudflare", "Connect"),

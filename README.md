@@ -166,9 +166,16 @@ https and aren't stored.
 4. Creates a sending-only Resend key for the site's Worker.
 5. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
    Resend key.
+6. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
+   (`http_request_dynamic_redirect` phase) sending `www.<domain>` to the apex,
+   as phasen.digital's Terraform does. An existing `www` record or existing
+   redirect rules are left alone (logged, not overwritten). If this step fails,
+   e.g. the token lacks the permission, publishing still succeeds and the log
+   says why.
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
-Account › Turnstile › Edit and Zone › DNS › Edit. The app lists these steps
+Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
+Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
 ## Known gaps
@@ -178,4 +185,4 @@ in the Publish tab.
   is wired up but untested, since no certificates exist yet (#6).
 - `asar` is off and workerd (only used by `wrangler dev`) is bundled because
   wrangler loads it at startup, so installs are about 600 MB unpacked.
-- No `www` → apex redirect or analytics/cookie banner.
+- No analytics/cookie banner.
