@@ -37,10 +37,38 @@ a { color: var(--primary); cursor: pointer; }
 .import-button { margin-top: 8px; }
 .import-wrap { flex: 1; overflow: auto; padding: 40px; }
 .import { max-width: 560px; }
-.toolbar { flex-wrap: wrap; margin-bottom: 6px; }
-.rich { min-height: 180px; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; line-height: 1.5; }
-.rich:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
-.rich img { max-width: 100%; height: auto; }
+/* Rich text editor (Quill's snow theme, restyled to match; its own link tooltip is replaced by .rich-panel). */
+.rich-editor .ql-toolbar.ql-snow { border-color: var(--line); border-radius: 6px 6px 0 0; padding: 6px; }
+.rich-editor .ql-toolbar button { padding: 3px 5px; width: 28px; border: 0; line-height: 1; }
+.rich.ql-container.ql-snow { border-color: var(--line); border-radius: 0 0 6px 6px; font: inherit; }
+.rich .ql-editor { min-height: 200px; max-height: 520px; overflow-y: auto; line-height: 1.5; font-size: 15px; }
+.rich .ql-tooltip { display: none; }
+/* Snow's hover/active blue (#06c) -> brand green. */
+.rich-editor .ql-toolbar :is(button:hover, button:focus, button.ql-active, .ql-picker-label:hover, .ql-picker-label.ql-active, .ql-picker-item:hover, .ql-picker-item.ql-selected) { color: var(--primary); }
+.rich-editor .ql-toolbar :is(button:hover, button:focus, button.ql-active, .ql-picker-label:hover, .ql-picker-label.ql-active, .ql-picker-item:hover, .ql-picker-item.ql-selected) :is(.ql-stroke, .ql-stroke-miter) { stroke: var(--primary); }
+.rich-editor .ql-toolbar :is(button:hover, button:focus, button.ql-active, .ql-picker-label:hover, .ql-picker-label.ql-active, .ql-picker-item:hover, .ql-picker-item.ql-selected) .ql-fill { fill: var(--primary); }
+.rich-editor .ql-snow a { color: var(--primary); }
+.rich .align-center { text-align: center; }
+.rich .align-right { text-align: right; }
+.rich .align-justify { text-align: justify; }
+.rich figure { margin: 10px 0; cursor: pointer; }
+.rich figure img { max-width: 100%; height: auto; display: block; }
+.rich figure.align-left { float: left; max-width: 45%; margin-right: 14px; }
+.rich figure.align-right { float: right; max-width: 45%; margin-left: 14px; }
+.rich figure.align-center img { margin-inline: auto; }
+.rich figure.gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.rich figure figure { margin: 0; }
+.rich figcaption { font-size: .85em; color: var(--muted); }
+.rich .video-embed { margin: 10px 0; padding: 18px; border-radius: 6px; background: #1c2330; color: #fff; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rich .video-embed::before { content: "▶  Video: " attr(data-src); }
+.rich a.button { display: inline-block; padding: 2px 10px; border-radius: 4px; background: var(--primary); color: #fff; text-decoration: none; }
+.rich hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.rich-panel[hidden] { display: none; }
+.rich-panel { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.rich-panel .inline { flex-wrap: wrap; }
+.rich-panel label.inline { display: flex; gap: 8px; align-items: center; }
+.rich-panel input[type=checkbox] { width: auto; }
+.rich-panel .error:empty { display: none; }
 
 #main { flex: 1; display: flex; min-width: 0; }
 .welcome { margin: auto; text-align: center; color: var(--muted); }

@@ -13,6 +13,7 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
+    "quill": "2.0.3",
     "wrangler": "^4.48.0"
   },
   "devDependencies": {
