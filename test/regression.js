@@ -7,7 +7,6 @@
 // On Linux without a display it runs Electron under xvfb-run.
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
-const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
@@ -27,7 +26,6 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || detail === undefined ? "" : `: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const freePort = () => new Promise((resolve) => { const s = net.createServer().listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
 
 // Runs a child in its own process group, so killing it takes its children too (workerd).
 function start(cmd, args, opts = {}) {
@@ -115,12 +113,13 @@ async function serve(name, siteId, extra = {}) {
   const dir = path.join(OUT, "built", name);
   await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com", d1: { id: "00000000-0000-0000-0000-000000000000", name: "regression-inbox" } });
   fs.writeFileSync(path.join(dir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\n`);
-  const port = await freePort();
+  // Port 0 lets workerd bind any free port itself and wrangler prints the one it got, so nothing
+  // can take it between choosing and binding (#201); picking one ourselves first raced other processes.
   const env = wranglerEnv();
-  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", String(port), "--ip", "127.0.0.1"], { cwd: dir, env, log: path.join(OUT, `wrangler-${name}.log`) });
-  const base = `http://127.0.0.1:${port}`;
+  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", "0", "--inspector-port", "0", "--ip", "127.0.0.1"], { cwd: dir, env, log: path.join(OUT, `wrangler-${name}.log`) });
   for (const end = Date.now() + 60000; Date.now() < end && child.exitCode === null; await sleep(300)) {
-    if (await fetch(base + "/", { redirect: "manual" }).then(() => true, () => false)) return { site, dir, base, child };
+    const base = child.output.match(/Ready on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
+    if (base && await fetch(base + "/", { redirect: "manual" }).then(() => true, () => false)) return { site, dir, base, child };
   }
   await child.stop();
   throw new Error(`wrangler dev didn't start for ${name}:\n${child.output.slice(-2000)}`);
