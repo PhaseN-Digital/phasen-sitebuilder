@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.6.0...phasen-sitebuilder-v0.7.0) (2026-10-24)
+
+
+### Features
+
+* **import:** import any website with an ownership declaration and provenance marker ([#141](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/141)) ([#144](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/144)) ([8222a76](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/8222a76730285a5704341333ff6dd7229fb967d9))
+* **publish:** publish to subdomains ([#135](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/135)) ([#140](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/140)) ([823cc2f](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/823cc2ff83c0b432d60e30b91779092ffbcf1bcc))
+* **settings:** app-wide Settings page with per-site overrides ([#134](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/134)) ([#142](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/142)) ([a7a7e7c](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/a7a7e7c3777bcc53442b4f4d95e210023a03cc7e))
+
+
+### Bug Fixes
+
+* **app:** single-instance lock so two copies can't clobber JSON stores ([#149](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/149)) ([#154](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/154)) ([4f2e73f](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/4f2e73f2eeeccf00290161cfef8643fedfdde70e))
+* **editor:** flush pending autosave before leaving the editor ([#143](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/143)) ([#151](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/151)) ([6ec2091](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6ec20914f30e6a469bdf70c7d75cf553f67e359c))
+* **import:** gate package export on the ownership declaration, keep app-password verification, mark previewed copies ([#145](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/145)) ([#152](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/152)) ([6b09700](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6b0970090709858f5c23c5c0dcf359c1fba6f43a))
+* **settings:** atomic, queued JSON store with backup recovery ([#148](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/148)) ([6f68a43](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6f68a439b4634c78842393feb5f9732de7cd7dbc))
+
 ## [0.6.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.5.0...phasen-sitebuilder-v0.6.0) (2026-10-24)
 
 
