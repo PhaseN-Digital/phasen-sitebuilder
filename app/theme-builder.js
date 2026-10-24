@@ -2,6 +2,7 @@
 // made from a few controls by lib/theme-builder.js (via main.js "builder:*")
 // and saved to the user's local themes, which the Design tab lists under
 // "Your themes". Uses app.js's helpers (h, call, labelled, loadSites…).
+// Valid themes can be published to GitHub (#60, publishDialog).
 
 let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer;
 
@@ -10,7 +11,7 @@ async function openThemes() {
   site = null;
   tbEdit = null;
   loadSites();
-  [tbThemes, tbSites] = await Promise.all([call("builder:list"), call("sites:list")]);
+  [tbThemes, tbSites, settings] = await Promise.all([call("builder:list"), call("sites:list"), call("settings:get")]);
   renderThemes();
 }
 $("#open-themes").addEventListener("click", openThemes);
@@ -30,8 +31,10 @@ function renderThemes() {
       t.errors.length ? h("p", { className: "error" }, t.errors.join("; ")) : [
         h("div", { className: "swatches" }, Object.values(t.colors).map((c) => h("i", { style: `background:${c}` }))),
         h("small", {}, t.about, t.version ? ` Version ${t.version}.` : "")],
-      h("div", { className: "inline", style: "margin-top:8px" },
+      h("div", { className: "inline", style: "margin-top:8px;flex-wrap:wrap" },
         t.controls && h("button", { onclick: () => editTheme({ ...t.controls, id }) }, "Edit"),
+        !t.errors.length && h("button", { onclick: () => publishDialog(id, t, "push") }, "Push to repo…"),
+        !t.errors.length && h("button", { onclick: () => publishDialog(id, t, "submit") }, "Submit to public repo…"),
         h("button", { className: "danger", onclick: async () => {
           if (!confirm(`Delete "${t.label || id}"? Websites using it keep their own copy.`)) return;
           await call("builder:delete", id);
@@ -119,4 +122,45 @@ function renderThemeEditor() {
         h("button", { className: previewMobile ? "" : "primary", onclick: () => { previewMobile = false; renderThemes(); previewThemeDraft(); } }, "Desktop"),
         h("button", { className: previewMobile ? "primary" : "", onclick: () => { previewMobile = true; renderThemes(); previewThemeDraft(); } }, "Mobile")),
       h("div", { className: "preview-stage" }, h("iframe", { id: "preview", title: "Theme preview" }))));
+}
+
+// "Push to repo" commits the theme to a repo the user can write to; "Submit to
+// public repo" opens a PR to the public themes repo from the user's fork.
+// main.js validates the theme and sends only theme.json, theme.css and preview.png.
+async function publishDialog(id, t, kind) {
+  const status = h("p", { role: "status" }), error = h("p", { className: "error" });
+  const close = h("button", { onclick: () => dialog.close() }, "Close");
+  const push = kind === "push";
+  const repo = h("input", { placeholder: "owner/repo", value: push && settings.github ? await call("github:push-target").catch(() => "") : "" });
+  const go = h("button", { className: "primary", onclick: async () => {
+    go.disabled = true; error.textContent = ""; status.textContent = push ? "Pushing…" : "Opening a pull request… (making your copy of the themes repository can take a minute)";
+    try {
+      const r = push ? await call("github:push", id, repo.value) : await call("github:submit", id);
+      status.replaceChildren(push ? "Pushed. " : "Pull request opened. PhaseN will review it. ", link(push ? "View on GitHub" : "View pull request", r.url));
+      go.remove();
+    } catch (e) { status.textContent = ""; error.textContent = errorText(e); go.disabled = false; }
+  } }, push ? "Push" : "Open pull request");
+  const what = h("div", { className: "about" }, t.preview && h("img", { className: "theme-preview", src: t.preview, alt: "" }),
+    h("strong", {}, t.label || id), h("p", { className: "hint" }, t.about, t.version ? ` Version ${t.version}.` : ""));
+  const dialog = h("dialog", { className: "publish-theme" },
+    h("h2", {}, push ? "Push to a repository" : "Submit to the public themes"),
+    what,
+    !settings.github ? [
+      h("p", {}, "Sign in with GitHub in Settings first."),
+      h("div", { className: "inline" }, h("button", { className: "primary", onclick: () => { dialog.close(); openSettings(); } }, "Settings"), close),
+    ] : [
+      push ? [
+        h("p", { className: "hint" }, `Commits theme.json, theme.css and preview.png to themes/${id}/ in a GitHub repository you can write to.`),
+        labelled("Repository", repo, "owner/repo, or owner/repo/folder@branch. Add it as a theme source in Settings to use the theme in other copies of the app."),
+        !settings.github.privateRepos && h("p", { className: "hint" }, "For a private repository, sign out and sign in again in Settings with private repositories allowed."),
+      ] : [
+        h("p", { className: "hint" }, "Opens a pull request to PhaseN-Digital/phasen-sitebuilder-themes from your own copy (fork) of it on GitHub, with this theme's name and description. Once PhaseN accepts it, everyone can choose it in the Design tab."),
+        h("p", { className: "hint" }, "Only theme.json, theme.css and preview.png are sent."),
+      ],
+      h("div", { className: "inline" }, go, close),
+    ],
+    status, error);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
 }

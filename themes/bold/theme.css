@@ -1,8 +1,25 @@
 :root { --radius: 0; }
 .site-header { background: var(--primary); border: 0; }
 .site-header .brand, .site-header nav a, .site-header .nav-toggle { color: var(--primary-text); }
+.site-header nav a { opacity: 1; }
 .site-header nav a:hover, .site-header nav a[aria-current] { color: var(--primary-text); text-decoration: underline; }
 h1, h2 { text-transform: uppercase; letter-spacing: .02em; }
 .hero { padding: 160px 0; }
 .hero h1 { font-size: clamp(2.6rem, 7vw, 5rem); }
 .button { text-transform: uppercase; letter-spacing: .05em; }
+/* Layouts (#169) */
+.title-band { background: var(--primary); color: var(--primary-text); padding: 64px 0 72px; }
+.title-band h1 { font-size: clamp(2.4rem, 7vw, 4.2rem); }
+.title-band h1::after { content: ""; display: block; width: 72px; height: 6px; margin-top: 20px; background: var(--accent); }
+.title-band .post-meta { opacity: 1; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.title-band + section, .featured-image + section { padding-top: 56px; }
+.layout-blog-post .featured-image { padding-top: 0; background: linear-gradient(var(--primary) 50%, transparent 50%); }
+.card { border: 0; border-left: 6px solid var(--accent); background: color-mix(in srgb, var(--text) 6%, var(--background)); }
+.card h3, .post-card h2 { text-transform: uppercase; letter-spacing: .02em; }
+.layout-home .site-header .wrap { min-height: 96px; }
+.layout-landing .hero:first-child { padding: 180px 0; }
+.layout-landing .site-header .wrap { justify-content: flex-start; }
+.layout-landing .hero, .layout-home main > .hero:not(:first-child) { text-align: left; }
+.layout-landing .hero :is(h1, h2, p), .layout-home main > .hero:not(:first-child) :is(h2, p) { margin-inline: 0; }
+.post-card { border-left: 6px solid var(--accent); padding-left: 24px; }
+.pagination [rel] { font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }

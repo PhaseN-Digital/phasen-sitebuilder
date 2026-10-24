@@ -122,6 +122,16 @@ const site = {
   fs.writeFileSync(path.join(copyDir, "mirror/sitemap.xml"), "<urlset>own</urlset>");
   await build(copySite, copyDir, out, { hostname: "copy.example" });
   assert(read("public/sitemap.xml") === "<urlset>own</urlset>" && read("public/robots.txt") === "User-agent: *\nDisallow:\n", "an exact copy keeps its own sitemap/robots");
+  // A copied site's own /assets/ (#163): published next to the app's uploads, never pruned as one.
+  for (const d of ["assets", "mirror/assets"]) fs.mkdirSync(path.join(copyDir, d), { recursive: true });
+  fs.writeFileSync(path.join(copyDir, "mirror/assets/logo.png"), "LOGO");
+  fs.writeFileSync(path.join(copyDir, "assets/0123456789ab.webp"), "UPLOAD");
+  fs.writeFileSync(path.join(copyDir, "mirror/index.html"), '<img src="/assets/logo.png"><img src="/assets/0123456789ab.webp">');
+  await build(copySite, copyDir, out, { hostname: "copy.example" });
+  assert(read("public/assets/logo.png") === "LOGO" && read("public/assets/0123456789ab.webp") === "UPLOAD", "copied /assets/ files and uploads both published");
+  fs.writeFileSync(path.join(copyDir, "mirror/index.html"), "<p>home</p>");
+  await pruneAssets(copySite, copyDir, 0);
+  assert(fs.existsSync(path.join(copyDir, "mirror/assets/logo.png")) && !fs.existsSync(path.join(copyDir, "assets/0123456789ab.webp")), "prune removes the unused upload only, never a copied file");
 
   // Import provenance marker (#141): every built page, theme-built and copied, plus the
   // well-known file; the declaring user's name and email never reach the output.
@@ -562,6 +572,53 @@ const site = {
     assert.strictEqual((await tb.fromSite({ ...site, mirror: {} }, siteDir, themes)).css, "", "exact copies: colours and font only");
     const sample = tb.sampleSite({});
     assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
+
+    // Publishing a theme to GitHub (#60), against the fake GitHub in test/fakes.js.
+    const gh = require("./lib/github");
+    assert.strictEqual(gh.clientId({ env: { SITEBUILDER_GITHUB_CLIENT_ID: " abc " }, dir: root }), "abc");
+    assert.strictEqual(gh.clientId({ env: { SITEBUILDER_GITHUB_CLIENT_ID: "abc" }, packaged: true, dir: root }), "", "env ignored when packaged; no config file");
+    fs.writeFileSync(path.join(root, "github-config.json"), '{"clientId":"Ov23x"}');
+    assert.strictEqual(gh.clientId({ env: {}, packaged: true, dir: root }), "Ov23x");
+    const fake = await require("./test/fakes").startGitHub();
+    try {
+      const opts = { api: fake.url, login: fake.url };
+      await assert.rejects(gh.startDeviceFlow({ ...opts, clientId: "wrong", scope: "public_repo" }), /sign-in failed \(unauthorized_client\)/);
+      const flow = await gh.startDeviceFlow({ ...opts, clientId: fake.clientId, scope: "public_repo repo" });
+      assert.strictEqual(flow.userCode, "WDJB-MJHT");
+      await assert.rejects(gh.pollDeviceFlow({ ...opts, ...flow, clientId: fake.clientId, cancelled: () => true }), /cancelled/);
+      const { token } = await gh.pollDeviceFlow({ ...opts, ...flow, clientId: fake.clientId, wait: async () => {} });
+      assert.strictEqual(token, fake.token);
+      assert.strictEqual((await gh.user(fake.url, token)).login, "octo");
+      assert(await gh.canPush(fake.url, token, gh.PRIVATE_DEFAULT) && !(await gh.canPush(fake.url, "nope", gh.PRIVATE_DEFAULT)));
+
+      fs.mkdirSync(path.join(lroot, "bad-one"));
+      fs.cpSync(path.join(lroot, "sunny-days"), path.join(lroot, "bad-one"), { recursive: true });
+      fs.writeFileSync(path.join(lroot, "bad-one", "notes.txt"), "secret");
+      await assert.rejects(gh.themeFiles(path.join(lroot, "bad-one")), /can't be published: unexpected file notes.txt/);
+      fs.writeFileSync(path.join(lroot, "sunny-days", "preview.png"), require("./test/fakes").PNG);
+      const { files, json } = await gh.themeFiles(path.join(lroot, "sunny-days"));
+      assert.deepStrictEqual(Object.keys(files), gh.FILES);
+      const theme = { id: "sunny-days", files, version: json.version };
+
+      const pushed = await gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, ...theme });
+      assert.strictEqual(pushed.url, "https://github.com/PhaseN-Digital/phasen-themes-private/tree/main/themes/sunny-days");
+      const repoFiles = fake.files(gh.PRIVATE_DEFAULT);
+      assert.deepStrictEqual(Object.keys(repoFiles).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      assert(repoFiles["themes/sunny-days/preview.png"].equals(files["preview.png"]), "binary preview intact");
+      await assert.rejects(gh.pushTheme({ api: fake.url, token, target: "octo/readonly", ...theme }), /can't write to octo\/readonly/);
+      await assert.rejects(gh.pushTheme({ api: fake.url, token, target: "octo/missing", ...theme }), /Couldn't find octo\/missing/);
+
+      const pr = await gh.submitTheme({ api: fake.url, token, ...theme, label: json.label, about: json.about, wait: async () => {} });
+      assert.strictEqual(pr.url, "https://github.com/PhaseN-Digital/phasen-sitebuilder-themes/pull/1");
+      const [p] = fake.pulls;
+      assert(p.title === "Add theme: Sunny" && p.base === "main" && p.head.startsWith("octo:theme-sunny-days-1-0-1-") && p.body.startsWith(json.about), p);
+      assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
+      assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+      assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
+    } finally {
+      await fake.close();
+    }
   }
 
   // Update check (#37): version compare and installer pick.
@@ -575,6 +632,10 @@ const site = {
   assert.strictEqual(pickDownload(downloads, "darwin", "arm64"), gh + "b.dmg");
   assert.strictEqual(pickDownload(downloads, "darwin", "x64"), null, "http refused");
   assert.strictEqual(pickDownload(downloads, "linux", "x64"), null, "other hosts refused");
+  // Linux x64 gets the AppImage (#153); there's no Linux arm64 build, so no fallback.
+  const linux = { "linux-x64": gh + "PhaseN.Site.Builder-1.0.0-x86_64.AppImage", "win32-x64": gh + "a.exe" };
+  assert.strictEqual(pickDownload(linux, "linux", "x64"), gh + "PhaseN.Site.Builder-1.0.0-x86_64.AppImage");
+  assert.strictEqual(pickDownload(linux, "linux", "arm64"), null);
   assert.strictEqual(pickDownload({ "darwin-x64": "https://github.com.evil.example/x" }, "darwin", "x64"), null);
   assert.strictEqual(pickDownload(undefined, "darwin", "arm64"), null);
 
@@ -612,7 +673,7 @@ const site = {
   {
     const cfg = require("./lib/settings");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-store-"));
-    const st = cfg.store(root);
+    const st = cfg.store(root, { safe: { encrypt: (t) => Buffer.from(t), decrypt: (b) => b.toString() }, portable: false, key: null });
     const file = path.join(root, "settings.json");
     await Promise.all(Array.from({ length: 50 }, (_, i) => st.update((s) => { s.defaults[`k${i}`] = i; })));
     const saved = JSON.parse(fs.readFileSync(file, "utf8")).defaults;
@@ -643,7 +704,250 @@ const site = {
     // Site accounts go through the same store.
     await Promise.all(["cloudflare", "resendKey"].map((k) => st.updateSite(root, (a) => { a[k] = k; })));
     assert.deepStrictEqual(await st.loadSite(root), { cloudflare: "cloudflare", resendKey: "resendKey" });
+    assert(!fs.readFileSync(path.join(root, "accounts.json"), "utf8").includes("resendKey"), "the secret went to secrets.enc (#136)");
     fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  // Page layouts (#169): migration, every layout renders, blog order/pagination/sitemap, theme validation.
+  {
+    const { LAYOUTS, migrateLayouts } = require("./lib/layouts");
+    const old = migrateLayouts({ pages: [{ id: "m", mirror: "/x/" }, { id: "a" }, { id: "b" }, { id: "c", layout: "legal" }, { id: "d", layout: "nope" }] });
+    assert.deepStrictEqual(old.pages.map((p) => p.layout), [undefined, "home", "standard", "legal", "standard"], "first page home, the rest standard, copied pages none");
+    const post = (n, date, extra = {}) => ({ id: `p${n}`, title: `Post ${n}`, layout: "blog-post", date, sections: [{ type: "richtext", html: `<p>Body of post ${n} &amp; more.</p>` }], ...extra });
+    const lsite = { ...site, theme: "clean", forms: site.forms, pages: [
+      ...LAYOUTS.filter((l) => l.id !== "blog-post").map((l) => ({ id: l.id.replace("-", ""), title: l.label, layout: l.id, sections: l.sections.map((x) => ({ ...x, formId: "contact" })) })),
+      post(1, "2026-01-05", { author: "Jo <b>", excerpt: "Own excerpt", featuredImage: { src: "assets/abc123.webp", alt: "Bike" } }),
+      ...Array.from({ length: 10 }, (_, i) => post(i + 2, `2025-0${(i % 9) + 1}-01`)), post(12, ""),
+    ] };
+    const lout = path.join(os.tmpdir(), "sitebuilder-test-layouts");
+    const lp = await build(lsite, siteDir, lout, { hostname: "bikes.example" });
+    const page = (href) => fs.readFileSync(path.join(lout, "public", href === "/" ? "index.html" : href.endsWith("/") ? `${href.slice(1)}index.html` : `${href.slice(1)}.html`), "utf8");
+    for (const l of LAYOUTS) assert(page(lp[l.id === "blog-post" ? "p1" : l.id.replace("-", "")]).includes(`<body class="layout-${l.id}">`), `${l.id} renders`);
+    const home = page("/");
+    assert(home.includes("<h1>A big headline</h1>") && home.includes("<h2>Ready to talk?</h2>") && !home.includes("title-band"), "home: banner is the h1, a second banner an h2, no title band");
+    assert(home.includes('<div class="cards"><div class="card"><h3>Service one</h3>'), "richtext cards");
+    assert(!home.includes('href="/post-1"') && home.includes('href="/blog"'), "posts leave the menu when there's a blog page");
+    assert(!page(lp.landing).includes('id="site-nav"') && !page(lp.landing).includes("nav-toggle"), "landing: no menu");
+    assert(page(lp.standard).includes('<header class="title-band"><div class="wrap"><h1>Standard</h1></div></header>'), "standard: title band");
+    assert(/<div class="contact-columns"><div><section class="form">[\s\S]*<\/div><div><section class="text">/.test(page(lp.contact)), "contact: form beside the details");
+    const p1 = page(lp.p1);
+    assert(p1.includes('<article class="post"><header class="title-band"><div class="wrap"><h1>Post 1</h1><p class="post-meta"><time datetime="2026-01-05">5 January 2026</time> · By Jo &lt;b&gt;</p>') && p1.includes('<meta property="og:type" content="article">'), "post meta");
+    const blog = page(lp.blogindex);
+    const order = [...blog.matchAll(/<h2><a href="\/post-(\d+)">/g)].map((m) => +m[1]);
+    assert.deepStrictEqual(order, [1, 10, 9, 8, 7, 6, 5, 4, 3, 2], "newest first, ten per page");
+    assert(blog.includes("<p>Own excerpt</p>") && blog.includes("<p>Body of post 10 &amp; more.</p>") && blog.includes('<a href="/blog/page/2/" rel="next">Older posts</a>'), "excerpts and pager");
+    const blog2 = page("/blog/page/2/");
+    assert.deepStrictEqual([...blog2.matchAll(/<h2><a href="\/post-(\d+)">/g)].map((m) => +m[1]), [11, 12], "page 2, same date keeps page order, undated last");
+    assert(blog2.includes('<link rel="canonical" href="https://bikes.example/blog/page/2/">') && blog2.includes("<title>Blog | Bob&#39;s &lt;Bikes&gt; (page 2)</title>") && blog2.includes('rel="prev"'), "page 2 canonical/title");
+    const sitemap = fs.readFileSync(path.join(lout, "public/sitemap.xml"), "utf8");
+    assert(sitemap.includes("<loc>https://bikes.example/blog</loc>") && sitemap.includes("<loc>https://bikes.example/post-12</loc>") && sitemap.includes("<loc>https://bikes.example/blog/page/2/</loc>"), "blog in the sitemap");
+    assert(page(lp.privacy).includes('<body class="layout-legal">'), "generated privacy page uses the legal layout");
+    // Validator: layout-scoped CSS and per-layout notes; unknown layouts rejected. Its own list must match lib/layouts.js.
+    assert.deepStrictEqual(require("./lib/theme-validate").LAYOUT_IDS, LAYOUTS.map((l) => l.id));
+    const vdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-layout-theme-"));
+    const vt = (name, json, css) => { const d = path.join(vdir, name); fs.mkdirSync(d); fs.writeFileSync(path.join(d, "theme.json"), JSON.stringify({ label: "L", about: "A", font: "sans", colors: { background: "#ffffff", text: "#111111", primary: "#1d4ed8", accent: "#f59e0b" }, ...json })); fs.writeFileSync(path.join(d, "theme.css"), css); return validateTheme(d); };
+    assert.deepStrictEqual(vt("ok", { layouts: { home: { notes: "Big banner" }, "blog-post": {} } }, ".layout-home .hero { padding: 0; }\n.layout-blog-post .title-band h1 { font-size: 2rem; }"), []);
+    assert.deepStrictEqual(vt("bad", { layouts: { shop: {}, home: { notes: 1 } } }, ".layout-shop main { color: red; }"), [
+      'theme.json: unknown layout "shop" (one of home, standard, landing, services, contact, blog-post, blog-index, legal)',
+      'theme.json: layouts.home may only have "notes", a string up to 500 characters',
+      "theme.css: unknown layout class .layout-shop"]);
+  }
+
+  // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
+  {
+    const sec = require("./lib/secrets");
+    const cfg = require("./lib/settings");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-secrets-"));
+    // A stand-in for safeStorage: reversible, but not plain text. `machine` decides which "computer" can read it.
+    const fakeSafe = (machine) => ({
+      encrypt: (t) => Buffer.from(`${machine}:${Buffer.from(t).toString("hex")}`),
+      decrypt: (b) => { const [m, hex] = b.toString().split(":"); if (m !== machine) throw new Error("other machine"); return Buffer.from(hex, "hex").toString(); },
+    });
+    const { plain, secrets: found } = sec.split({ cloudflare: { token: "T", accountId: "a" }, themeSources: [{ spec: "x/y", token: "G" }], turnstile: { sitekey: "k", secret: "S" }, sendingKey: "R", d1: { id: "db" } });
+    assert.deepStrictEqual(plain, { cloudflare: { accountId: "a" }, themeSources: [{ spec: "x/y" }], turnstile: { sitekey: "k" }, d1: { id: "db" } });
+    assert.strictEqual(sec.join(plain, found).themeSources[0].token, "G");
+    assert.deepStrictEqual(sec.join({}, found), { sendingKey: "R" }, "a secret whose parent has gone is dropped");
+
+    const keyring = { safe: fakeSafe("A"), portable: false, key: null };
+    const site = path.join(root, "site");
+    fs.mkdirSync(site);
+    const st = cfg.store(path.join(root, ".phasen"), keyring);
+    fs.mkdirSync(path.join(root, ".phasen"));
+    await st.update((s) => { s.cloudflare = { token: "cf-secret-1", accountId: "a1" }; s.resendKey = "re-secret-1"; });
+    await st.updateSite(site, (a) => { a.resendKey = "re-site-secret"; });
+    await st.updateState(site, (p) => { p.turnstile = { sitekey: "k", secret: "ts-secret" }; p.url = "https://x"; });
+    const onDisk = (dir) => fs.readdirSync(dir, { recursive: true }).map((f) => path.join(dir, String(f))).filter((f) => fs.statSync(f).isFile()).map((f) => fs.readFileSync(f, "utf8")).join("\n");
+    assert(!/cf-secret-1|re-secret-1|re-site-secret|ts-secret/.test(onDisk(root)), "no secret in plain text anywhere on disk");
+    assert(fs.existsSync(path.join(site, ".secrets", "secrets.enc")) && !fs.readFileSync(path.join(site, "publish.json"), "utf8").includes("secret"));
+    assert.strictEqual((await st.load()).cloudflare.token, "cf-secret-1");
+    assert.strictEqual((await st.loadState(site)).turnstile.secret, "ts-secret");
+    assert.strictEqual((await st.loadSite(site)).resendKey, "re-site-secret");
+    const mtime = fs.statSync(path.join(root, ".phasen", "secrets.enc")).mtimeMs;
+    await st.update((s) => { s.defaults.email = "x@example.com"; });
+    assert.strictEqual(fs.statSync(path.join(root, ".phasen", "secrets.enc")).mtimeMs, mtime, "secrets.enc only rewritten when a secret changes");
+
+    // Another machine (or a damaged file): no crash, secrets just missing, a clear "re-enter" message.
+    const other = cfg.store(path.join(root, ".phasen"), { safe: fakeSafe("B"), portable: false, key: null });
+    const app2 = await other.load();
+    assert(app2.cloudflare.accountId === "a1" && !app2.cloudflare.token && !app2.resendKey && app2.defaults.email === "x@example.com");
+    assert.strictEqual(cfg.resolve(app2, { overrides: {} }).cloudflare, null, "a Cloudflare account without its token counts as not connected");
+    assert(sec.problems().some((m) => /Re-enter your Cloudflare token/.test(m)), sec.problems());
+    fs.writeFileSync(path.join(site, ".secrets", "secrets.enc"), "{ not json");
+    fs.writeFileSync(path.join(site, ".secrets", "secrets.enc.bak"), "{ not json");
+    const quiet = console.error; console.error = () => {};
+    try {
+      assert.strictEqual((await st.loadState(site)).turnstile.secret, undefined, "corrupt secrets file: values missing, no throw");
+      assert(sec.problems().some((m) => /Re-enter/.test(m)), "and the re-enter message");
+      await st.updateState(site, (p) => { p.turnstile.secret = "ts-2"; });
+      assert(fs.readdirSync(path.join(site, ".secrets")).some((f) => f.startsWith("secrets.enc.unreadable-")), "corrupt file kept aside");
+      assert.strictEqual((await st.loadState(site)).turnstile.secret, "ts-2");
+    } finally { console.error = quiet; }
+    // Re-entering a secret on the other machine keeps the unreadable file aside rather than losing it.
+    await other.update((s) => { s.resendKey = "re-new"; });
+    assert(fs.readdirSync(path.join(root, ".phasen")).some((f) => f.startsWith("secrets.enc.unreadable-")) && (await other.load()).resendKey === "re-new");
+
+    // Portable: passphrase -> scrypt -> AES-256-GCM; readable anywhere with the passphrase, never stored.
+    const { key, config: pcfg } = await sec.makePortable("correct horse battery");
+    assert(!JSON.stringify(pcfg).includes("correct horse"));
+    const portable = { safe: fakeSafe("A"), portable: true, key };
+    const appSecrets = path.join(root, ".phasen", "secrets.enc"), written = fs.readFileSync(appSecrets, "utf8");
+    assert.deepStrictEqual(await sec.reencrypt([appSecrets, path.join(site, ".secrets", "secrets.enc")], keyring, portable), [appSecrets], "a file this keyring can't read is skipped");
+    assert.strictEqual(fs.readFileSync(appSecrets, "utf8"), written, "and left as it was");
+    const pst = cfg.store(path.join(root, ".phasen"), portable);
+    await pst.updateSite(site, (a) => { a.cloudflare = { token: "cf-portable", accountId: "p" }; });
+    const env = JSON.parse(fs.readFileSync(path.join(site, ".secrets", "secrets.enc"), "utf8"));
+    assert(env.mode === "portable" && env.iv && env.tag && !JSON.stringify(env).includes("cf-portable"));
+    const newMachine = { safe: fakeSafe("C"), portable: true, key: null };
+    assert(!(await cfg.store(path.join(root, ".phasen"), newMachine).loadSite(site)).cloudflare.token, "locked until the passphrase is entered");
+    assert(sec.problems().some((m) => /Enter it in Settings › Data/.test(m)));
+    await assert.rejects(cfg.store(path.join(root, ".phasen"), newMachine).updateSite(site, (a) => { a.resendKey = "x"; }), /passphrase/, "no write while locked");
+    await assert.rejects(sec.unlock(pcfg, "wrong passphrase"), /isn't the one/);
+    newMachine.key = await sec.unlock(pcfg, "correct horse battery");
+    assert.strictEqual((await cfg.store(path.join(root, ".phasen"), newMachine).loadSite(site)).cloudflare.token, "cf-portable", "unlocked on a new machine");
+    // Tampering is detected (GCM), not silently accepted.
+    env.data = Buffer.from("x" + Buffer.from(env.data, "base64").toString("latin1").slice(1), "latin1").toString("base64");
+    assert.throws(() => sec.decrypt(env, portable), /couldn't be unlocked/);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  // Site history (#136): one repo per site, readable batched commits, tags, page-level changes, revert as a new commit.
+  {
+    const repo = require("./lib/site-repo");
+    const cfg = require("./lib/settings");
+    const git = require("isomorphic-git");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-repo-"));
+    const who = { name: "Tester", email: "t@example.com" };
+    const w = (f, v) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), typeof v === "string" ? v : JSON.stringify(v)); };
+    const s1 = { id: "s", name: "Shop", theme: "clean", pages: [{ id: "h", title: "Home", sections: [{ text: "hi" }] }, { id: "m", title: "About", mirror: "/about/", file: "about/index.html", sections: [] }], forms: [] };
+    w("site.json", s1);
+    w("mirror/about/index.html", "<h1>About</h1>");
+    const st = cfg.store(dir, { safe: { encrypt: (t) => Buffer.from(t).reverse(), decrypt: (b) => Buffer.from(b).reverse().toString() }, portable: false, key: null });
+    await st.updateState(dir, (p) => { p.turnstile = { sitekey: "k", secret: "TS-SECRET-VALUE" }; p.sendingKey = "RE-SECRET-VALUE"; });
+    assert.strictEqual(await repo.ensure(dir, who), true);
+    assert.strictEqual(await repo.ensure(dir, who), false, "ensure is idempotent");
+    assert.strictEqual(await repo.commit(dir, null, who), null, "nothing changed, no commit");
+    w("site.json", { ...s1, pages: [{ ...s1.pages[0], sections: [{ text: "hello" }] }, s1.pages[1], { id: "c", title: "Contact", sections: [] }] });
+    w("mirror/about/index.html", "<h1>About us</h1>");
+    w("assets/a.webp", "img");
+    await repo.commit(dir, null, who);
+    let log = await repo.log(dir);
+    assert.strictEqual(log[0].message, "Edited page Home; Added page Contact; Edited copied page About and 1 more", log[0].message);
+    assert.deepStrictEqual(await repo.changes(dir, log[0].oid), ["Edited page Home", "Added page Contact", "Edited copied page About", "Changed images"]);
+    assert.deepStrictEqual(await repo.changes(dir, log.at(-1).oid), ["Created the website"]);
+    const v2 = log[0].oid;
+    assert.strictEqual(await repo.tag(dir, "live-20260101-1200"), "live-20260101-1200");
+    assert.strictEqual(await repo.tag(dir, "live-20260101-1200"), "live-20260101-1200-2", "same-minute publishes get distinct tags");
+    assert.deepStrictEqual((await repo.log(dir))[0].tags.sort(), ["live-20260101-1200", "live-20260101-1200-2"]);
+
+    // Secrets are never staged, even with .gitignore emptied and a stray secrets.enc elsewhere.
+    w(".gitignore", "");
+    w("secrets.enc", "x");
+    w(".secrets/extra.txt", "x");
+    w("site.json", { ...s1, name: "Shop 2" });
+    await st.updateState(dir, (p) => { p.url = "https://shop.example"; p.turnstile.secret = "TS-SECRET-2"; });
+    await repo.commit(dir, null, who);
+    const tracked = await git.listFiles({ fs, dir });
+    assert(!tracked.some(repo.forbidden) && tracked.includes("publish.json"), tracked);
+    // No secret value in any blob of any commit.
+    for (const { oid } of await repo.log(dir)) {
+      for (const f of await git.listFiles({ fs, dir, ref: oid })) {
+        const { blob } = await git.readBlob({ fs, dir, oid, filepath: f });
+        assert(!/TS-SECRET|RE-SECRET/.test(Buffer.from(blob).toString()), `${f} in ${oid} holds a secret`);
+      }
+    }
+
+    // Revert to v2: content back, publish.json (what's live) left alone, a new commit on top.
+    const before = (await repo.log(dir)).length;
+    await repo.revert(dir, v2, who);
+    log = await repo.log(dir);
+    assert(log.length === before + 1 && /^Restored the version from/.test(log[0].message));
+    const back = JSON.parse(fs.readFileSync(path.join(dir, "site.json"), "utf8"));
+    assert(back.name === "Shop" && back.pages.length === 3 && fs.readFileSync(path.join(dir, "mirror/about/index.html"), "utf8") === "<h1>About us</h1>");
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, "publish.json"), "utf8")).url, "https://shop.example", "revert keeps publish state");
+    assert.strictEqual((await st.loadState(dir)).turnstile.secret, "TS-SECRET-2", "revert keeps secrets");
+    assert.deepStrictEqual(await repo.largeFiles(dir), []);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // Sites folder (#136): migration from userData/sites is copy, verify, then remove; idempotent and safe to interrupt.
+  {
+    const folder = require("./lib/sites-folder");
+    const cfg = require("./lib/settings");
+    const repo = require("./lib/site-repo");
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "sb-migrate-"));
+    const legacyRoot = path.join(base, "userData", "sites"), root = path.join(base, "PhaseN Sites");
+    const legacySeal = (v) => Buffer.from(`sealed:${v}`).toString("base64");
+    const unsealLegacy = (v) => { const t = Buffer.from(v, "base64").toString(); return t.startsWith("sealed:") ? t.slice(7) : null; };
+    const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+    const makeLegacy = (id, name) => {
+      const d = path.join(legacyRoot, id);
+      fs.mkdirSync(path.join(d, "assets"), { recursive: true });
+      fs.writeFileSync(path.join(d, "site.json"), JSON.stringify({ id, name, pages: [], forms: [] }));
+      fs.writeFileSync(path.join(d, "assets", "x.webp"), "img");
+      fs.writeFileSync(path.join(d, "publish.json"), JSON.stringify({ url: "https://x", turnstile: { sitekey: "k", secret: legacySeal("TS-LEGACY") }, sendingKey: "not-decryptable" }));
+      fs.writeFileSync(path.join(d, "publish.json.bak"), "{}");
+    };
+    makeLegacy(ids[0], "Bob's Bikes");
+    makeLegacy(ids[1], "Bob's Bikes");
+    fs.mkdirSync(path.join(root, ".phasen"), { recursive: true });
+    const store = cfg.store(path.join(root, ".phasen"), { safe: { encrypt: (t) => Buffer.from(t).reverse(), decrypt: (b) => Buffer.from(b).reverse().toString() }, portable: false, key: null });
+    const opts = { legacyRoot, root, store, unsealLegacy, author: { name: "T", email: "t@example.com" } };
+
+    // Interrupted twice: once mid-copy (a partial temp copy), once after the rename but before removing the original.
+    fs.mkdirSync(path.join(root, `.moving-${ids[0]}`));
+    fs.writeFileSync(path.join(root, `.moving-${ids[0]}`, "partial"), "x");
+    const cp = fs.promises.rm;
+    let failOnce = true;
+    fs.promises.rm = async (p, o) => { if (failOnce && p === path.join(legacyRoot, ids[1])) { failOnce = false; throw new Error("power cut"); } return cp(p, o); };
+    await assert.rejects(folder.migrateLegacy(opts), /power cut/);
+    fs.promises.rm = cp;
+    assert(fs.existsSync(path.join(legacyRoot, ids[1])), "original kept until the copy is in place");
+    assert.strictEqual(await folder.migrateLegacy(opts), 1, "the rerun finishes the job");
+    assert.strictEqual(await folder.migrateLegacy(opts), 0, "and then there's nothing to do");
+    const found = await folder.scan(root);
+    assert.deepStrictEqual([...found.keys()].sort(), ids, "each site once, no duplicate from the interrupted run");
+    assert.deepStrictEqual(fs.readdirSync(root).sort(), [".phasen", "bob-s-bikes", "bob-s-bikes-2"]);
+    assert(!fs.existsSync(legacyRoot) || !fs.readdirSync(legacyRoot).length);
+    for (const dir of found.values()) {
+      assert(await repo.isRepo(dir) && fs.readFileSync(path.join(dir, "assets", "x.webp"), "utf8") === "img");
+      const p = await store.loadState(dir);
+      assert(p.turnstile.secret === "TS-LEGACY" && p.url === "https://x" && !("sendingKey" in p), "legacy secrets re-encrypted, undecryptable ones dropped");
+      assert(!fs.readFileSync(path.join(dir, "publish.json"), "utf8").includes(legacySeal("TS-LEGACY")) && !fs.existsSync(path.join(dir, "publish.json.bak")) || !fs.readFileSync(path.join(dir, "publish.json.bak"), "utf8").includes("sealed"));
+      assert.strictEqual((await repo.log(dir))[0].message, "Moved into the PhaseN Sites folder");
+    }
+    // Legacy settings.json the same way.
+    const legacyFile = path.join(base, "userData", "settings.json");
+    fs.writeFileSync(legacyFile, JSON.stringify({ defaults: { email: "a@example.com" }, resendKey: legacySeal("RE-LEGACY") }));
+    assert.strictEqual(await folder.migrateLegacySettings({ legacyFile, store, newFile: path.join(root, ".phasen", "settings.json"), unsealLegacy }), true);
+    assert((await store.load()).resendKey === "RE-LEGACY" && !fs.existsSync(legacyFile) && !fs.readFileSync(path.join(root, ".phasen", "settings.json"), "utf8").includes("resendKey"));
+    assert.strictEqual(await folder.migrateLegacySettings({ legacyFile, store, newFile: path.join(root, ".phasen", "settings.json"), unsealLegacy }), false);
+
+    // Changing the folder: everything moves, the switch is recorded before the originals go.
+    const to = path.join(base, "Elsewhere");
+    let switched = false;
+    assert.strictEqual(await folder.moveAll(root, to, async () => { switched = true; assert.strictEqual((await folder.scan(root)).size, 2, "originals still there at the switch"); }), 2);
+    assert(switched && (await folder.scan(to)).size === 2 && (await folder.scan(root)).size === 0 && fs.existsSync(path.join(to, ".phasen", "secrets.enc")));
+    fs.rmSync(base, { recursive: true, force: true });
   }
 
   const { execFileSync } = require("node:child_process");

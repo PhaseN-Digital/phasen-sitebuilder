@@ -61,7 +61,8 @@ a:where(:not(.wp-element-button)){color: var(--wp--preset--color--primary);}
 
 // Elementor site: header/footer templates, a hidden mobile menu, CSS with
 // url()/@import/@font-face, JSON-escaped URLs, a redirect, a 404 and a form,
-// plus tracking tags and a Google Fonts stylesheet (#45). Its /css and /s/...
+// plus tracking tags and a Google Fonts stylesheet (#45), and a header logo
+// and CSS background under /assets/, like phasen.digital (#163). Its /css and /s/...
 // routes stand in for fonts.googleapis.com and fonts.gstatic.com when a test
 // points those hosts here.
 // `forbidden` collects requests the copier must never make (feeds, admin).
@@ -73,7 +74,7 @@ async function startElementor() {
     if (u.pathname === "/wp-json/") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ name: "Acme Ltd", description: "", namespaces: ["wp/v2"] })); }
     if (u.pathname === "/wp-json/wp/v2/pages") { res.writeHead(200, { "content-type": "application/json", "x-wp-totalpages": "1" }); return res.end("[]"); }
     if (u.pathname === "/contact/") { res.writeHead(301, { location: `${B}/contact-us/` }); return res.end(); }
-    if (u.pathname.endsWith(".png") && u.pathname.includes("/uploads/")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+    if (u.pathname.endsWith(".png") && (u.pathname.includes("/uploads/") || u.pathname.startsWith("/assets/"))) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
     if (u.pathname === "/feed/" || u.pathname.startsWith("/wp-admin")) { forbidden.push(u.pathname); res.writeHead(500); return res.end(); }
     const body = routes()[u.pathname];
     if (body == null) { res.writeHead(404, { "content-type": "text/html" }); return res.end(page("Page not found", "<h1>Oops, nothing here</h1>")); }
@@ -95,7 +96,7 @@ async function startElementor() {
 <link rel="stylesheet" href="${B}/wp-content/uploads/elementor/css/post-5.css?ver=1"><link rel="canonical" href="${B}/"><meta property="og:url" content="https://acme.example/${title === "Home" ? "" : title.toLowerCase() + "/"}"><meta property="og:image" content="${B}/wp-content/uploads/2024/01/hero.png"><meta name="twitter:image" content="https://cdn.example/x.png">
 <script src="${B}/wp-includes/js/jquery/jquery.min.js?ver=3"></script>
 <script>var elementorFrontendConfig = {"urls":{"assets":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/","bundle":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/js\\/frontend.min.js"}};</script></head>
-<body class="elementor-kit-5 elementor-page"><noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=123&ev=PageView&noscript=1"></noscript><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
+<body class="elementor-kit-5 elementor-page"><noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=123&ev=PageView&noscript=1"></noscript><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a><span class="brand"><img src="/assets/logo-wide.png" class="brand-logo" alt="Acme Ltd"></span>
 <nav class="elementor-nav-menu--main">${menu(title)}</nav><nav class="elementor-nav-menu--dropdown" aria-hidden="true">${menu(title)}</nav><a href="/feed/">RSS</a> <a href="/wp-admin/">Admin</a> <a href="/?p=5">P</a></div>
 <div data-elementor-type="wp-page" class="elementor"><section class="elementor-section"><div class="elementor-container"><div class="elementor-column"><div class="elementor-widget-wrap">
 <div class="elementor-widget elementor-widget-image"><div class="elementor-widget-container"><img src="${B}/wp-content/uploads/2024/01/hero.png" srcset="${B}/wp-content/uploads/2024/01/hero.png 40w, ${B}/wp-content/uploads/2024/01/hero-2x.png 80w" alt="Hero" width="40" height="40"></div></div>
@@ -111,7 +112,7 @@ ${body}
     "/about/": page("About", `<h2>About us</h2><form class="cart" method="post" enctype="multipart/form-data"><input type="number" name="quantity" value="1"><button type="submit" name="add-to-cart" value="7">Add to basket</button></form>
 <form action="${B}/wp-comments-post.php" method="post" id="commentform" class="comment-form"><textarea id="comment" name="comment" required></textarea><input id="author" name="author" required><input type="hidden" name="comment_post_ID" value="5"><input type="submit" value="Post Comment"></form>`),
     "/contact-us/": page("Contact", form()),
-    "/wp-content/uploads/elementor/css/post-5.css": `@import "extra.css";\n.elementor-kit-5{--e-global-color-primary:#EE5C44;--e-global-color-secondary:#7C6BFF;--e-global-color-text:#241B2F;--e-global-color-accent:#EE5C44;--e-global-color-80f7a2e:#FFF6EE;--e-global-typography-primary-font-family:"Fraunces";--e-global-typography-text-font-family:"Plus Jakarta Sans";background-color:var( --e-global-color-80f7a2e );color:var( --e-global-color-text );}\n.elementor-section{background:url(../../2024/01/bg.png) no-repeat}\n@font-face{font-family:Acme;src:url("/wp-content/themes/hello/fonts/acme.woff2") format("woff2")}\nbody{font-family:Acme;background:#102030;color:#fff}`,
+    "/wp-content/uploads/elementor/css/post-5.css": `@import "extra.css";\n.elementor-kit-5{--e-global-color-primary:#EE5C44;--e-global-color-secondary:#7C6BFF;--e-global-color-text:#241B2F;--e-global-color-accent:#EE5C44;--e-global-color-80f7a2e:#FFF6EE;--e-global-typography-primary-font-family:"Fraunces";--e-global-typography-text-font-family:"Plus Jakarta Sans";background-color:var( --e-global-color-80f7a2e );color:var( --e-global-color-text );}\n.elementor-section{background:url(../../2024/01/bg.png) no-repeat}\n.brand{display:inline-block;width:8px;height:8px;background:url(/assets/brand-bg.png)}\n@font-face{font-family:Acme;src:url("/wp-content/themes/hello/fonts/acme.woff2") format("woff2")}\nbody{font-family:Acme;background:#102030;color:#fff}`,
     "/wp-content/uploads/elementor/css/extra.css": `.elementor-heading-title{color:#ff9900;background-image:url(data:image/png;base64,AAAA)}`,
     "/wp-includes/js/jquery/jquery.min.js": "/* jquery */",
     "/wp-content/plugins/elementor/assets/js/frontend.min.js": `var base="${B}/wp-content/";`,
@@ -143,6 +144,52 @@ async function startSubfolder() {
   });
   B = site.url;
   return { ...site, forbidden };
+}
+
+// Non-WordPress sites for the editable import of any website (#161):
+// "semantic" uses <header>/<nav>/<main>/<footer>; "soup" is all divs (the
+// Readability path), with .html addresses, a menu order unlike the crawl's, an
+// "extra" block Readability leaves out (the regression flow picks the wider
+// block instead) and a contact form; "sidebar" has a sidebar and a cookie
+// banner beside its content, neither of which may be imported. Every page's
+// chrome includes CHROME_MARKER, which must never reach imported content.
+const CHROME_MARKER = "Chrome marker 77";
+async function startPlainSite(kind) {
+  const para = (topic) => `<p>${topic} is what we are known for in town. ${"Fresh ingredients, careful cooking and friendly service every single day of the week. ".repeat(3)}</p>`;
+  const pages = {
+    semantic: {
+      "/": ["Home", `<h1>Welcome to Landmark Ltd</h1>${para("Consulting")}<p>See <a href="/services/">our services</a>.</p>`],
+      "/services/": ["Services", `<h1>Services</h1>${para("Advice")}<img src="/img/photo.png" alt="Office">`],
+      "/about/": ["About", `<h1>About</h1>${para("History")}`],
+    },
+    soup: {
+      "/": ["Home", `<div class="big">Soup Co kitchen</div>${para("Soup")}<div><img src="/img/photo.png" alt="Bowl"></div><p>Read <a href="/menu.html">our menu</a>, <a href="/old-news.html">old news</a> or <a href="https://elsewhere.example/x">a review</a>.</p>`],
+      "/old-news.html": ["Old news", `<div class="big">We moved</div>${para("Moving")}`],
+      "/menu.html": ["Our menu", `<div class="big">The menu</div>${para("Tomato soup")}<p><b>Leek</b> and <i>potato</i>.</p>`],
+      "/visit.html": ["Visit us", `<div class="big">Find us</div>${para("Our cafe")}`, `<div class="extra">Opening hours: 9 to 5, Monday to Saturday.</div>`],
+    },
+    sidebar: {
+      "/": ["Home", `<h2>Side Street news</h2>${para("Printing")}`],
+      "/work/": ["Work", `<h2>Our work</h2>${para("Posters")}`],
+    },
+  }[kind];
+  const nav = { semantic: ["/", "/services/", "/about/"], soup: ["/", "/visit.html", "/menu.html"], sidebar: ["/", "/work/"] }[kind];
+  const links = nav.map((p) => `<a href="${p}">${pages[p][0]}</a>`).join(" ");
+  const cookie = `<div class="cookie-notice"><p>We use cookies to make this website work and to understand how it is used, ${CHROME_MARKER}.</p><button>Accept</button></div>`;
+  const body = (p) => {
+    const [, content, extra = ""] = pages[p];
+    if (kind === "semantic") return `<header><img src="/img/logo.png" alt="Landmark logo"><nav>${links}</nav></header><main>${content}</main><footer>${CHROME_MARKER} Landmark Ltd</footer>`;
+    if (kind === "soup") return `<div class="top"><div class="brand"><img src="/img/logo.png" alt="Soup Co"></div><div class="links">${links}</div></div><div class="wrap"><div class="col-a"><div class="txt">${content}</div>${extra}</div></div><div class="bottom">${CHROME_MARKER}: 1 High Street. <form method="post" action="/subscribe"><label for="e">Your email</label><input type="email" id="e" name="email" required><button>Join</button></form></div>`;
+    return `<div class="masthead"><div class="menu">${links}</div></div><div class="layout"><div class="post">${content}</div><div class="side-col">Recent posts and archives from Side Street, ${CHROME_MARKER}, plus a tag cloud, links to friends and our printing price list.</div></div>${cookie}`;
+  };
+  const site = await listen((req, res) => {
+    const u = new URL(req.url, "http://x");
+    if (u.pathname.startsWith("/img/")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+    if (!pages[u.pathname]) { res.writeHead(404, { "content-type": "text/html" }); return res.end("<h1>Not found</h1>"); }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html><html><head><title>${pages[u.pathname][0]} | ${kind} site</title><meta property="og:site_name" content="${kind} site"><style>body{background:#fdf6e3;color:#222222;font-family:Georgia,serif}a{color:#cc3300}button{background:#0a7d4b;color:#fff}</style></head><body>${body(u.pathname)}</body></html>`);
+  });
+  return site;
 }
 
 // A releases host serving latest.json for the update check (#37), so the app
@@ -214,15 +261,110 @@ async function startGitHub() {
     res.writeHead(200, { "content-type": "application/x-gzip" });
     res.end(tarball(files));
   });
-  const api = await listen((req, res) => {
+  const writer = await gitRepos();
+  const api = await listen(async (req, res) => {
     requests.push([api.host, req.url, req.headers.authorization || null]);
+    if (await writer.handle(req, res)) return;
     const m = /^\/repos\/([^/]+\/[^/]+)\/tarball(\/.*)?$/.exec(req.url);
     if (m?.[1] === "limited/repo") { res.writeHead(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }); return res.end(); }
     if (!m || !repos[m[1]]?.(req.headers.authorization === `Bearer ${GITHUB_TOKEN}`)) { res.writeHead(404, { "content-type": "application/json" }); return res.end('{"message":"Not Found"}'); }
     res.writeHead(302, { location: `${downloads.url}/${encodeURIComponent(m[1])}` });
     res.end();
   });
-  return { ...api, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, close: () => Promise.all([api.close(), downloads.close()]) };
+  return { ...api, ...writer.state, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, close: () => Promise.all([api.close(), downloads.close()]) };
+}
+
+// The writing half of the fake GitHub (#60), served by startGitHub's API host:
+// the device flow (/login/... , "pending" once, then GITHUB_TOKEN for the user
+// "octo"), /user, and tiny in-memory repos with the git data API, forks and PRs.
+// Trees are flat { path: blob sha }. Only GITHUB_TOKEN is accepted for anything
+// but the login endpoints. state: { logins: [{ client_id, scope }], pulls,
+// files(repo, branch) -> { path: Buffer } }.
+const CLIENT_ID = "Iv1.fakeclient";
+async function gitRepos() {
+  const sha = (v) => require("node:crypto").createHash("sha1").update(JSON.stringify(v)).digest("hex");
+  const blobs = {}, trees = {}, commits = {};
+  const commit = (tree, parents, message) => { const c = { tree, parents, message }; const s = sha(c); commits[s] = c; return s; };
+  const repo = (files, opts) => {
+    const tree = {};
+    for (const [p, v] of Object.entries(files)) { const b = Buffer.from(v); const s = sha(b.toString("base64")); blobs[s] = b; tree[p] = s; }
+    const t = sha(tree); trees[t] = tree;
+    return { default_branch: "main", private: false, push: true, refs: { main: commit(t, [], "init") }, ...opts };
+  };
+  const repos = {
+    "PhaseN-Digital/phasen-themes-private": repo({ "README.md": "x", "themes/.gitkeep": "" }, { private: true }),
+    "PhaseN-Digital/phasen-sitebuilder-themes": repo({ "README.md": "x", "themes/clean/theme.css": "x" }, { push: false }),
+    "octo/readonly": repo({ "README.md": "x" }, { push: false }),
+  };
+  const logins = [], pulls = [];
+  let polls = 0;
+  const files = (name, branch = "main") => {
+    const tree = trees[commits[repos[name].refs[branch]].tree];
+    return Object.fromEntries(Object.entries(tree).map(([p, s]) => [p, blobs[s]]));
+  };
+  const handle = async (req, res) => {
+    const u = new URL(req.url, "http://x");
+    const chunks = []; for await (const c of req) chunks.push(c);
+    const raw = Buffer.concat(chunks).toString();
+    const send = (status, v) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); return true; };
+    if (req.method === "POST" && u.pathname === "/login/device/code") {
+      const p = Object.fromEntries(new URLSearchParams(raw));
+      logins.push(p);
+      if (p.client_id !== CLIENT_ID) return send(200, { error: "unauthorized_client" });
+      return send(200, { device_code: "dev-code", user_code: "WDJB-MJHT", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 1 });
+    }
+    if (req.method === "POST" && u.pathname === "/login/oauth/access_token") {
+      const p = Object.fromEntries(new URLSearchParams(raw));
+      if (p.device_code !== "dev-code" || p.grant_type !== "urn:ietf:params:oauth:grant-type:device_code") return send(200, { error: "incorrect_device_code" });
+      return send(200, polls++ % 2 === 0 ? { error: "authorization_pending" } : { access_token: GITHUB_TOKEN, token_type: "bearer", scope: logins.at(-1)?.scope });
+    }
+    const body = raw ? JSON.parse(raw) : {};
+    const authed = req.headers.authorization === `Bearer ${GITHUB_TOKEN}`;
+    if (u.pathname === "/user") return authed ? send(200, { login: "octo" }) : send(401, { message: "Bad credentials" });
+    const m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(u.pathname);
+    const r = m && repos[m[1]];
+    const rest = m?.[2] || "";
+    if (!r || (r.private && !authed) || rest.startsWith("/tarball")) return false; // the theme-source half answers
+    if (!authed && req.method !== "GET") return send(401, { message: "Requires authentication" });
+    const nope = () => send(403, { message: "Resource not accessible by integration" });
+    if (req.method === "GET" && !rest) return send(200, { full_name: m[1], default_branch: r.default_branch, private: r.private, permissions: { push: authed && r.push } });
+    let x;
+    if (req.method === "GET" && (x = /^\/git\/ref\/heads\/(.+)$/.exec(rest))) return r.refs[x[1]] ? send(200, { object: { sha: r.refs[x[1]] } }) : send(404, { message: "Not Found" });
+    if (req.method === "GET" && (x = /^\/git\/commits\/(\w+)$/.exec(rest))) return send(200, { sha: x[1], tree: { sha: commits[x[1]].tree } });
+    if (req.method === "POST" && rest === "/forks") {
+      const name = `octo/${m[1].split("/")[1]}`;
+      repos[name] ||= { ...r, push: true, private: false, refs: { ...r.refs }, parent: m[1] };
+      return send(202, { full_name: name, owner: { login: "octo" } });
+    }
+    if (!r.push) return nope();
+    if (req.method === "POST" && rest === "/merge-upstream") { r.refs[body.branch] = repos[r.parent].refs[body.branch]; return send(200, {}); }
+    if (req.method === "POST" && rest === "/git/blobs") { const b = Buffer.from(body.content, "base64"); const s = sha(body.content); blobs[s] = b; return send(201, { sha: s }); }
+    if (req.method === "POST" && rest === "/git/trees") {
+      const tree = { ...trees[body.base_tree] };
+      for (const e of body.tree) { if (!blobs[e.sha] || e.mode !== "100644") return send(422, { message: "bad tree entry" }); tree[e.path] = e.sha; }
+      const t = sha(tree); trees[t] = tree; return send(201, { sha: t });
+    }
+    if (req.method === "POST" && rest === "/git/commits") return send(201, { sha: commit(body.tree, body.parents, body.message) });
+    if (req.method === "PATCH" && (x = /^\/git\/refs\/heads\/(.+)$/.exec(rest))) {
+      if (!commits[body.sha]?.parents.includes(r.refs[x[1]])) return send(422, { message: "Update is not a fast forward" });
+      r.refs[x[1]] = body.sha; return send(200, {});
+    }
+    if (req.method === "POST" && rest === "/git/refs") { r.refs[body.ref.replace("refs/heads/", "")] = body.sha; return send(201, {}); }
+    return send(404, { message: "Not Found" });
+  };
+  // PRs go to the public repo, which the user can't push to, so before handle()'s push check.
+  return { handle: async (req, res) => {
+    if (req.method === "POST" && req.url === "/repos/PhaseN-Digital/phasen-sitebuilder-themes/pulls") {
+      const chunks = []; for await (const c of req) chunks.push(c);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const [owner, branch] = body.head.split(":");
+      if (req.headers.authorization !== `Bearer ${GITHUB_TOKEN}` || !repos[`${owner}/phasen-sitebuilder-themes`]?.refs[branch]) { res.writeHead(422); res.end("{}"); return true; }
+      pulls.push({ ...body, files: files(`${owner}/phasen-sitebuilder-themes`, branch) });
+      res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ number: pulls.length, html_url: `https://github.com/PhaseN-Digital/phasen-sitebuilder-themes/pull/${pulls.length}` }));
+      return true;
+    }
+    return handle(req, res);
+  }, state: { logins, pulls, files, clientId: CLIENT_ID } };
 }
 
 // Cloudflare's zone list (lib/publish.js listZones) as a fetch stand-in, for
@@ -231,4 +373,4 @@ const cloudflareZones = (zones, next = globalThis.fetch) => async (url, opts) =>
   ? { status: 200, json: async () => ({ success: true, result: zones.map((name, i) => ({ id: `zone${i}`, name })) }) }
   : next(url, opts));
 
-module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startUpdates, startGitHub, tarball, PNG };
+module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, tarball, PNG };

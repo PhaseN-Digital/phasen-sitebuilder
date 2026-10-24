@@ -174,7 +174,7 @@ $("#new-site").addEventListener("submit", async (e) => {
 
 // ---------- layout ----------
 function renderEditor() {
-  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"]];
+  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"], ["history", "History"]];
   $("#main").replaceChildren(
     h("section", { className: "editor-panel" },
       h("header", { className: "panel-head" },
@@ -197,7 +197,7 @@ function renderTab() {
   if (!site) return $("#settings-page") && renderSettings(); // theme sources and accounts on the Settings page
   const body = $("#tab");
   const scroll = body.scrollTop;
-  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab }[tab]();
+  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab, history: historyTab }[tab]();
   body.replaceChildren(...content.flat(Infinity).filter((k) => k != null && k !== false));
   body.scrollTop = scroll;
 }
@@ -375,7 +375,7 @@ function sectionEditor(s) {
         }) }, "Add photos…"))];
     }
     case "richtext":
-      return [richTextEditor(s)];
+      return [richTextEditor(s), check("Show as cards: each small heading (Heading 3) starts a new card", s, "cards")];
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
         h("p", { className: "hint" }, "Edit the form's questions in the Forms tab.")];
@@ -622,12 +622,12 @@ function pagesTab() {
   return [
     h("div", { className: "chips" },
       site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
-      h("button", { onclick: () => {
-        const p = { id: rid(), title: "New page", sections: [{ id: rid(), type: "text", ...SECTION_TYPES.text.make() }] };
-        site.pages.push(p); pageId = p.id; save(); renderTab();
-      } }, "+ Add page")),
+      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page")),
+    choosingLayout && layoutChooser(),
     copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
+      select("Layout", page, "layout", LAYOUTS.map((l) => [l.id, l.label]), renderTab),
+      h("p", { className: "hint" }, `${LAYOUT[page.layout]?.description || ""} Changing it keeps this page's sections.`),
       h("div", { className: "inline" },
         h("button", { disabled: index === 0, onclick: () => move(site.pages, index, -1) }, "Move left in menu"),
         h("button", { disabled: index === site.pages.length - 1, onclick: () => move(site.pages, index, 1) }, "Move right"),
@@ -636,6 +636,8 @@ function pagesTab() {
           site.pages.splice(index, 1); pageId = site.pages[0].id; save(); renderTab();
         } }, "Delete page")),
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
+    page.layout === "blog-post" && postCard(page),
+    page.layout === "blog-index" && h("p", { className: "hint" }, "Your blog posts (pages with the Blog post layout) are listed on this page automatically, newest first, ten to a page. Sections added here appear above the list."),
     seoCard(page, index),
     h("h3", { className: "section-title" }, "Sections on this page"),
     page.sections.map((s, i) =>
@@ -651,6 +653,35 @@ function pagesTab() {
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
       h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
+}
+
+// "Add page" (#169): pick a layout (lib/layouts.js); the page starts with its sections.
+let choosingLayout = false;
+function layoutChooser() {
+  const add = (layout) => {
+    if (layout.sections.some((s) => s.type === "form") && !site.forms.length) site.forms.push({ id: rid(), name: "Contact", to: "", success: "Thanks, your message has been sent.", fields: [
+      { id: rid(), label: "Your name", type: "text", required: true }, { id: rid(), label: "Email address", type: "email", required: true }, { id: rid(), label: "Message", type: "textarea", required: true }] });
+    const contact = site.pages.find((p) => p.layout === "contact")?.id || "";
+    const sections = layout.sections.map((s) => ({ id: rid(), ...SECTION_TYPES[s.type].make(), ...structuredClone(s), ...(s.buttonPage ? { buttonPage: contact } : {}) }));
+    const p = { id: rid(), title: layout.id === "standard" ? "New page" : layout.label, layout: layout.id, sections };
+    if (layout.id === "blog-post") p.date = new Date().toISOString().slice(0, 10);
+    site.pages.push(p); pageId = p.id; choosingLayout = false; save(); renderTab();
+  };
+  return h("div", { className: "card" },
+    h("strong", {}, "Choose a layout for the new page"),
+    h("div", { className: "layout-choices" }, LAYOUTS.map((l) =>
+      h("button", { className: "layout-choice", onclick: () => add(l) },
+        h("img", { src: `data:image/svg+xml,${encodeURIComponent(l.thumb)}`, alt: "" }),
+        h("strong", {}, l.label), h("span", {}, l.description)))));
+}
+
+// Blog post details (#169): shown on the post and in the blog list.
+function postCard(page) {
+  return h("div", { className: "card" },
+    h("strong", {}, "Blog post"),
+    h("div", { className: "grid2" }, text("Date", page, "date", "Posts are listed newest first.", { type: "date" }), text("Author", page, "author", "Optional.")),
+    imageField("Featured image", page, "featuredImage", 1600, "Shown at the top of the post and in the blog list."),
+    area("Excerpt", page, "excerpt", "A sentence or two for the blog list. Leave blank to use the start of the post."));
 }
 
 // Search and sharing settings for a page (#74). The share image is picked
@@ -751,6 +782,44 @@ function inboxTab() {
   ];
 }
 
+// ---------- History (#136) ----------
+// The site's versions from its git repo (main.js history:*): edits are saved in
+// batches, every publish is tagged. Restoring adds a new version, so nothing is lost.
+function historyTab() {
+  const list = h("div", {}, h("p", { className: "hint" }, "Loading history…"));
+  const status = h("p", { className: "error" });
+  const when = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  call("history:list", site.id).then(({ versions, large }) => {
+    list.replaceChildren(
+      ...(large.length ? [h("div", { className: "warn" }, `Some files are very large (${large.map((f) => f.file).join(", ")}). Sites with files over 100MB can't be stored on GitHub.`)] : []),
+      ...versions.map((v, i) => {
+        const changes = h("ul", { className: "hint" });
+        const item = h("details", { className: "message version", ontoggle: () => {
+          if (!item.open || changes.childElementCount) return;
+          call("history:changes", site.id, v.oid).then((lines) => changes.replaceChildren(...(lines.length ? lines : ["No changes to pages"]).map((l) => h("li", {}, l))), (e) => (status.textContent = errorText(e)));
+        } },
+          h("summary", {}, h("b", {}, v.message), ` · ${when(v.date)}`, ...v.tags.map((t) => h("span", { className: "badge-live", title: "Published" }, t))),
+          changes,
+          i > 0 && h("button", { onclick: async () => {
+            if (!confirm(`Put the website back as it was on ${when(v.date)}? This is saved as a new version, so you can come back to today's too. What's live doesn't change until you publish.`)) return;
+            try {
+              await flushSave();
+              await call("history:revert", site.id, v.oid);
+              delete copyUndo[site.id]; // copied-page undo would re-apply edits from before the restore
+              await openSite(site.id);
+              tab = "history"; renderEditor();
+            } catch (e) { status.textContent = errorText(e); }
+          } }, "Restore this version"));
+        return item;
+      }));
+  }).catch((e) => { list.replaceChildren(); status.textContent = errorText(e); });
+  return [
+    h("p", { className: "hint" }, "Every change you make is kept here, saved a few seconds after you stop editing. Publishing marks the version that went live."),
+    status,
+    list,
+  ];
+}
+
 // ---------- Publish ----------
 function step(title, done, ...content) {
   return h("div", { className: `step${done ? " done" : ""}` }, h("h3", {}, title), content);
@@ -825,6 +894,8 @@ function siteAccount(which) {
 }
 
 const link = (label, url) => h("a", { onclick: () => call("open", url) }, label);
+const DOCS_URL = "https://sitebuilder.phasen.digital/docs"; // #165: the one place the docs address lives
+$("#open-docs").addEventListener("click", () => call("open", DOCS_URL));
 
 function publishTab() {
   const cfDone = Boolean(siteAccounts.cloudflare || settings.cloudflare);
@@ -963,4 +1034,16 @@ setInterval(checkForUpdate, 6 * 3600e3);
   [THEMES, settings] = await Promise.all([call("themes"), call("settings:get")]);
   await loadSites();
   loadSources().catch(() => {}); // may download, so not awaited
+  showNotice(await call("notice:get").catch(() => null));
 })();
+
+// Sites moved into the sites folder, or saved secrets that need unlocking or re-entering (#136).
+function showNotice(n) {
+  const text = [n?.moved, n?.locked ? "Your saved passwords and keys are protected with a passphrase. Enter it in Settings › Data to unlock them." : n?.secrets].filter(Boolean);
+  if (!text.length) return;
+  $(".sidebar").append(h("div", { id: "notice-banner", className: "update-banner", role: "status" },
+    ...text.map((t) => h("span", {}, t)),
+    h("div", { className: "inline" },
+      (n.locked || n.secrets) && h("button", { className: "primary", onclick: async () => { await openSettings(); $("#data-status")?.scrollIntoView(); } }, "Open Settings"),
+      h("button", { onclick: () => $("#notice-banner").remove() }, "Dismiss"))));
+}
