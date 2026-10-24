@@ -159,6 +159,7 @@ async function workerChecks(sites) {
       const form = s.site.forms[0];
       check("worker (exact copy): home page", home.status === 200 && home.text.includes(`data-form="${form.id}"`), home.status);
       check("worker (exact copy): editor tags and placeholders gone", !/data-sb-edit|__TURNSTILE_SITEKEY__|__FORM_SUCCESS__/.test(home.text) && home.text.includes('data-sitekey="REAL_SITEKEY"'));
+      check("worker (exact copy): old site's tracking and Google Fonts hosts gone", !/googletagmanager|facebook\.com\/tr|fonts\.googleapis/.test(home.text));
       const about = await get(s.base, "/about/");
       check("worker (exact copy): copied page", about.status === 200);
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));

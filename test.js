@@ -155,6 +155,22 @@ const site = {
     assert(r.builder === "Elementor" && r.kitCss.includes("--e-global-color-primary:#EE5C44"), "Elementor kit CSS fetched");
   }
 
+  // Exact copy drops the old site's trackers and self-hosts its Google Fonts (#45), Google's hosts pointed at the fake.
+  {
+    const el = await require("./test/fakes").startElementor();
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-el-"));
+    const realFetch = globalThis.fetch, asked = [];
+    globalThis.fetch = (url, opts) => { asked.push(String(url)); return realFetch(String(url).replace(/^https:\/\/fonts\.(googleapis|gstatic)\.com/, el.url), opts); };
+    const r = await require("./lib/mirror").mirrorSite(el.url, out, () => {}).finally(() => { globalThis.fetch = realFetch; return el.close(); });
+    const home = fs.readFileSync(path.join(out, "index.html"), "utf8");
+    assert.deepStrictEqual(r.removed, ["Google Analytics / Tag Manager", "Facebook pixel"]);
+    assert(!/googletagmanager|gtag\(|facebook\.com|fonts\.g/.test(home), "trackers and Google hosts gone from the page");
+    assert(asked.includes("https://fonts.googleapis.com/css?family=Sbtest%3A400&display=swap"), "stylesheet URL decoded");
+    const local = home.match(/href='(\/google-fonts\/\w+\.css)'/)[1];
+    assert.strictEqual(fs.readFileSync(path.join(out, local), "utf8"), "@font-face{font-family:'Sbtest';src:url(/google-fonts/s/sbtest/v1/a.woff2) format('woff2')}");
+    assert.strictEqual(fs.readFileSync(path.join(out, "google-fonts/s/sbtest/v1/a.woff2"), "utf8"), "GOOGLEFONT");
+  }
+
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
