@@ -1,6 +1,8 @@
 :root {
-  --bg: #f5f6f8; --panel: #ffffff; --text: #1c2330; --muted: #5d6778; --line: #dfe3ea;
-  --primary: #2357d9; --primary-text: #fff; --danger: #c62f2f; --ok: #1b8a4b; --side: #161b26;
+  /* PhaseN Digital palette (phasen.digital styles.css). --primary is --green-dark: white on it is 5.2:1 (AA);
+     the lighter brand --green (#4f9a3c) is 3.5:1 with white, so it is only used for non-text accents. */
+  --bg: #f7f8f6; --panel: #ffffff; --text: #2b2b2e; --muted: #55565b; --line: #e3e5e0;
+  --primary: #3e7a2f; --primary-text: #fff; --accent: #4f9a3c; --tint: #eaf4e4; --danger: #c62f2f; --ok: #1b8a4b; --side: #ffffff;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; color: var(--text);
 }
 * { box-sizing: border-box; }
@@ -13,7 +15,7 @@ textarea { min-height: 90px; resize: vertical; }
 input[type="color"] { padding: 2px; height: 38px; cursor: pointer; }
 input[type="checkbox"] { width: auto; }
 button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
-button:hover { border-color: var(--primary); }
+button:hover { border-color: var(--accent); }
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
 button.danger { color: var(--danger); }
@@ -21,18 +23,18 @@ button.icon { padding: 4px 9px; }
 button.big { padding: 12px 22px; font-size: 1.05rem; }
 a { color: var(--primary); cursor: pointer; }
 
-.sidebar { width: 240px; flex: none; display: flex; flex-direction: column; background: var(--side); color: #e7eaf0; padding: 20px 14px; }
-.sidebar .brand { font-size: 1.15rem; font-weight: 700; margin-bottom: 24px; }
-.sidebar h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: #8b93a3; }
+.sidebar { width: 240px; flex: none; display: flex; flex-direction: column; background: var(--side); color: var(--text); padding: 20px 14px; border-right: 1px solid var(--line); }
+.sidebar .brand { display: grid; gap: 6px; margin-bottom: 24px; }
+.sidebar .brand img { width: 200px; height: auto; display: block; }
+.sidebar .brand span { font-size: 1.05rem; font-weight: 700; color: var(--primary); }
+.sidebar h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 #site-list { flex: 1; overflow: auto; }
 #site-list button { display: block; width: 100%; text-align: left; margin-bottom: 4px; background: transparent; border: 0; color: inherit; padding: 9px 10px; }
-#site-list button:hover { background: #ffffff14; }
-#site-list button.active { background: var(--primary); }
+#site-list button:hover { background: var(--tint); }
+#site-list button.active { background: var(--primary); color: var(--primary-text); }
 .new-site { display: grid; gap: 8px; }
-.new-site input { background: #ffffff10; border-color: #ffffff30; color: #fff; }
-.update-banner { margin-top: 12px; padding: 10px; border-radius: 6px; background: #ffffff14; display: grid; gap: 8px; }
-.update-banner button:not(.primary) { background: transparent; border-color: #ffffff30; }
-.import-button { margin-top: 8px; background: transparent; border-color: #ffffff30; color: inherit; }
+.update-banner { margin-top: 12px; padding: 10px; border-radius: 6px; background: var(--tint); display: grid; gap: 8px; }
+.import-button { margin-top: 8px; }
 .import-wrap { flex: 1; overflow: auto; padding: 40px; }
 .import { max-width: 560px; }
 .toolbar { flex-wrap: wrap; margin-bottom: 6px; }
