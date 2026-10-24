@@ -181,11 +181,35 @@ function designTab() {
     h("p", { className: "hint", style: "margin-top:8px" }, "Picking a theme resets colours and font to that theme's defaults."),
     h("h3", { className: "section-title" }, "Colours"),
     h("div", { className: "grid2" }, [["background", "Background"], ["text", "Text"], ["primary", "Main colour"], ["accent", "Buttons"]].map(([key, label]) =>
-      labelled(label, h("input", { type: "color", value: site.colors[key], oninput: (e) => { site.colors[key] = e.target.value; save(); } })))),
+      labelled(label, h("input", { type: "color", value: site.colors[key], oninput: (e) => { site.colors[key] = e.target.value; save(); colourHint(); } })))),
+    colourHint(h("p", { className: "hint", id: "colour-hint", role: "status", style: "margin-top:8px" })),
     select("Font", site, "font", Object.entries(fonts).map(([id, f]) => [id, f.label])),
     imageField("Logo", site, "logo", 600, "Shown at the top of every page instead of your website name. A wide image with a transparent background works best."),
     themeSourcesSettings(),
   ];
+}
+
+// Same WCAG maths as lib/build.js contrastRatio (the renderer can't require it).
+function contrast(a, b) {
+  const lum = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// A gentle, non-blocking note when text or links are hard to read on the background (WCAG AA is 4.5:1).
+// Only for colours the user picked: a theme's own defaults are checked by its author, and some
+// themes (e.g. minimal) don't colour links with the main colour at all.
+// ponytail: assumes links use the main colour once the user changes it; ask themes to declare a link colour if that misleads.
+function colourHint(el = $("#colour-hint")) {
+  const c = site.colors;
+  const d = (site.themeSource ? SOURCES.find((s) => s.spec === site.themeSource)?.themes?.[site.theme] : THEMES.themes[site.theme])?.colors || {};
+  const low = [["Text", "text"], ["Links (main colour)", "primary"]]
+    .filter(([, k]) => !(c[k] === d[k] && c.background === d.background) && contrast(c[k], c.background) < 4.5);
+  el.hidden = !low.length;
+  el.textContent = low.length ? `${low.map(([n]) => n).join(" and ")} may be hard to read on this background. Try a darker or lighter colour (aim for a contrast of at least 4.5:1).` : "";
+  return el;
 }
 
 function themeButton(t, active, choose) {

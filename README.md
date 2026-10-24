@@ -141,7 +141,11 @@ published always-pass test secret, so that one step needs internet access.
   header nav behind a Menu button (a small inline script in `lib/build.js`
   adds it; without JS the nav just stays visible). `lib/themes.js` loads them for both
   the build and the Design tab; colours/fonts are CSS variables the user picks
-  there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
+  there. Text on the main and button colours is black or white, whichever
+  has the higher WCAG contrast (`contrastText` in `lib/build.js`); `npm test`
+  checks every bundled theme's defaults reach 4.5:1, and the Design tab shows
+  a non-blocking hint when the user's own text or main colour falls below
+  that on their background. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
   themes`); an identical copy is vendored into the public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo for its CI, so **keep the two copies in sync**: change both together.
