@@ -77,6 +77,22 @@ const site = {
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
 
+  // Editable WordPress import keeps each page's old address where it can, and 301s the rest (#72).
+  const wpPage = (id, title, p, sections = []) => ({ id, title, ...(p && { path: p }), sections });
+  const wpSite = { ...site, pages: [
+    wpPage("h", "Home", "/home/"), wpPage("s", "Our Services", "/our-services/"), wpPage("w", "Web", "/services/web/"),
+    wpPage("a", "API", "/api/"), wpPage("dup", "Copy", "/our-services/"), wpPage("u", "Café", "/café/"), wpPage("p", "Privacy", "/privacy/"),
+    wpPage("n", "Contact", null, [{ type: "form", formId: "contact", heading: "", buttonText: "Send" }]),
+  ] };
+  assert.deepStrictEqual(await build(wpSite, siteDir, out, {}), { privacy: "/privacy-notice", h: "/", s: "/our-services/", w: "/services/web/",
+    a: "/api-2", dup: "/copy", u: "/caf", p: "/privacy/", n: "/contact" });
+  assert(read("public/our-services/index.html").includes("<title>Our Services") && fs.existsSync(path.join(out, "public/services/web/index.html")));
+  assert.strictEqual(read("public/_redirects"), "/home/ / 301\n/api/ /api-2 301\n/caf%C3%A9/ /caf 301\n", "changed addresses 301, a duplicate path doesn't");
+  wpSite.pages[1].title = "What we do";
+  assert.strictEqual((await build(wpSite, siteDir, out, {})).s, "/our-services/", "renaming an imported page keeps its address");
+  await build(site, siteDir, out, {});
+  assert(!fs.existsSync(path.join(out, "public/_redirects")), "no _redirects for app-made pages");
+
   // Exact-copy import reads WordPress forms' questions from their markup.
   const { formFields } = require("./lib/mirror");
   assert.deepStrictEqual(formFields(`<input type="hidden" name="post_id"><label for="n">Name</label><input id="n" name="f[name]" required>

@@ -274,6 +274,12 @@ already signed in"). They're only sent over https and aren't stored.
   are removed). Images are downloaded and re-encoded like uploads. Links
   between imported pages are rewritten to the new pages; other links (posts,
   files) keep pointing at the old site.
+- Addresses: each page keeps its WordPress address (`page.path`, e.g.
+  `/our-services/` or `/services/web/`), so old links and search results
+  still work, and renaming the page doesn't move it. Where an address can't
+  be kept (the home page, which is always `/`; a non-ASCII or reserved slug
+  such as `/api/`), the page gets a title-based address and the old one a
+  301 in `_redirects`. Pages added in the app use title-based addresses.
 - Pages that contained a WordPress form (Contact Form 7 etc.) get the
   built-in contact form instead.
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
