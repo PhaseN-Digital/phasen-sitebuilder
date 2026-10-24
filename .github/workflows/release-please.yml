@@ -47,6 +47,10 @@ jobs:
           manifest-file: .release-please-manifest.json
       # For scripts/release-bump.js and `git ls-remote origin`.
       - uses: actions/checkout@v7
+      # The self-hosted runner has no preinstalled node (#237).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       # Which release PR to gate, if any (scripts/release-bump.js gate): one
       # release-please opened or updated in this run (prs_created), any open
       # one on a manual dispatch on main, or one an earlier gate labelled
@@ -111,6 +115,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The self-hosted runner has no preinstalled node (#237).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       # Everything below is re-read right before merging, not taken from the
       # start of the run: regression takes minutes and main can move (#97).
       - id: gate
