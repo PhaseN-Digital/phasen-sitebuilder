@@ -237,6 +237,14 @@ are not, so add them yourself.
   head. `test.js` asserts no built page mentions it. Exact copies strip the
   original site's trackers (`TRACKERS` in `lib/mirror.js`, extend the table
   rather than adding special cases) and self-host Google Fonts.
+- Imports need the ownership declaration (#141, README "Ownership
+  declaration and provenance"): main.js's import handlers (`wp:fetch`,
+  `wp:mirror`) refuse without one, and `publish()` refuses an imported site
+  without `site.importProvenance`. A new import path must go through
+  `requireDeclaration`/`importProvenance` too. `stampProvenance` in
+  `lib/build.js` marks every built page; `importProvenance.declaredBy` (the
+  user's name and email) must never reach the build output (test.js and the
+  regression suite check).
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.

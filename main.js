@@ -6,7 +6,7 @@ const { pathToFileURL } = require("node:url");
 const { build, pruneAssets, themes, fonts, inboxDays } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
-const { mirrorSite } = require("./lib/mirror");
+const { mirrorSite, verifyOwnership } = require("./lib/mirror");
 const update = require("./lib/update");
 const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
@@ -106,8 +106,38 @@ function newSite(name, theme) {
   };
 }
 
+// Import provenance (#141). Every import needs the user's ownership declaration,
+// refused here too so a UI bug can't skip it; verification is attempted and
+// recorded, never required. declaredBy stays in site.json: lib/build.js only
+// publishes the source, date, app version and verification result.
+const isImported = (site) => Boolean(site.importProvenance || site.mirror || site.pages.some((p) => p.path));
+function requireDeclaration(declaration) {
+  if (declaration?.confirmed !== true) throw new Error("Confirm that you own this website, or have the owner's written permission to copy and republish it, before importing it.");
+}
+async function importProvenance(url, declaration, { wpAuthenticated = false, imported = true } = {}) {
+  requireDeclaration(declaration);
+  const raw = String(url || "").trim();
+  let source;
+  try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
+  const settings = await loadSettings();
+  const zones = settings.cloudflare ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
+  const now = new Date().toISOString();
+  return {
+    source,
+    ...(imported && { importedAt: now }),
+    declaredAt: now,
+    appVersion: app.getVersion(),
+    declaredBy: { name: settings.name || "", email: settings.defaults?.email || "" }, // the app default form email (#134)
+    statement: String(declaration.statement || "").slice(0, 500),
+    verification: await verifyOwnership(source, { zones, wpAuthenticated, token: String(declaration.token || "") }),
+  };
+}
+
 async function publish(id, log) {
   const site = await readSite(id);
+  if (site && isImported(site) && !site.importProvenance) {
+    throw new Error("This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it on the Publish tab before publishing it again.");
+  }
   const settings = await settingsFor(id, site);
   if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first (Settings).");
   if (!settings.resendKey) throw new Error("Connect your Resend account first (Settings). It sends your form emails.");
@@ -463,7 +493,20 @@ const handlers = {
     const { cloudflare } = site ? await settingsFor(id, site) : {}; // the site's resolved account (#134)
     return cloudflare && site ? cf.hostnameWarnings(unseal(cloudflare.token), cloudflare.accountId, cf.siteDomain(domain), site.workerName) : [];
   },
-  "wp:fetch": (url, username, password) => wp.fetchWordPress(url, username, password),
+  "wp:fetch": async (url, username, password, declaration) => {
+    requireDeclaration(declaration);
+    const result = await wp.fetchWordPress(url, username, password);
+    return { ...result, provenance: await importProvenance(url, declaration, { wpAuthenticated: result.authenticated }) };
+  },
+  // Declaration for a site imported before #141; it has to be given before the site can be published again.
+  "import:declare": async (id, url, declaration) => {
+    requireDeclaration(declaration);
+    const site = await readSite(id);
+    if (!site || !isImported(site)) throw new Error("Only imported websites need an ownership declaration.");
+    site.importProvenance = await importProvenance(url, declaration, { imported: false });
+    await writeJson(path.join(siteDir(id), "site.json"), site);
+    return site.importProvenance;
+  },
   "wp:image": (url) => wp.downloadImage(url),
   "mirror:read": (id, file) => fs.readFile(mirrorFile(id, file), "utf8"),
   "mirror:write": (id, file, html) => fs.writeFile(mirrorFile(id, file), String(html)),
@@ -475,7 +518,8 @@ const handlers = {
   },
   "mirror:original": (id, file) => fs.readFile(mirrorFile(id, file, "mirror-original"), "utf8"),
   // Exact-copy import: see lib/mirror.js.
-  "wp:mirror": async (url, event) => {
+  "wp:mirror": async (url, declaration, event) => {
+    requireDeclaration(declaration);
     const site = newSite("Imported website", "clean");
     const dir = siteDir(site.id);
     await fs.mkdir(path.join(dir, "assets"), { recursive: true });
@@ -486,6 +530,7 @@ const handlers = {
       site.pages = result.pages.map((p) => ({ id: hex(4), title: p.title, mirror: p.path, file: p.file, sections: [] }));
       site.forms = result.forms.map((f) => ({ id: f.id, name: f.name, to: "", success: "Thanks, your message has been sent.", fields: f.fields, mirrored: true, shownOn: f.pages }));
       site.mirror = { formFiles: result.formFiles };
+      site.importProvenance = await importProvenance(url, declaration);
       await writeJson(path.join(dir, "site.json"), site);
       await previewBuild(site);
       return site.id;

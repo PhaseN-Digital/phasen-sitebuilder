@@ -114,6 +114,9 @@ a { color: var(--primary); cursor: pointer; }
 .step ol { padding-left: 20px; margin: 0 0 12px; line-height: 1.7; }
 .inline { display: flex; gap: 6px; }
 .warn { background: #fff4e5; border: 1px solid #f3c27a; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+dialog.declaration { max-width: 560px; border: 1px solid var(--line); border-radius: 8px; padding: 20px 24px; }
+dialog.declaration .declare { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; margin: 12px 0; }
+dialog.declaration code { word-break: break-all; }
 .error { color: var(--danger); }
 .log { background: #10141c; color: #cfd6e2; border-radius: 6px; padding: 12px; max-height: 260px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; }
 .live { background: #e8f6ee; border: 1px solid #a6dcbc; border-radius: 6px; padding: 10px; margin-bottom: 12px; }

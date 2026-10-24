@@ -49,7 +49,14 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, themeBuilder, settingsPage };
+    // The ownership declaration before every import (#141): resolves to whether Import was disabled before the box was ticked.
+    const declare = async () => {
+      await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
+      const wasDisabled = await run(`document.querySelector('dialog.declaration button[value="ok"]').disabled`);
+      await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
+      return wasDisabled;
+    };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, themeBuilder, settingsPage };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -173,6 +180,34 @@ app.on("browser-window-created", (_e, win) => {
       await shot("theme-builder-design");
     }
 
+    // ---------- 3b. a site imported before #141 must declare ownership before it can be published again ----------
+    async function legacyDeclaration() {
+      const id = result.sites.mirror;
+      if (!id) return;
+      await run(`openSite(${JSON.stringify(result.sites.created)})`);
+      const file = path.join(UD, "sites", id, "site.json");
+      const old = JSON.parse(read(file));
+      delete old.importProvenance;
+      fs.writeFileSync(file, JSON.stringify(old));
+      await run(`openSite(${JSON.stringify(id)}); 0`);
+      await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
+      check("legacy import: asked on open, and told why", /imported before Site Builder asked for an ownership declaration/.test(await run(`document.querySelector("dialog.declaration").textContent`)));
+      await run(`document.querySelector('dialog.declaration button[value=""]').click(); tab = "publish"; renderEditor(); 0`);
+      const notice = await waitFor(() => run(`[...document.querySelectorAll("#tab .warn")].map((w) => w.textContent).join(" | ")`));
+      check("legacy import: Publish tab says why and offers the declaration", /imported before Site Builder asked/.test(notice || "") && await run(`[...document.querySelectorAll("button")].some((b) => b.textContent === "Confirm ownership…")`), notice);
+      const refused = await run(`cms.call("sites:publish", ${JSON.stringify(id)}).then(() => "published", (e) => e.message)`);
+      check("legacy import: main process refuses to publish it", /ownership declaration/.test(refused), refused);
+      await shot("legacy-declaration");
+      await clickButton("Confirm ownership…");
+      await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
+      await run(`{ const i = document.querySelector('dialog.declaration input[name="source"]'); i.value = ${JSON.stringify(SB_EL + "/about/")}; i.dispatchEvent(new Event("input")); } 0`);
+      await declare();
+      const p = await waitFor(() => JSON.parse(read(file)).importProvenance);
+      check("legacy import: declaration recorded", p?.source === new URL(SB_EL).origin && !p.importedAt && p.declaredAt && p.declaredBy?.email === "jo.declarer@example.org", p);
+      const after = await waitFor(() => run(`[...document.querySelectorAll("#tab .warn")].map((w) => w.textContent).join(" | ").includes("Imported from") && site.importProvenance?.source`));
+      check("legacy import: Publish tab now describes the marker", after === new URL(SB_EL).origin, after);
+    }
+
     // ---------- 0. update banner, from test/fakes.js's latest.json ----------
     async function updateBanner() {
       const text = await waitFor(() => run(`document.querySelector("#update-banner")?.textContent`));
@@ -288,13 +323,31 @@ app.on("browser-window-created", (_e, win) => {
 
     // ---------- 2. editable WordPress import ----------
     async function wordpressImport() {
+      // The declaring user's name and email (#141): recorded in site.json, never published.
+      fs.writeFileSync(path.join(UD, "settings.json"), JSON.stringify({ name: "Jo Declarer", email: "jo.declarer@example.org" }));
       await run(`document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
-      await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_WP)}; f.username.value = "u"; f.password.value = "p"; f.requestSubmit() }`);
+      check("import: renamed for any website", await run(`document.querySelector("#import-wp").textContent === "Import a website…" && document.querySelector(".import h1").textContent === "Import a website"`));
+      const before = fs.readdirSync(path.join(UD, "sites")).length;
+      const refused = await run(`Promise.all([cms.call("wp:mirror", ${JSON.stringify(SB_EL)}), cms.call("wp:fetch", ${JSON.stringify(SB_WP)}, "", "", { confirmed: false })].map((p) => p.then(() => "imported", (e) => e.message)))`);
+      check("declaration: main process refuses imports without one", refused.every((m) => /Confirm that you own this website/.test(m)) && fs.readdirSync(path.join(UD, "sites")).length === before, refused);
+      await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_WP)}; f.querySelector('[value="editable"]').checked = true; f.requestSubmit() }`);
+      await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
+      const modal = await run(`document.querySelector("dialog.declaration").textContent`);
+      check("declaration: warning, checkbox and marker notice shown", /copyright, trademarks and database rights/.test(modal) && modal.includes("I confirm I own this website, or have the owner's written permission to copy and republish it")
+        && /phasen-provenance\.json/.test(modal) && /name and email are never published/.test(modal) && /phasen-verify-[a-f0-9]{24}\.txt/.test(modal), modal);
+      check("declaration: Import disabled until the box is ticked", await run(`document.querySelector('dialog.declaration button[value="ok"]').disabled`));
+      await shot("declaration");
+      await run(`document.querySelector('dialog.declaration button[value=""]').click(); 0`);
+      await sleep(500);
+      check("declaration: cancelling doesn't import", !(await run(`Boolean(document.querySelector("dialog.declaration"))`)) && !(await run(`document.querySelector(".log").textContent`)) && fs.readdirSync(path.join(UD, "sites")).length === before);
+      await run(`{ const f = document.querySelector("form.import"); f.querySelector('[value="auto"]').checked = true; f.username.value = "u"; f.password.value = "p"; f.requestSubmit() }`);
+      await declare();
       const err = await waitFor(() => run(`document.querySelector(".import .error").textContent`));
       check("wordpress: credentials over http refused", /https/i.test(err || ""), err);
 
       await run(`{ const f = document.querySelector("form.import"); f.username.value = ""; f.password.value = ""; f.querySelector('[value="editable"]').checked = true; f.querySelector("button").disabled = false; f.requestSubmit() }`);
+      await declare();
       const id = await waitFor(() => run(`site?.name === "Bob’s Bikes" && site.id`), 30000);
       check("wordpress: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
@@ -302,6 +355,10 @@ app.on("browser-window-created", (_e, win) => {
       await saved();
       const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
       check("wordpress: tagline", s.description === "Fixing bikes since 1999", s.description);
+      const p = s.importProvenance || {};
+      check("declaration: provenance recorded (editable import)", p.source === new URL(SB_WP).origin && p.importedAt && p.appVersion === require("../package.json").version
+        && p.declaredBy?.name === "Jo Declarer" && p.declaredBy.email === "jo.declarer@example.org" && /I confirm I own/.test(p.statement), p);
+      check("verification: file on the source site, with the dialog's token", p.verification?.status === "verified" && p.verification.method === "verification-file", p.verification);
       check("wordpress: global styles mapped", s.theme === "elegant" && s.font === "serif" && JSON.stringify(s.colors) === JSON.stringify({ background: "#fdf6e3", text: "#222222", primary: "#cc3300", accent: "#0a7d4b" }), { theme: s.theme, colors: s.colors });
       check("wordpress: logo copied", /^assets\/[a-f0-9]+\.webp$/.test(s.logo?.src || ""), s.logo);
       check("wordpress: front page first", JSON.stringify(s.pages.map((p) => p.title)) === JSON.stringify(["Welcome", "About & Team", "Contact"]), s.pages.map((p) => p.title));
@@ -331,6 +388,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.querySelector('[value="editable"]').checked = true; f.requestSubmit() }`);
+      await declare();
       const id = await waitFor(() => run(`site?.name === "Acme Ltd" && !site.mirror && site.id`), 30000);
       check("elementor editable: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
@@ -345,12 +403,14 @@ app.on("browser-window-created", (_e, win) => {
       await run(`document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.requestSubmit() }`); // "auto" picks exact for Elementor
+      await declare();
       const id = await waitFor(() => run(`site?.mirror && site.id`), 60000);
       check("exact copy: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       result.sites.mirror = id;
       const M = path.join(UD, "sites", id, "mirror");
       const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
+      check("declaration: provenance recorded (exact copy), unverified", s.importProvenance?.source === new URL(SB_EL).origin && s.importProvenance.verification?.status === "unverified" && s.importProvenance.declaredBy?.name === "Jo Declarer", s.importProvenance);
       check("exact copy: pages", JSON.stringify(s.pages.map((p) => p.mirror).sort()) === JSON.stringify(["/", "/about/", "/contact-us/"]), s.pages.map((p) => p.mirror));
 
       const files = [];

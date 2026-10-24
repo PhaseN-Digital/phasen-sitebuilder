@@ -1,4 +1,7 @@
-// WordPress import, renderer side. WordPress themes are PHP, so they can't run
+// Website import (WordPress or any other site), renderer side. WordPress
+// sites can come in editable or as an exact copy; anything else (and WordPress
+// sites with page builders) is copied exactly by lib/mirror.js.
+// For editable WordPress imports: WordPress themes are PHP, so they can't run
 // on a static Worker: we copy the parts that carry over (name, tagline, logo,
 // colours, fonts) onto the closest built-in theme, and bring each page's
 // content in as a sanitized "Rich text" section.
@@ -130,21 +133,21 @@ const isDark = (hex) => hex && [1, 3, 5].reduce((sum, i) => sum + parseInt(hex.s
 // lives in the builder, not in content the editable import can read) or when
 // there's no usable REST API (including one hidden from visitors when no
 // username and application password were given); otherwise it does the editable import.
-async function runImport({ url, username, password, mode }, log) {
-  if (mode === "exact") return copySite(url, log);
+async function runImport({ url, username, password, mode, declaration }, log) {
+  if (mode === "exact") return copySite(url, log, declaration);
   log("Connecting to WordPress…");
   let wp;
   try {
-    wp = await call("wp:fetch", url, username, password);
+    wp = await call("wp:fetch", url, username, password, declaration);
   } catch (e) {
     // A hidden API ("needs a username") with no credentials given is treated like a missing one.
     if (mode === "editable" || /refused|https/.test(errorText(e))) throw e;
     log("Couldn't read the content through WordPress's API, so we'll copy the site exactly as it looks.");
-    return copySite(url, log);
+    return copySite(url, log, declaration);
   }
   if (mode === "auto" && wp.builder) {
     log(`This site is built with ${wp.builder}, so we'll copy its design exactly.`);
-    return copySite(url, log);
+    return copySite(url, log, declaration);
   }
   return importWordPress(wp, log);
 }
@@ -152,10 +155,10 @@ async function runImport({ url, username, password, mode }, log) {
 let importLogSink = () => {};
 onImportLog((line) => importLogSink(line));
 
-async function copySite(url, log) {
+async function copySite(url, log, declaration) {
   importLogSink = log;
   try {
-    const id = await call("wp:mirror", url);
+    const id = await call("wp:mirror", url, declaration);
     await annotateCopiedSite(id, log);
     return id;
   } finally {
@@ -173,6 +176,7 @@ async function importWordPress(wp, log) {
   const theme = THEMES.themes[themeId];
   const s = await call("sites:create", plainText(wp.name) || "Imported website", themeId);
   s.description = plainText(wp.description);
+  s.importProvenance = wp.provenance;
   s.colors = Object.fromEntries(Object.entries(theme.colors).map(([k, v]) => [k, style.colors[k] || v]));
   s.font = style.serif ? "serif" : theme.font;
 
@@ -236,15 +240,76 @@ async function importWordPress(wp, log) {
   return s.id;
 }
 
+// ---------- ownership declaration (#141) ----------
+// Wording reviewed alongside the privacy page (#30); not legal advice.
+const DECLARATION = "I confirm I own this website, or have the owner's written permission to copy and republish it";
+const importedSite = (s) => Boolean(s.importProvenance || s.mirror || s.pages.some((p) => p.path));
+const originOf = (url) => { try { return new URL(/^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`).origin; } catch { return ""; } };
+
+// The modal shown before every import, and once for sites imported before it
+// existed (`legacy`, which also asks where the site came from). Resolves to the
+// declaration main.js requires ({ confirmed, statement, token, url }), or null.
+function declarationDialog({ url = "", legacy = false } = {}) {
+  return new Promise((resolve) => {
+    const token = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const source = h("input", { name: "source", required: true, placeholder: "https://example.com", value: url });
+    const file = h("code", {});
+    const showFile = () => { file.textContent = `${originOf(source.value) || "https://your-website"}/phasen-verify-${token}.txt`; };
+    source.addEventListener("input", showFile);
+    showFile();
+    const ok = h("button", { className: "primary", value: "ok", disabled: true }, legacy ? "Confirm" : "Import website");
+    const box = h("input", { type: "checkbox", onchange: () => { ok.disabled = !box.checked; } });
+    const dialog = h("dialog", { className: "declaration" },
+      h("form", { method: "dialog" },
+        h("h2", {}, legacy ? "Confirm you own this website" : "Before you import"),
+        legacy && h("p", {}, "This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it, or have permission to copy it, before you publish it again."),
+        legacy ? labelled("Address of the website it was copied from", source) : h("p", {}, "Importing ", h("b", {}, url), "."),
+        h("div", { className: "warn" }, "Only import a website you own, or one whose owner has given you written permission to copy and republish it. Copying a website you don't have rights to can infringe copyright, trademarks and database rights, and you're responsible for what you publish. This isn't legal advice."),
+        h("label", { className: "declare" }, box, " ", DECLARATION),
+        h("p", { className: "hint" }, "Every published page will say it was made with PhaseN Site Builder and imported from this address, with the import date, and /.well-known/phasen-provenance.json will list the address, date, app version and whether ownership was verified. Your name and email are never published; they're kept with the website on this computer, with your declaration."),
+        h("details", {},
+          h("summary", {}, "Verify that you own it (optional)"),
+          h("p", { className: "hint" }, "We check automatically: it's verified if the domain is in your connected Cloudflare account, or if you import a WordPress site with an application password. Or put a file at this address before you continue, containing just ", h("code", {}, token), ": ", file)),
+        h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
+          h("button", { value: "" }, "Cancel"), ok)));
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      resolve(dialog.returnValue === "ok" && box.checked ? { confirmed: true, statement: DECLARATION, token, url: legacy ? source.value : url } : null);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
+// Sites imported before #141 are asked once per session when opened; the Publish tab asks again (`force`).
+const declarationAsked = new Set();
+async function askDeclaration(force) {
+  const s = site;
+  if (!s || s.importProvenance || !importedSite(s) || (!force && declarationAsked.has(s.id))) return;
+  declarationAsked.add(s.id);
+  const declaration = await declarationDialog({ legacy: true });
+  if (!declaration) return;
+  try {
+    s.importProvenance = await call("import:declare", s.id, declaration.url, declaration);
+  } catch (e) {
+    return alert(errorText(e));
+  }
+  if (site === s && tab === "publish") renderTab();
+}
+
 function renderImport() {
   const status = h("pre", { className: "log", hidden: true });
   const error = h("p", { className: "error" });
   const form = h("form", { className: "import", onsubmit: async (e) => {
     e.preventDefault();
     const button = form.querySelector("button");
-    button.disabled = true; error.textContent = ""; status.hidden = false; status.textContent = "";
+    button.disabled = true; error.textContent = "";
+    const values = Object.fromEntries(new FormData(form));
+    const declaration = await declarationDialog({ url: values.url });
+    if (!declaration) { button.disabled = false; return; }
+    status.hidden = false; status.textContent = "";
     try {
-      const id = await runImport(Object.fromEntries(new FormData(form)), (line) => { status.textContent += line + "\n"; status.scrollTop = status.scrollHeight; });
+      const id = await runImport({ ...values, declaration }, (line) => { status.textContent += line + "\n"; status.scrollTop = status.scrollHeight; });
       await openSite(id);
     } catch (err) {
       error.textContent = errorText(err);
@@ -252,17 +317,17 @@ function renderImport() {
       loadSites();
     }
   } },
-    h("h1", {}, "Import from WordPress"),
-    h("p", { className: "hint" }, "Creates a new website from your WordPress site. Your WordPress site isn't changed."),
-    labelled("WordPress website address", h("input", { name: "url", required: true, placeholder: "https://example.com" })),
+    h("h1", {}, "Import a website"),
+    h("p", { className: "hint" }, "Creates a new website from one you own. The original website isn't changed."),
+    labelled("Website address", h("input", { name: "url", required: true, placeholder: "https://example.com" })),
     h("fieldset", { className: "modes" }, h("legend", {}, "How should we copy it?"),
-      [["auto", "Decide for me", "Exact copy for sites built with Elementor, Divi and other page builders, otherwise editable."],
-       ["editable", "Editable content", "Pages are rebuilt in one of our themes so you can edit everything here. Layouts aren't kept."],
+      [["auto", "Decide for me", "Editable for WordPress sites, exact copy for anything else and for WordPress sites built with Elementor, Divi and other page builders."],
+       ["editable", "Editable content (WordPress only)", "Pages are rebuilt in one of our themes so you can edit everything here. Layouts aren't kept."],
        ["exact", "Exact copy of the design", "Every page looks exactly as it does now, including menus and styles. The text of copied pages can't be edited here."]]
         .map(([value, label, about]) => h("label", {}, h("input", { type: "radio", name: "mode", value, checked: value === "auto" }), h("span", {}, h("b", {}, label), h("br"), h("small", {}, about))))),
-    labelled("Username (optional)", h("input", { name: "username", autocomplete: "off" })),
-    labelled("Application password (optional)", h("input", { name: "password", type: "password", autocomplete: "off" }),
-      "Only needed for an editable import when your site hides its content from visitors. In WordPress go to Users › Profile › Application Passwords, add one named \"Site Builder\" and paste it here. It's used once and not saved."),
+    labelled("WordPress username (optional)", h("input", { name: "username", autocomplete: "off" })),
+    labelled("WordPress application password (optional)", h("input", { name: "password", type: "password", autocomplete: "off" }),
+      "Only needed for an editable import when your site hides its content from visitors. In WordPress go to Users › Profile › Application Passwords, add one named \"Site Builder\" and paste it here. It's used once and not saved, and it also verifies that you own the site."),
     h("button", { className: "primary big" }, "Import website"),
     error,
     status);

@@ -100,6 +100,20 @@ async function inboxChecks(label, s) {
   check(`${label}: messages past the retention period deleted on the next write`, r.json?.ok === true && after.length === 2 && !after.some((m) => m.form === "old"), after);
 }
 
+// Imported sites (#141): the provenance marker on the given pages, the well-known file,
+// and none of the declaring user's details (set by test/drive.js) anywhere in the build.
+async function provenanceChecks(label, s, pages) {
+  const source = s.site.importProvenance?.source;
+  const marked = pages.filter((r) => r.text.includes('<meta name="generator" content="PhaseN Site Builder">') && r.text.includes(`<meta name="phasen:imported-from" content="${source}">`) && /<meta name="phasen:imported-on" content="\d{4}-\d{2}-\d{2}">/.test(r.text));
+  check(`${label}: provenance marker on every page (#141)`, source && marked.length === pages.length, `${marked.length}/${pages.length}`);
+  const known = await get(s.base, "/.well-known/phasen-provenance.json");
+  let json = null;
+  try { json = JSON.parse(known.text); } catch {}
+  check(`${label}: /.well-known/phasen-provenance.json served`, known.status === 200 && json?.source === source && json.appVersion === s.site.importProvenance.appVersion && json.verification === s.site.importProvenance.verification.status, known);
+  const leaks = fs.readdirSync(s.dir, { recursive: true }).map(String).filter((f) => fs.statSync(path.join(s.dir, f)).isFile() && /Jo Declarer|jo\.declarer/i.test(fs.readFileSync(path.join(s.dir, f), "utf8")));
+  check(`${label}: no personal data in the published output`, !leaks.length && !/Jo Declarer|jo\.declarer/i.test(pages.map((r) => r.text).join("") + known.text), leaks);
+}
+
 const get = (base, p) => fetch(base + p, { redirect: "manual" }).then(async (r) => ({ status: r.status, location: r.headers.get("location"), text: await r.text() }));
 const post = (base, p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) })
   .then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) }));
@@ -224,6 +238,7 @@ async function workerChecks(sites) {
         && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
       const cart = await get(s.base, "/cart/");
       check("worker (editable import): WordPress-only pages skipped", cart.status === 404 && !s.site.pages.some((p) => ["Members", "Cart"].includes(p.title)), cart.status);
+      await provenanceChecks("worker (editable import)", s, [await get(s.base, "/"), about, contact, cart]);
     } finally { await s.child.stop(); }
   }
   if (sites.mirror) {
@@ -246,6 +261,7 @@ async function workerChecks(sites) {
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);
       const missing = await get(s.base, "/no-such-page/");
       check("worker (exact copy): copied 404 page", missing.status === 404 && missing.text.includes("Oops, nothing here"), missing.status);
+      await provenanceChecks("worker (exact copy)", s, [home, about, await get(s.base, "/contact-us/"), missing]);
       await formChecks("worker (exact copy) form", s, form.id, { "form_fields[name]": "Regression Name", "form_fields[email]": "jo@example.com", "form_fields[message]": "Regression message body" });
       check("worker (exact copy): cart and comment forms not re-wired", s.site.forms.length === 1 && !about.text.includes("data-form="), s.site.forms.map((f) => f.name));
       const r = await post(s.base, `/api/forms/${form.id}`, { "form_fields[name]": "Ticker", "form_fields[email]": "jo@example.com", "form_fields[services][]": ["Design", "Build"], "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
@@ -258,7 +274,7 @@ async function workerChecks(sites) {
 (async () => {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
-  const wp = await startWordPress(), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
+  const wp = await startWordPress({ verifyToken: "any" }), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
   try {
     const sites = await driveApp(wp, el, updates, gh);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
