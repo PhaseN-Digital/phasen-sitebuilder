@@ -95,6 +95,16 @@ use `scripts/check-commit.js`.
   writes it into `lib/github-config.json` (gitignored). Without it the
   installers say "GitHub sign-in isn't configured". Local runs read the
   environment variable of the same name instead.
+- Licences (#182): the app is proprietary (`LICENSE`, `"license": "SEE
+  LICENSE IN LICENSE"`; the EULA wording in `LICENSE` is still a placeholder).
+  `npm run dist` first runs `scripts/licences.js` (`predist`), which writes
+  `THIRD-PARTY-NOTICES.txt` (gitignored) from the licence and NOTICE files of
+  the production dependencies electron-builder packages, and fails if any is
+  copyleft (GPL/LGPL/AGPL/MPL/SSPL…). `npm test` runs the same check from the
+  lockfile. sharp/libvips (LGPL) stays out via the `!node_modules/...`
+  exclusions in `build.files`, which the script reads; a justified exception
+  goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
+  next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
 
 ## Regression tests
 

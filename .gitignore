@@ -1,3 +1,4 @@
 node_modules
 dist/
 lib/github-config.json
+THIRD-PARTY-NOTICES.txt
