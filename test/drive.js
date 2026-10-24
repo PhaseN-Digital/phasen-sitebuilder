@@ -202,8 +202,8 @@ app.on("browser-window-created", (_e, win) => {
       await shot("github-code");
       check("github: signed in", await waitFor(() => run(`settings.github?.login === "octo" && settings.github.privateRepos && document.querySelector("#settings-page").textContent.includes("Signed in as octo")`)));
       await shot("github-signed-in");
-      const stored = JSON.parse(read(path.join(UD, "settings.json"))).github;
-      check("github: token stored sealed", stored?.login === "octo" && stored.token && !JSON.stringify(stored).includes("github_pat_fake"), stored && Object.keys(stored));
+      const stored = JSON.parse(read(path.join(SITES, ".phasen", "settings.json"))).github;
+      check("github: token stored encrypted, apart from settings.json (#136)", stored?.login === "octo" && !("token" in stored) && !read(path.join(SITES, ".phasen", "secrets.enc")).includes("github_pat_fake"), stored && Object.keys(stored));
 
       const inDialog = (js) => run(`{ const d = document.querySelector("dialog.publish-theme[open]"); d ? (${js}) : null }`);
       const status = () => inDialog(`d.querySelector("[role=status]").textContent + d.querySelector(".error").textContent`);

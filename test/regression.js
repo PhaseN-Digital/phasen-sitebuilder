@@ -83,7 +83,7 @@ async function singleInstanceChecks() {
   fs.mkdirSync(dir, { recursive: true });
   const launch = (name, userData) => {
     const result = path.join(dir, `${name}.log`);
-    const env = { ...process.env, SB_USERDATA: path.join(dir, userData), SB_RESULT: result };
+    const env = { ...process.env, SB_USERDATA: path.join(dir, userData), SB_DOCS: path.join(dir, "docs"), SB_RESULT: result };
     delete env.ELECTRON_RUN_AS_NODE;
     const args = ["--no-sandbox", "-r", path.join(__dirname, "instance.js"), "."];
     const headless = process.platform === "linux" && !process.env.DISPLAY;
