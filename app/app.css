@@ -110,3 +110,9 @@ a { color: var(--primary); cursor: pointer; }
 .sources summary { cursor: pointer; font-weight: 600; }
 .source { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .source .hint, .source .error { margin: 4px 0 0; }
+.message { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+.message summary { cursor: pointer; }
+.message dl { margin: 10px 0; }
+.message dt { font-weight: 600; }
+.message dd { margin: 0 0 8px; white-space: pre-wrap; }
+.badge-warn { white-space: nowrap; background: #fff4e5; border: 1px solid #f3c27a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; font-size: .8rem; }

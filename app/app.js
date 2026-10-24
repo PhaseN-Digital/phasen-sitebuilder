@@ -136,7 +136,7 @@ $("#new-site").addEventListener("submit", async (e) => {
 
 // ---------- layout ----------
 function renderEditor() {
-  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["publish", "Publish"]];
+  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"]];
   $("#main").replaceChildren(
     h("section", { className: "editor-panel" },
       h("header", { className: "panel-head" },
@@ -158,7 +158,7 @@ function renderEditor() {
 function renderTab() {
   const body = $("#tab");
   const scroll = body.scrollTop;
-  const content = { design: designTab, pages: pagesTab, forms: formsTab, publish: publishTab }[tab]();
+  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab }[tab]();
   body.replaceChildren(...content.flat(Infinity).filter((k) => k != null && k !== false));
   body.scrollTop = scroll;
 }
@@ -427,6 +427,43 @@ function formsTab() {
   ];
 }
 
+// ---------- Inbox (#75) ----------
+// Messages come from the site's D1 database through main.js, never the website itself.
+function inboxTab() {
+  const list = h("div", {}, h("p", { className: "hint" }, "Loading messages…"));
+  const status = h("p", { className: "error" });
+  const formName = (id) => site.forms.find((f) => f.id === id)?.name || "Deleted form";
+  const exportBtn = h("button", { disabled: true, onclick: async () => {
+    try { await call("inbox:export", site.id); } catch (e) { status.textContent = errorText(e); }
+  } }, "Export as CSV…");
+  call("inbox:list", site.id).then((rows) => {
+    if (!rows) return list.replaceChildren(h("p", {}, "Your inbox starts once the website is published. Every message sent through your forms is kept here as well as emailed to you."));
+    exportBtn.disabled = !rows.length;
+    list.replaceChildren(...(rows.length ? rows.map((m) => {
+      const fields = JSON.parse(m.fields);
+      const item = h("details", { className: "message" },
+        h("summary", {}, h("b", {}, formName(m.form)), ` · ${new Date(`${m.created_at.replace(" ", "T")}Z`).toLocaleString()} · `,
+          fields.find((f) => f.value)?.value.slice(0, 60) || "",
+          m.email_status !== "sent" && h("span", { className: "badge-warn", title: `Email ${m.email_status}` }, "⚠ Email not delivered")),
+        h("dl", {}, fields.map((f) => [h("dt", {}, f.label), h("dd", {}, f.value || "-")])),
+        h("button", { className: "danger", onclick: async () => {
+          if (!confirm("Delete this message? This can't be undone.")) return;
+          try { await call("inbox:delete", site.id, m.id); item.remove(); } catch (e) { status.textContent = errorText(e); }
+        } }, "Delete"));
+      return item;
+    }) : [h("p", {}, "No messages yet.")]));
+  }).catch((e) => { list.replaceChildren(); status.textContent = errorText(e); });
+  return [
+    h("p", { className: "hint" }, "Messages people send through your forms. Ones marked \u26a0 weren't emailed to you, so reply to them from here."),
+    labelled("Delete messages after (days)", h("input", { type: "number", min: 1, value: site.inboxDays ?? 90,
+      onchange: (e) => { site.inboxDays = Math.max(1, Math.round(Number(e.target.value)) || 90); e.target.value = site.inboxDays; save(); } }),
+      "Your privacy page says this too. The website starts using a new value when you next publish."),
+    h("div", { className: "inline" }, exportBtn, h("button", { onclick: renderTab }, "Refresh")),
+    status,
+    list,
+  ];
+}
+
 // ---------- Publish ----------
 function step(title, done, ...content) {
   return h("div", { className: `step${done ? " done" : ""}` }, h("h3", {}, title), content);
@@ -477,7 +514,7 @@ function publishTab() {
     await call("sites:publish", site.id);
   }) }, publishedUrl ? "Publish changes" : "Publish website");
   const unpublishBtn = canUnpublish && h("button", { disabled: publishing || !cfDone, onclick: () => {
-    if (confirm(`Take "${site.name}" offline? This deletes the website from Cloudflare, along with its www redirect and form keys. You can publish it again later.`)) run(unpublishBtn, async () => {
+    if (confirm(`Take "${site.name}" offline? This deletes the website from Cloudflare, along with its www redirect, form keys and the messages in its Inbox (export them first if you need them). You can publish it again later.`)) run(unpublishBtn, async () => {
       await call("sites:unpublish", site.id);
     });
   } }, "Take website offline");
@@ -487,7 +524,7 @@ function publishTab() {
   const deleteDialog = h("dialog", {},
     h("form", { method: "dialog" },
       h("p", {}, h("b", {}, `Delete "${site.name}" from this computer?`)),
-      canUnpublish && h("label", {}, offline, " Also take it offline (deletes it from Cloudflare, with its www redirect and form keys)"),
+      canUnpublish && h("label", {}, offline, " Also take it offline (deletes it from Cloudflare, with its www redirect, form keys and Inbox messages)"),
       canUnpublish && !cfDone && h("p", { className: "hint" }, "Connect Cloudflare above to take it offline too."),
       h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
         h("button", { value: "" }, "Cancel"), h("button", { className: "danger", value: "delete" }, "Delete"))));
@@ -518,7 +555,7 @@ function publishTab() {
               h("li", {}, "Create a free account at ", link("cloudflare.com", "https://dash.cloudflare.com/sign-up"), " (skip if you have one)."),
               h("li", {}, "Open ", link("API Tokens", "https://dash.cloudflare.com/profile/api-tokens"), " and click ", h("b", {}, "Create Token"), "."),
               h("li", {}, "Next to ", h("b", {}, "Edit Cloudflare Workers"), " click ", h("b", {}, "Use template"), "."),
-              h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", ", h("b", {}, "Zone · DNS · Edit"), " and ", h("b", {}, "Zone · Single Redirect · Edit"), " (called Dynamic Redirect on some accounts)."),
+              h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", ", h("b", {}, "Account · D1 · Edit"), ", ", h("b", {}, "Zone · DNS · Edit"), " and ", h("b", {}, "Zone · Single Redirect · Edit"), " (called Dynamic Redirect on some accounts)."),
               h("li", {}, "Set Account Resources and Zone Resources to ", h("b", {}, "All"), ", then ", h("b", {}, "Continue to summary › Create Token"), "."),
               h("li", {}, "Copy the token and paste it here.")),
             secretInput("Paste your Cloudflare API token", "settings:cloudflare", "Connect"),
