@@ -4,6 +4,7 @@ const { app } = require("electron");
 const fs = require("node:fs");
 
 app.setPath("userData", process.env.SB_USERDATA);
+app.setPath("documents", process.env.SB_DOCS); // the sites folder (#136), never the real Documents
 const log = (line) => fs.appendFileSync(process.env.SB_RESULT, `${line}\n`);
 app.on("browser-window-created", (_e, win) => {
   win.webContents.once("did-finish-load", () => log("ready"));

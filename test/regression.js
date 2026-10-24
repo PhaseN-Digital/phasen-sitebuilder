@@ -11,7 +11,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor, startUpdates, startGitHub } = require("./fakes");
+const { startWordPress, startElementor, startPlainSite, startUpdates, startGitHub } = require("./fakes");
 const themeSources = require("../lib/theme-sources");
 
 const ROOT = path.join(__dirname, "..");
@@ -40,12 +40,20 @@ function start(cmd, args, opts = {}) {
   return child;
 }
 
-async function driveApp(wp, el, updates, gh) {
-  const result = path.join(OUT, "drive.json"), shots = path.join(OUT, "screenshots");
+// Sites live in the sites folder (#136), one sub-folder per site named after it.
+const SITES = path.join(OUT, "docs", "PhaseN Sites");
+const siteDirOf = (id) => fs.readdirSync(SITES).map((n) => path.join(SITES, n)).find((d) => {
+  try { return JSON.parse(fs.readFileSync(path.join(d, "site.json"), "utf8")).id === id; } catch { return false; }
+});
+
+// phase "reinstall" (#136) starts the app again with a fresh userData on the same sites folder.
+async function driveApp(wp, el, updates, gh, plain, phase = "main") {
+  const userData = path.join(OUT, phase === "main" ? "userdata" : `userdata-${phase}`);
+  const result = path.join(OUT, `drive-${phase}.json`), shots = path.join(OUT, "screenshots");
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url, SITEBUILDER_GITHUB_CLIENT_ID: gh.clientId };
+  const env = { ...process.env, SB_USERDATA: userData, SB_DOCS: path.join(OUT, "docs"), SB_PHASE: phase, SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SB_PLAIN: JSON.stringify(Object.fromEntries(Object.entries(plain).map(([k, v]) => [k, v.url]))), SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url, SITEBUILDER_GITHUB_CLIENT_ID: gh.clientId };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -62,7 +70,7 @@ async function driveApp(wp, el, updates, gh) {
   check("theme submit: PR titled with the theme name, only its files", gh.pulls.length === 1 && gh.pulls[0].title === "Add theme: Regression Bikes theme" && ok(only(gh.pulls[0].files)), gh.pulls.map((p) => [p.title, only(p.files)]));
   check("github sign-in: asked for private repos when ticked", gh.logins.at(-1)?.scope === "public_repo repo", gh.logins);
   if (closeEdit) {
-    const kept = JSON.parse(fs.readFileSync(path.join(OUT, "userdata", "sites", closeEdit.id, "site.json"), "utf8")).pages[0].sections[0].buttonText;
+    const kept = JSON.parse(fs.readFileSync(path.join(siteDirOf(closeEdit.id), "site.json"), "utf8")).pages[0].sections[0].buttonText;
     check("pending edit: kept when the app quits", kept === closeEdit.buttonText, kept);
   }
   return sites;
@@ -75,7 +83,7 @@ async function singleInstanceChecks() {
   fs.mkdirSync(dir, { recursive: true });
   const launch = (name, userData) => {
     const result = path.join(dir, `${name}.log`);
-    const env = { ...process.env, SB_USERDATA: path.join(dir, userData), SB_RESULT: result };
+    const env = { ...process.env, SB_USERDATA: path.join(dir, userData), SB_DOCS: path.join(dir, "docs"), SB_RESULT: result };
     delete env.ELECTRON_RUN_AS_NODE;
     const args = ["--no-sandbox", "-r", path.join(__dirname, "instance.js"), "."];
     const headless = process.platform === "linux" && !process.env.DISPLAY;
@@ -102,7 +110,7 @@ async function singleInstanceChecks() {
 
 // Builds a site the way publishing does and serves it with `wrangler dev`.
 async function serve(name, siteId, extra = {}) {
-  const siteDir = path.join(OUT, "userdata", "sites", siteId);
+  const siteDir = siteDirOf(siteId);
   const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), ...extra };
   const dir = path.join(OUT, "built", name);
   await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com", d1: { id: "00000000-0000-0000-0000-000000000000", name: "regression-inbox" } });
@@ -193,7 +201,7 @@ async function sourceTheme(siteId) {
     const priv = await themeSources.fetchSource(gh.privateSpec, { cacheRoot, api: gh.url, token: gh.token });
     check("theme source: private repo with a token, token never sent off the API host", priv.themes.night?.errors.length === 0
       && gh.requests.every(([host, , auth]) => host === gh.host || !auth), gh.requests);
-    await themeSources.installTheme(themeSources.PUBLIC_SOURCE, "retro", cacheRoot, path.join(OUT, "userdata", "sites", siteId));
+    await themeSources.installTheme(themeSources.PUBLIC_SOURCE, "retro", cacheRoot, siteDirOf(siteId));
   } finally {
     await gh.close();
     fs.rmSync(cacheRoot, { recursive: true, force: true });
@@ -205,7 +213,7 @@ async function sourceTheme(siteId) {
 // the publish steps main.js runs, then the build checked with wrangler's own dry run.
 async function subdomainChecks(siteId) {
   const pub = require("../lib/publish");
-  const siteDir = path.join(OUT, "userdata", "sites", siteId), dir = path.join(OUT, "built", "subdomain");
+  const siteDir = siteDirOf(siteId), dir = path.join(OUT, "built", "subdomain");
   const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), domain: { id: "zone1", name: "example.com" } };
   const domain = pub.siteDomain(site.domain);
   domain.label = "shop";
@@ -241,7 +249,7 @@ async function subdomainChecks(siteId) {
 async function workerChecks(sites) {
   if (sites.created) {
     // Built with the Theme Builder's theme the app chose for it (#130), before serve() swaps in a source theme.
-    const siteDir = path.join(OUT, "userdata", "sites", sites.created), localOut = path.join(OUT, "built", "local-theme");
+    const siteDir = siteDirOf(sites.created), localOut = path.join(OUT, "built", "local-theme");
     await build(JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), siteDir, localOut, { workerName: "local-theme" });
     check("build (made in app): with a Theme Builder theme", fs.readFileSync(path.join(localOut, "public", "styles.css"), "utf8").includes("/* theme-builder "));
     const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1", ...(await sourceTheme(sites.created)) });
@@ -299,6 +307,8 @@ async function workerChecks(sites) {
       check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
+      const logo = await get(s.base, "/assets/logo-wide.png"), bg = await get(s.base, "/assets/brand-bg.png");
+      check("worker (exact copy): copied /assets/ logo and CSS background served (#163)", logo.status === 200 && bg.status === 200 && home.text.includes('src="/assets/logo-wide.png"'), [logo.status, bg.status]);
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);
@@ -318,16 +328,19 @@ async function workerChecks(sites) {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
   const wp = await startWordPress({ verifyToken: "any" }), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
+  const plain = { semantic: await startPlainSite("semantic"), soup: await startPlainSite("soup"), sidebar: await startPlainSite("sidebar") };
   try {
     await singleInstanceChecks();
-    const sites = await driveApp(wp, el, updates, gh);
+    const sites = await driveApp(wp, el, updates, gh, plain);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
     if (sites.created) await subdomainChecks(sites.created);
+    await driveApp(wp, el, updates, gh, plain, "reinstall");
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {
     await wp.close(); await el.close(); await updates.close(); await gh.close();
+    for (const site of Object.values(plain)) await site.close();
   }
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed in ${Math.round((Date.now() - started) / 1000)}s.`);
