@@ -18,7 +18,10 @@ async function listen(handler) {
 // Like a membership plugin, the Welcome page renders differently for a
 // logged-in user (any Authorization header); `hidden` refuses anonymous REST
 // requests. `requests` records [path, authenticated] for each request.
-async function startWordPress({ hidden = false } = {}) {
+// Ownership verification (#141): /wp/v2/users/me only accepts admin's
+// application password ("admin", "abcd efgh"), and with `verifyToken` the site serves
+// /phasen-verify-<token>.txt ("any": for whatever token the app's dialog made up).
+async function startWordPress({ hidden = false, verifyToken } = {}) {
   let B;
   const requests = [];
   const site = await listen((req, res) => {
@@ -29,6 +32,12 @@ async function startWordPress({ hidden = false } = {}) {
     const json = (v, h = {}) => { res.writeHead(200, { "content-type": "application/json", ...h }); res.end(JSON.stringify(v)); };
     if (u.pathname === "/wp-json/") return json({ name: "Bob&#8217;s Bikes", description: "Fixing bikes since 1999", namespaces: ["oembed/1.0", "wp/v2"] });
     if (u.pathname === "/wp-json/wp/v2/pages") return json(pages(authed), { "x-wp-totalpages": "1" });
+    if (u.pathname === "/wp-json/wp/v2/users/me") {
+      if (req.headers.authorization === `Basic ${Buffer.from("admin:abcdefgh").toString("base64")}`) return json({ id: 1, name: "admin" });
+      res.writeHead(401, { "content-type": "application/json" }); return res.end('{"code":"rest_not_logged_in"}');
+    }
+    const token = /^\/phasen-verify-([a-f0-9]+)\.txt$/.exec(u.pathname)?.[1];
+    if (token && (verifyToken === "any" || token === verifyToken)) { res.writeHead(200, { "content-type": "text/plain" }); return res.end(`${token}\n`); }
     if (u.pathname === "/wp-content/uploads/a.png") { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
     if (u.pathname === "/") { res.writeHead(200, { "content-type": "text/html" }); return res.end(home); }
     res.writeHead(404); res.end();
@@ -216,4 +225,10 @@ async function startGitHub() {
   return { ...api, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, close: () => Promise.all([api.close(), downloads.close()]) };
 }
 
-module.exports = { startWordPress, startElementor, startSubfolder, startUpdates, startGitHub, tarball, PNG };
+// Cloudflare's zone list (lib/publish.js listZones) as a fetch stand-in, for
+// ownership verification by zone (#141). Other requests go to `next`.
+const cloudflareZones = (zones, next = globalThis.fetch) => async (url, opts) => (String(url).startsWith("https://api.cloudflare.com/client/v4/zones?")
+  ? { status: 200, json: async () => ({ success: true, result: zones.map((name, i) => ({ id: `zone${i}`, name })) }) }
+  : next(url, opts));
+
+module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startUpdates, startGitHub, tarball, PNG };

@@ -121,6 +121,34 @@ const site = {
   await build(copySite, copyDir, out, { hostname: "copy.example" });
   assert(read("public/sitemap.xml") === "<urlset>own</urlset>" && read("public/robots.txt") === "User-agent: *\nDisallow:\n", "an exact copy keeps its own sitemap/robots");
 
+  // Import provenance marker (#141): every built page, theme-built and copied, plus the
+  // well-known file; the declaring user's name and email never reach the output.
+  {
+    const importProvenance = { source: "https://old.example", importedAt: "2026-10-01T09:00:00.000Z", declaredAt: "2026-10-01T09:00:00.000Z", appVersion: "9.9.9",
+      declaredBy: { name: "Jo Declarer", email: "jo.declarer@example.org" }, statement: "I confirm…", verification: { status: "verified", method: "verification-file", checkedAt: "2026-10-01T09:00:01.000Z" } };
+    fs.writeFileSync(path.join(copyDir, "mirror/index.html"), '<!doctype html><html><head><meta name="generator" content="WordPress 6.5"><title>Home</title></head><body><p>home</p></body></html>');
+    const stamped = { ...copySite, importProvenance, forms: [], pages: [...copySite.pages, { id: "t1", title: "Built", sections: [{ type: "text", heading: "Hi", text: "x" }] }] };
+    const provOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-prov-"));
+    await build(stamped, copyDir, provOut, { hostname: "copy.example" });
+    const files = fs.readdirSync(path.join(provOut, "public"), { recursive: true }).map(String);
+    const pages = files.filter((f) => f.endsWith(".html"));
+    assert(pages.includes("index.html") && pages.includes("built.html") && pages.includes("404.html") && pages.length >= 5, pages.join());
+    for (const f of pages) {
+      const html = fs.readFileSync(path.join(provOut, "public", f), "utf8");
+      assert(html.includes('<meta name="generator" content="PhaseN Site Builder">') && html.includes('<meta name="phasen:imported-from" content="https://old.example">')
+        && html.includes('<meta name="phasen:imported-on" content="2026-10-01">'), `marker on ${f}`);
+      assert.strictEqual((html.match(/name="generator"/g) || []).length, 1, `one generator tag on ${f}`);
+    }
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(provOut, "public/.well-known/phasen-provenance.json"), "utf8")),
+      { generator: "PhaseN Site Builder", source: "https://old.example", importedOn: "2026-10-01", appVersion: "9.9.9", verification: "verified", verificationMethod: "verification-file" });
+    for (const f of fs.readdirSync(provOut, { recursive: true }).map(String)) {
+      const file = path.join(provOut, f);
+      if (fs.statSync(file).isFile()) assert(!/Jo Declarer|jo\.declarer/i.test(fs.readFileSync(file, "utf8")), `no personal data in ${f}`);
+    }
+    await build(copySite, copyDir, provOut, { hostname: "copy.example" });
+    assert(!fs.existsSync(path.join(provOut, "public/.well-known")) && !fs.readFileSync(path.join(provOut, "public/index.html"), "utf8").includes("phasen:"), "no marker without provenance");
+  }
+
   // Editable WordPress import keeps each page's old address where it can, and 301s the rest (#72).
   const wpPage = (id, title, p, sections = []) => ({ id, title, ...(p && { path: p }), sections });
   const wpSite = { ...site, pages: [
@@ -197,13 +225,42 @@ const site = {
           assert.deepStrictEqual(r.skipped, ["Members", "Cart"], `hidden=${hidden}: WordPress-only pages skipped`);
           assert.deepStrictEqual(r.pages.map((p) => p.form), [false, true, false], `hidden=${hidden}: only the contact page gets our form`);
           assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
-          assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
+          assert.strictEqual(wp.requests.some(([p, authed]) => authed && !p.endsWith("/users/me")), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"} for content`);
+          assert.strictEqual(r.authenticated, true, `hidden=${hidden}: application password accepted (#141)`);
         } finally { await wp.close(); }
       }
       const wp = await startWordPress({ hidden: true });
       await assert.rejects(fetchWordPress(wp.url, "", ""), /needs a username/);
       await wp.close();
+      // A wrong application password on a public site still imports, but doesn't verify ownership.
+      const open = await startWordPress();
+      assert.strictEqual((await fetchWordPress(open.url.replace("http:", "https:"), "admin", "wrong").finally(open.close)).authenticated, false);
     } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Import provenance (#141): ownership verification paths, against the fakes.
+  {
+    const { startWordPress, cloudflareZones } = require("./test/fakes");
+    const { verifyOwnership } = require("./lib/mirror");
+    const { listZones } = require("./lib/publish");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = cloudflareZones(["bobsbikes.co.uk", "other.example"], realFetch);
+    try {
+      const zones = await listZones("t", "acc");
+      for (const host of ["bobsbikes.co.uk", "www.bobsbikes.co.uk", "shop.bobsbikes.co.uk"]) {
+        assert.strictEqual((await verifyOwnership(`https://${host}`, { zones })).method, "cloudflare-zone", host);
+      }
+      assert.strictEqual((await verifyOwnership("https://notbobsbikes.co.uk", { zones })).status, "unverified", "zone match is by domain, not suffix");
+    } finally { globalThis.fetch = realFetch; }
+    assert.deepStrictEqual((({ status, method }) => ({ status, method }))(await verifyOwnership("https://x.example", { wpAuthenticated: true })), { status: "verified", method: "wordpress-application-password" });
+    const token = "0123456789abcdef01234567";
+    const wp = await startWordPress({ verifyToken: token });
+    try {
+      assert.strictEqual((await verifyOwnership(wp.url, { token })).method, "verification-file");
+      assert.strictEqual((await verifyOwnership(wp.url, { token: "fedcba9876543210fedcba98" })).status, "unverified", "wrong token");
+      assert.strictEqual((await verifyOwnership(wp.url, { token: "../wp-json/" })).status, "unverified", "token format checked");
+      assert.strictEqual((await verifyOwnership(wp.url, {})).status, "unverified");
+    } finally { await wp.close(); }
   }
 
   // An Elementor site's kit stylesheet (global colours/fonts) comes back with it (#42).

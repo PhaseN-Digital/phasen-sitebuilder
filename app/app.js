@@ -124,6 +124,7 @@ async function openSite(id) {
   THEMES = await call("themes"); // the build registers a theme source's font
   await loadSites(id);
   renderEditor();
+  askDeclaration(); // imported before #141 (app/wordpress.js)
 }
 
 $("#new-site").addEventListener("submit", async (e) => {
@@ -758,7 +759,14 @@ function publishTab() {
     ({ url: publishedUrl, canUnpublish } = await call("sites:get", site.id));
     if (ok) renderTab();
   };
-  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !settings.resend, onclick: () => run(publishBtn, async () => {
+  // Imported sites (#141): told about the provenance marker; ones imported before it must declare ownership first.
+  const provenance = site.importProvenance;
+  const undeclared = importedSite(site) && !provenance;
+  const imported = importedSite(site) && h("div", { className: "warn" }, provenance
+    ? [`Imported from ${provenance.source}${provenance.verification?.status === "verified" ? " (ownership verified)" : ""}. Every published page says it was made with PhaseN Site Builder and imported from that address on ${(provenance.importedAt || provenance.declaredAt).slice(0, 10)}, and /.well-known/phasen-provenance.json lists the address, date, app version and verification result. Your name and email aren't published.`]
+    : ["This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it, or have permission to copy it, before you publish it again. ",
+       h("button", { onclick: () => askDeclaration(true) }, "Confirm ownership…")]);
+  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !settings.resend || undeclared, onclick: () => run(publishBtn, async () => {
     clearTimeout(saveTimer);
     paths = await call("sites:save", site);
     await call("sites:publish", site.id);
@@ -792,6 +800,7 @@ function publishTab() {
 
   return [
     publishedUrl && h("div", { className: "live" }, "Your website is live at ", link(publishedUrl, publishedUrl)),
+    imported,
     step("1. Cloudflare (hosting)", cfDone,
       cfDone
         ? [

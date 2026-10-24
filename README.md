@@ -102,13 +102,15 @@ checks the whole app end to end with no accounts, against fake sites in
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
-  Elementor site (kit colours/font, header logo); exact copy of a fake
+  Elementor site (kit colours/font, header logo); the ownership declaration
+  (modal, main-process refusal, provenance recorded, verification file, a
+  pre-#141 import asked to declare before publishing); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert);
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
-  built from the site's own copy), a site built with a Theme Builder theme, the copied site's redirect, and form POSTs (honeypot, validation, captcha,
+  built from the site's own copy), a site built with a Theme Builder theme, the copied site's redirect, the provenance marker and `/.well-known/phasen-provenance.json` on imported sites (with no personal data anywhere in the build), and form POSTs (honeypot, validation, captcha,
   a valid message logged instead of emailed since `RESEND_API_KEY` is unset),
   and the form inbox in `wrangler dev`'s local D1 (valid messages stored with
   their email status, honeypot and Turnstile token never stored, old messages
@@ -264,14 +266,48 @@ another host keeps just its path) and `build()`'s `absolutise()` puts the
 published hostname back in front, in those tags and in the copied
 robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 
-## Importing from WordPress
+## Importing a website
 
-"Import from WordPress…" offers two kinds of import. "Decide for me" picks an
-exact copy when the home page shows a page builder (Elementor, Divi, Beaver
+"Import a website…" takes any address. WordPress sites can come in editable
+or as an exact copy; any other site is copied exactly. "Decide for me" picks an
+exact copy when the address isn't a WordPress site, when the home page shows a page builder (Elementor, Divi, Beaver
 Builder, WPBakery, Bricks, Oxygen, Avada; detected from the builder's own
 markup) or there's no REST API (including one hidden from visitors when no
 username and application password were given), and the editable import
 otherwise.
+
+### Ownership declaration and provenance (#141)
+
+Every import first shows a modal warning that copying a site you don't own or
+have permission to copy can infringe copyright, trademarks and database
+rights, with a required checkbox ("I confirm I own this website, or have the
+owner's written permission to copy and republish it"); Import stays disabled
+until it's ticked. main.js refuses `wp:fetch` and `wp:mirror` without that
+declaration too, so a UI bug can't skip it. The wording is not legal advice
+and is to be reviewed alongside the privacy page (#30).
+
+The site records `importProvenance` in site.json: source origin,
+`importedAt`/`declaredAt`, app version, `declaredBy` (name and email from
+Settings), the statement ticked, and `verification`. Verification is
+attempted at import and recorded, never required (`verifyOwnership` in
+`lib/mirror.js`): verified if the source's domain is a zone in the connected
+Cloudflare account, if a WordPress import's application password was accepted
+(`/wp/v2/users/me`), or if the source serves `/phasen-verify-<token>.txt`
+containing the random token shown in the modal.
+
+`build()` (`stampProvenance` in `lib/build.js`) adds
+`<meta name="generator" content="PhaseN Site Builder">`,
+`<meta name="phasen:imported-from" content="<source origin>">` and
+`<meta name="phasen:imported-on" content="YYYY-MM-DD">` to every built page,
+theme-built and copied (replacing a copied page's own generator tag), and
+writes `/.well-known/phasen-provenance.json` (source, date, app version,
+verification). Nothing personal is published: `declaredBy` stays in
+site.json. The modal and the Publish tab tell the user about the marker.
+
+Sites imported before this (an exact copy, or pages with a `path`) have no
+declaration: they're asked for one (with the source address) once per
+session when opened, the Publish tab explains why and offers it again, and
+`publish()` refuses until it's given.
 
 ### Exact copy (`lib/mirror.js`)
 
@@ -511,6 +547,15 @@ site's local files until taking it offline has fully worked.
 - Analytics consent covers only pages built from the themes, and only Google
   Analytics. Exact-copy pages lose the original site's tracking (#45) but
   don't get the consent banner or the site's own measurement ID yet (#103).
+- Import provenance (#141): the declaring user's name comes from
+  `settings.name`, which nothing sets until the Settings page (#134) adds it,
+  so only the email is recorded for now. Verification by Cloudflare zone and
+  by application password is tested against fakes only; the verification
+  file also end to end against the fake WordPress. "Decide for me" with an
+  application password on a page-builder site falls back to an exact copy
+  and doesn't keep the application-password verification. The provenance
+  marker is only on the published/exported output, not on copied pages in
+  the in-app preview. "Save as package…" doesn't require the declaration.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
