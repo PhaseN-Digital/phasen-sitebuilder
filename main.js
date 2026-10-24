@@ -269,11 +269,13 @@ async function publish(id, log) {
   const labelError = site.domain && cf.labelError(site.domain.label, site.domain.zoneName);
   if (labelError) throw new Error(`Web address: ${labelError}`);
   const www = site.domain && !site.domain.label && { id: site.domain.zoneId, name: site.domain.zoneName }; // the www redirect is apex-only (#135)
-  Object.assign(state, { accountId, worker: site.workerName }, www && { www });
+  // An earlier apex's www stays recorded until leaveHostname() removes it (#139).
+  Object.assign(state, { accountId, worker: site.workerName }, www && !state.www && { www });
 
   log("Preparing…\n");
-  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
   const hostname = site.domain ? cf.domainHostname(site.domain) : await cf.workersDevHostname(token, accountId, site.workerName);
+  await cf.reclaimHostname(token, state, hostname, log);
+  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
   const turnstile = await cf.ensureTurnstile(token, accountId, site.name, hostname, state.turnstile && { ...state.turnstile, secret: unseal(state.turnstile.secret) });
   state.turnstile = { ...turnstile, secret: seal(turnstile.secret) };
   await writeState(id, state);
@@ -306,7 +308,10 @@ async function publish(id, log) {
   log("Uploading website…\n");
   await cf.deployWorker(publishDir(id), { token, accountId }, { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) }, log);
 
-  // The site is already live by now, so a missing token permission only costs the www redirect.
+  // The site is already live by now, so nothing after this blocks it. A changed
+  // hostname (#139) leaves the old one redirecting here unless the site opts out.
+  await cf.leaveHostname(token, state, hostname, www || null, site.redirectOldAddress !== false, log);
+  await writeState(id, state);
   if (site.domain) await cf.ensureWwwRedirect(token, site.domain, log).catch((e) =>
     log(`Couldn't set up the www redirect (${e.message}). Add Zone · Single Redirect · Edit to your Cloudflare token and publish again.\n`));
 
@@ -336,7 +341,7 @@ async function unpublish(id, log) {
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
   log("\nDone. The website is offline.\n");
 }
-const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1);
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1 || s.moved?.length);
 
 // Form inbox (#75): read straight from the site's D1 database with the user's
 // token, so no public endpoint ever serves messages. Returns null when the
