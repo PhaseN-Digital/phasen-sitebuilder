@@ -50,13 +50,18 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
-- Release gate: whenever release-please opens or updates the release PR,
-  the same run calls `regression.yml` on the PR's head. A **patch** release
+- Release gate: whenever release-please opens or updates the release PR
+  (or on a manual dispatch, or for a PR labelled `regate`), the same run
+  calls `regression.yml` on the PR's head (read from the branch ref, #111). A **patch** release
   (`scripts/release-bump.js`: same major.minor) that passes is merged by the
   workflow and released and built in that same run. A **minor/major**
   release that passes gets the `needs-approval` label and a comment, and is
   released when the maintainer merges it. A failure gets the
-  `regression-failed` label and a comment, and is never merged. This all
+  `regression-failed` label and a comment, and is never merged. The gate
+  only merges if `main` is still exactly what the regression run tested
+  against (#97); if anything landed on `main` meanwhile it comments, labels
+  the PR `regate` and leaves it to the next run (a push, the daily schedule,
+  or `gh workflow run release-please.yml`), which re-gates it. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -132,7 +137,9 @@ published always-pass test secret, so that one step needs internet access.
 - `themes/`: `base.css`, `fonts.json` (the Font choices) and one package per
   theme, `themes/<id>/theme.json` (label, about, colours, font id or CSS font
   stack, optional version) plus `theme.css` (small overrides on top of
-  `base.css`; CSS only, no JS or HTML). `lib/themes.js` loads them for both
+  `base.css`; CSS only, no JS or HTML). Below 760px `base.css` collapses the
+  header nav behind a Menu button (a small inline script in `lib/build.js`
+  adds it; without JS the nav just stays visible). `lib/themes.js` loads them for both
   the build and the Design tab; colours/fonts are CSS variables the user picks
   there. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
   themes`); an identical copy is vendored into the public
@@ -199,6 +206,17 @@ kept, the only rewrite needed is stripping the site's domain from URLs
 srcsets keep working. Redirects found while crawling go into Cloudflare's
 `_redirects` file, and WordPress's own 404 page is copied (with its own
 stylesheets and images).
+
+The original site's tracking is dropped from the copy, since it would report
+to the old site's accounts without the new site's visitors' consent: any
+`<script>`, `<noscript>` or `<link>` matching the `TRACKERS` table in
+`lib/mirror.js` (Google Analytics/Tag Manager, Facebook pixel, Hotjar,
+Microsoft Clarity, LinkedIn Insight, TikTok pixel, Microsoft Ads) is removed,
+and the import log says which were found. Google Fonts stylesheets
+(`fonts.googleapis.com`, in pages or CSS `@import`s) and their font files are
+downloaded into `/google-fonts/` in the copy, with Google preconnect hints
+removed, so visitors' browsers never contact Google for them. A stylesheet
+that can't be downloaded is logged, and its fonts fall back.
 
 A WordPress installed in a subfolder (`example.com/blog/`) is copied from that
 folder only: its pages keep their `/blog/...` paths, so addresses match the old
@@ -271,6 +289,12 @@ already signed in"). They're only sent over https and aren't stored.
   are removed). Images are downloaded and re-encoded like uploads. Links
   between imported pages are rewritten to the new pages; other links (posts,
   files) keep pointing at the old site.
+- Addresses: each page keeps its WordPress address (`page.path`, e.g.
+  `/our-services/` or `/services/web/`), so old links and search results
+  still work, and renaming the page doesn't move it. Where an address can't
+  be kept (the home page, which is always `/`; a non-ASCII or reserved slug
+  such as `/api/`), the page gets a title-based address and the old one a
+  301 in `_redirects`. Pages added in the app use title-based addresses.
 - Pages that contained a WordPress form (Contact Form 7 etc.) get the
   built-in contact form instead.
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
@@ -332,6 +356,10 @@ site's local files until taking it offline has fully worked.
   shared. Sites published before 0.5 didn't record their Resend key's id, so
   that key has to be deleted at resend.com by hand (the log says so). Only
   tested against a fake Cloudflare/Resend API so far, not the real ones.
+- Release gate: GitHub's merge API can't require an unchanged base, so a
+  push to `main` in the second between the gate's last check and its merge
+  still lands under the squash. The gate catches it and doesn't release from
+  that run, but the next run would (#99).
 
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
@@ -351,8 +379,9 @@ site's local files until taking it offline has fully worked.
   Electron). workerd's binary, which only `wrangler dev` runs, is replaced
   with a stub at package time (`scripts/after-pack.js`), so the packaged app
   can't run `wrangler dev`.
-- Analytics consent covers only pages built from the themes, not exact-copy
-  pages (#45), and only Google Analytics.
+- Analytics consent covers only pages built from the themes, and only Google
+  Analytics. Exact-copy pages lose the original site's tracking (#45) but
+  don't get the consent banner or the site's own measurement ID yet (#103).
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an
@@ -360,5 +389,5 @@ site's local files until taking it offline has fully worked.
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
   Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
-  Elementor 3 runtime-loaded scripts (#11); copied analytics tags and remote Google
-  Fonts (#45).
+  Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
+  self-hosting (#45) are tested only against a fake Elementor site.

@@ -36,6 +36,7 @@ const site = {
   const home = read("public/index.html");
   assert(home.includes("&lt;script&gt;x&lt;/script&gt;") && !home.includes("<script>x"), "user text is escaped");
   assert(home.includes('href="/contact-us"') && home.includes("<p>Hi</p><p>There</p>"));
+  assert(/<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-nav" hidden>/.test(home) && home.includes('<nav id="site-nav"'), "mobile menu toggle, hidden until its script runs");
   assert(!home.includes("turnstile"), "no captcha script on pages without forms");
   const contact = read("public/contact-us.html");
   assert(contact.includes('data-sitekey="SITEKEY"') && contact.includes('name="website"') && contact.includes("turnstile/v0/api.js"));
@@ -76,6 +77,22 @@ const site = {
 
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
+
+  // Editable WordPress import keeps each page's old address where it can, and 301s the rest (#72).
+  const wpPage = (id, title, p, sections = []) => ({ id, title, ...(p && { path: p }), sections });
+  const wpSite = { ...site, pages: [
+    wpPage("h", "Home", "/home/"), wpPage("s", "Our Services", "/our-services/"), wpPage("w", "Web", "/services/web/"),
+    wpPage("a", "API", "/api/"), wpPage("dup", "Copy", "/our-services/"), wpPage("u", "Café", "/café/"), wpPage("p", "Privacy", "/privacy/"),
+    wpPage("n", "Contact", null, [{ type: "form", formId: "contact", heading: "", buttonText: "Send" }]),
+  ] };
+  assert.deepStrictEqual(await build(wpSite, siteDir, out, {}), { privacy: "/privacy-notice", h: "/", s: "/our-services/", w: "/services/web/",
+    a: "/api-2", dup: "/copy", u: "/caf", p: "/privacy/", n: "/contact" });
+  assert(read("public/our-services/index.html").includes("<title>Our Services") && fs.existsSync(path.join(out, "public/services/web/index.html")));
+  assert.strictEqual(read("public/_redirects"), "/home/ / 301\n/api/ /api-2 301\n/caf%C3%A9/ /caf 301\n", "changed addresses 301, a duplicate path doesn't");
+  wpSite.pages[1].title = "What we do";
+  assert.strictEqual((await build(wpSite, siteDir, out, {})).s, "/our-services/", "renaming an imported page keeps its address");
+  await build(site, siteDir, out, {});
+  assert(!fs.existsSync(path.join(out, "public/_redirects")), "no _redirects for app-made pages");
 
   // Exact-copy import reads WordPress forms' questions from their markup.
   const { formFields } = require("./lib/mirror");
@@ -136,6 +153,22 @@ const site = {
     const el = await require("./test/fakes").startElementor();
     const r = await require("./lib/wordpress").fetchWordPress(el.url).finally(el.close);
     assert(r.builder === "Elementor" && r.kitCss.includes("--e-global-color-primary:#EE5C44"), "Elementor kit CSS fetched");
+  }
+
+  // Exact copy drops the old site's trackers and self-hosts its Google Fonts (#45), Google's hosts pointed at the fake.
+  {
+    const el = await require("./test/fakes").startElementor();
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-el-"));
+    const realFetch = globalThis.fetch, asked = [];
+    globalThis.fetch = (url, opts) => { asked.push(String(url)); return realFetch(String(url).replace(/^https:\/\/fonts\.(googleapis|gstatic)\.com/, el.url), opts); };
+    const r = await require("./lib/mirror").mirrorSite(el.url, out, () => {}).finally(() => { globalThis.fetch = realFetch; return el.close(); });
+    const home = fs.readFileSync(path.join(out, "index.html"), "utf8");
+    assert.deepStrictEqual(r.removed, ["Google Analytics / Tag Manager", "Facebook pixel"]);
+    assert(!/googletagmanager|gtag\(|facebook\.com|fonts\.g/.test(home), "trackers and Google hosts gone from the page");
+    assert(asked.includes("https://fonts.googleapis.com/css?family=Sbtest%3A400&display=swap"), "stylesheet URL decoded");
+    const local = home.match(/href='(\/google-fonts\/\w+\.css)'/)[1];
+    assert.strictEqual(fs.readFileSync(path.join(out, local), "utf8"), "@font-face{font-family:'Sbtest';src:url(/google-fonts/s/sbtest/v1/a.woff2) format('woff2')}");
+    assert.strictEqual(fs.readFileSync(path.join(out, "google-fonts/s/sbtest/v1/a.woff2"), "utf8"), "GOOGLEFONT");
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
@@ -202,6 +235,23 @@ const site = {
     ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
     assert.strictEqual(bump(from, to), want, `${from} -> ${to}`);
   }
+  // #97: never merge onto a main that moved after regression ran.
+  const { staleReason } = require("./scripts/release-bump");
+  const ok = { startMain: "m1", main: "m1", base: "m1", tested: "h1", head: "h1", containsMain: "true" };
+  assert.strictEqual(staleReason(ok), "");
+  for (const [change, want] of [[{ main: "m2", base: "m2" }, "main moved"], [{ base: "m0" }, "base"], [{ head: "h2" }, "head moved"],
+    [{ containsMain: "false" }, "isn't based on main"], [{ startMain: "" }, "missing"], [{ tested: undefined }, "missing"]]) {
+    assert(staleReason({ ...ok, ...change }).includes(want), `stale: ${JSON.stringify(change)}`);
+  }
+  // #111: a PR the gate refused as stale is re-gated without a new push.
+  const { gateReason } = require("./scripts/release-bump");
+  const main = "refs/heads/main";
+  assert(gateReason({ event: "push", ref: main, prsCreated: "true" }));
+  assert.strictEqual(gateReason({ event: "push", ref: main, prsCreated: "false", labels: ["regression-failed"] }), "");
+  assert(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: ["autorelease: pending", "regate"] }));
+  assert.strictEqual(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: [""] }), "");
+  assert(gateReason({ event: "workflow_dispatch", ref: main, prsCreated: "false", labels: ["needs-approval"] }));
+  assert.strictEqual(gateReason({ event: "workflow_dispatch", ref: "refs/heads/fix/x", prsCreated: "false" }), "");
 
   // Theme packages: the bundled ones are valid, bad ones are caught, and a
   // font stack instead of a font id still loads.
