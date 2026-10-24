@@ -129,7 +129,7 @@ app.on("browser-window-created", (_e, win) => {
       check("wordpress: images downloaded, missing ones dropped", (about.match(/<img /g) || []).length === 1 && /<img src="assets\/[a-f0-9]+\.webp" alt="Shop">/.test(about) && !about.includes("missing.png"), about);
       check("wordpress: form replaced with ours", contact.sections.some((x) => x.type === "form" && x.formId === "contact") && !contact.sections[0].html.includes("<form"), contact.sections);
       const built = read(path.join(UD, "preview", id, "public", "about", "index.html"));
-      check("wordpress: built page at its old address", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|onclick/.test(built));
+      check("wordpress: built page at its old address", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|evil\(\)|javascript:alert/.test(built));
     }
 
     // ---------- 2b. editable import of an Elementor site: kit colours/font, site-logo widget ----------
