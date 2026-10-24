@@ -212,6 +212,24 @@ published always-pass test secret, so that one step needs internet access.
   a sending key that doesn't start with `re_`, or a Turnstile secret still in
   the old sealed format, is re-created or rotated (and logged), and
   `publish()` refuses to deploy if either is still empty or invalid.
+- GitHub sync (#137, `lib/sync.js`): a site's git repo can be connected to
+  a GitHub repo (by default a new private one, `sync:create`) and pushed and
+  pulled over HTTPS by isomorphic-git with the GitHub sign-in token (#60;
+  making private repos needs sign-in with private repositories allowed). Only
+  `main` syncs. A sync commits pending edits, then pushes if GitHub is
+  behind, fast-forwards if this computer is behind, and if both have
+  versions the other lacks keeps GitHub's as a local branch `github-<date>`
+  and asks; the answer ("keep mine" / "take GitHub's") is recorded as a merge
+  of both and pushed, so no one's history is lost. `sync:restore` clones a
+  site into the sites folder (restoring it on another computer). Secrets
+  never sync (the commit code never stages them), so a restored site's
+  accounts and keys have to be entered again; its next publish re-creates
+  the Turnstile secret and sending key. Shared settings (the defaults,
+  theme-source repos without their tokens, and hiding the public themes: an
+  allowlist, `shared()`) sync the same way through a settings repo of their
+  own, kept locally in `userData/settings-sync/`; the first sync on a
+  computer takes GitHub's settings if there are any. The token is only ever
+  sent to `github.com/<owner>/<repo>.git`.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the import screen and HTML sanitizer; `app/content-detect.js` and
   `app/content-pick-frame.js` find and review the content of non-WordPress
@@ -725,6 +743,11 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
+  Tested against real git smart HTTP (`git http-backend` in test/fakes.js
+  `startGitHost`) and the IPC channels driven in the app headlessly once,
+  not yet against github.com itself. A pull rewrites the site's files
+  directly, so the editor has to reload the open site afterwards.
 - Linux (#153): x64 only (no arm64 build), unsigned, and checked only
   headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
   `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used

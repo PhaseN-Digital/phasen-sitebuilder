@@ -925,6 +925,105 @@ const site = {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // GitHub sync (#137): push, pull, restore elsewhere, conflicts kept as branches, settings, against real git smart HTTP.
+  {
+    const sync = require("./lib/sync");
+    const repo = require("./lib/site-repo");
+    const folder = require("./lib/sites-folder");
+    const git = require("isomorphic-git");
+    const host = await require("./test/fakes").startGitHost();
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sync-"));
+    try {
+      const who = { name: "Tester", email: "t@example.com" };
+      const o = { login: host.url, token: host.token, author: who };
+      const A = path.join(base, "a", "shop"), rootB = path.join(base, "b");
+      fs.mkdirSync(A, { recursive: true }); fs.mkdirSync(rootB);
+      const id = "33333333-3333-4333-8333-333333333333";
+      const w = (dir, f, v) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), typeof v === "string" ? v : JSON.stringify(v)); };
+      const site = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "site.json"), "utf8"));
+      w(A, "site.json", { id, name: "Shop", pages: [] });
+      w(A, ".secrets/secrets.enc", "SECRET-BLOB");
+      await repo.ensure(A, who);
+
+      assert.strictEqual(sync.parseSpec("https://github.com/octo/site-shop.git"), "octo/site-shop");
+      assert.throws(() => sync.parseSpec("octo/../x"), /isn't a GitHub repository/);
+      assert.throws(() => sync.parseSpec("octo"), /isn't a GitHub repository/);
+      const spec = await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "site-shop" });
+      assert.strictEqual(spec, "octo/site-shop");
+      assert.strictEqual(await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "PhaseN-Digital", name: "site-shop" }), "PhaseN-Digital/site-shop", "org repos via /orgs");
+      await assert.rejects(sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "site-shop" }), /already exists/);
+      await assert.rejects(sync.sync(A, o), /isn't connected/);
+      await sync.connect(A, host.url, spec);
+      assert.strictEqual(await sync.remote(A, host.url), spec);
+      assert.strictEqual(await sync.remote(A, "https://elsewhere.example"), null, "a remote on another host isn't trusted with the token");
+      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), /didn't accept your sign-in/);
+      assert.deepStrictEqual(await sync.sync(A, o), { status: "pushed" });
+      assert.deepStrictEqual(await sync.sync(A, o), { status: "up to date" });
+      assert(!/secrets/.test(host.git(spec, "ls-tree", "-r", "--name-only", "main")), "secrets never pushed");
+
+      // Restore on another computer.
+      const has = () => false;
+      await assert.rejects(sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has: () => true }), /already in your sites folder/);
+      await assert.rejects(sync.clone({ root: rootB, ...o, spec: "PhaseN-Digital/site-shop", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/);
+      const { id: got, dir: B } = await sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has });
+      assert(got === id && B === path.join(rootB, "shop") && site(B).name === "Shop");
+      assert.deepStrictEqual([...(await folder.scan(rootB)).keys()], [id], "a restored site is found by the scan; no clone leftovers");
+      assert.strictEqual(await sync.remote(B, host.url), spec);
+
+      // B changes, A pulls (an added and a removed file both arrive).
+      w(B, "site.json", { id, name: "Shop B", pages: [] });
+      w(B, "assets/x.webp", "img");
+      assert.deepStrictEqual(await sync.sync(B, o), { status: "pushed" });
+      w(A, "notes-from-a.txt", "x"); await repo.commit(A, null, who);
+      fs.rmSync(path.join(B, "assets/x.webp"));
+      // Both changed: nothing overwritten, GitHub's version kept as a branch here.
+      w(A, "site.json", { id, name: "Shop A", pages: [] });
+      const c = await sync.sync(A, o);
+      assert(c.status === "conflict" && /^github-\d{8}-\d{4}$/.test(c.branch), c);
+      assert.strictEqual(site(A).name, "Shop A", "local edits untouched");
+      assert.strictEqual(host.git(spec, "show", "main:site.json").includes("Shop B"), true, "GitHub's untouched");
+      assert(fs.existsSync(path.join(A, ".secrets/secrets.enc")));
+      await assert.rejects(sync.resolve(A, { ...o, branch: c.branch, keep: "both" }), /Bad choice/);
+      assert.deepStrictEqual(await sync.resolve(A, { ...o, branch: c.branch, keep: "theirs" }), { status: "pulled" });
+      assert(site(A).name === "Shop B" && fs.existsSync(path.join(A, "assets/x.webp")) && !fs.existsSync(path.join(A, "notes-from-a.txt")));
+      assert(fs.existsSync(path.join(A, ".secrets/secrets.enc")), "untracked secrets survive a checkout");
+      const log = await repo.log(A);
+      assert(log.some((v) => /Changed website settings/.test(v.message)) && log[0].message === "Took GitHub's version over this computer's", "A's own versions stay in history");
+      assert.deepStrictEqual(await git.listBranches({ fs, dir: A }), ["main"]);
+      assert.strictEqual(host.git(spec, "rev-parse", "main").trim(), log[0].oid, "the merge is on GitHub");
+      // B's uncommitted removal is committed before syncing, so B has diverged too.
+      const c2 = await sync.sync(B, o);
+      assert.strictEqual(c2.status, "conflict");
+      assert.deepStrictEqual(await sync.resolve(B, { ...o, branch: c2.branch, keep: "mine" }), { status: "pushed" });
+      assert(!fs.existsSync(path.join(B, "assets/x.webp")));
+      assert.deepStrictEqual(await sync.sync(A, o), { status: "pulled" });
+      assert(!fs.existsSync(path.join(A, "assets/x.webp")) && site(A).name === "Shop B");
+
+      // Shared settings: an allowlist, so no secret can ever reach GitHub.
+      const settingsSpec = await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "sitebuilder-settings" });
+      const s1 = { defaults: { email: "me@example.com", owner: "Me Ltd", junk: "x" }, resendKey: "re_SECRET", github: { token: "TOKEN-SECRET" }, cloudflare: { token: "CF-SECRET" }, themeSources: [{ spec: "acme/themes", token: "SRC-SECRET" }] };
+      const d1 = path.join(base, "settings-a"), d2 = path.join(base, "settings-b");
+      const first = await sync.syncSettings(d1, { ...o, spec: settingsSpec }, s1);
+      assert.deepStrictEqual(first, { status: "pushed", shared: null });
+      const pushed = host.git(settingsSpec, "show", "main:shared.json");
+      assert(!/SECRET|junk/.test(pushed), pushed);
+      const s2 = { defaults: { email: "old@example.com", inboxDays: 30 }, themeSources: [{ spec: "mine/themes", token: "KEEP" }] };
+      const pulled = await sync.syncSettings(d2, { ...o, spec: settingsSpec }, s2);
+      assert.strictEqual(pulled.status, "pulled");
+      sync.applyShared(s2, pulled.shared);
+      assert.deepStrictEqual(s2, { defaults: { email: "me@example.com", owner: "Me Ltd", inboxDays: 30 }, hidePublicThemes: false, themeSources: [{ spec: "mine/themes", token: "KEEP" }, { spec: "acme/themes" }] });
+      assert.deepStrictEqual((await sync.syncSettings(d2, { ...o, spec: settingsSpec }, s2)).status, "pushed");
+      const back = await sync.syncSettings(d1, { ...o, spec: settingsSpec }, s1);
+      assert(back.status === "pulled" && back.shared.defaults.inboxDays === 30, "unchanged here: GitHub's come in");
+      s1.defaults.email = "a@example.com"; s2.defaults.email = "b@example.com";
+      await sync.syncSettings(d2, { ...o, spec: settingsSpec }, s2);
+      assert.strictEqual((await sync.syncSettings(d1, { ...o, spec: settingsSpec }, s1)).status, "conflict", "both changed: asked, not overwritten");
+    } finally {
+      await host.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }
+
   // Sites folder (#136): migration from userData/sites is copy, verify, then remove; idempotent and safe to interrupt.
   {
     const folder = require("./lib/sites-folder");

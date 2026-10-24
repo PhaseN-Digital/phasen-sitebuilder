@@ -391,4 +391,53 @@ async function startResend() {
   return { ...site, sent };
 }
 
-module.exports = { startResend, startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, tarball, PNG };
+// GitHub for site/settings sync (#137): POST /user/repos and /orgs/<org>/repos
+// make an empty bare repo, and /<owner>/<repo>.git is real git smart HTTP via
+// `git http-backend`. Only Basic auth with GITHUB_TOKEN as the password gets in.
+// Anything else (device flow sign-in, /user) is gitRepos()'s.
+// state: repos (owner/repo -> bare dir), git(spec, ...args) runs git on one.
+async function startGitHost() {
+  const { execFileSync, spawn } = require("node:child_process");
+  const os = require("node:os"), fs = require("node:fs"), path = require("node:path");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-githost-"));
+  const repos = new Map(), requests = [], writer = await gitRepos();
+  const git = (spec, ...args) => execFileSync("git", ["-C", repos.get(spec), ...args], { encoding: "utf8" });
+  const host = await listen(async (req, res) => {
+    const auth = req.headers.authorization || "";
+    requests.push([req.method, req.url, auth || null]);
+    const send = (status, v) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+    const m = /^\/(?:user|orgs\/([^/]+))\/repos$/.exec(req.url);
+    if (req.method === "POST" && m) {
+      if (auth !== `Bearer ${GITHUB_TOKEN}`) return send(401, { message: "Bad credentials" });
+      const chunks = []; for await (const c of req) chunks.push(c);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const spec = `${m[1] || "octo"}/${body.name}`;
+      if (repos.has(spec)) return send(422, { message: "Repository creation failed." });
+      repos.set(spec, path.join(root, spec));
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", repos.get(spec)]);
+      git(spec, "config", "http.receivepack", "true");
+      return send(201, { full_name: spec, private: body.private });
+    }
+    const g = /^\/([^/]+\/[^/]+?)\.git(\/[^?]*)(?:\?(.*))?$/.exec(req.url);
+    const basic = auth.startsWith("Basic ") ? Buffer.from(auth.slice(6), "base64").toString().split(":")[1] : null;
+    if (!g) return (await writer.handle(req, res)) || send(404, { message: "Not Found" });
+    if (!repos.has(g[1])) { res.writeHead(404); return res.end(); }
+    if (basic !== GITHUB_TOKEN) { res.writeHead(401, { "www-authenticate": 'Basic realm="GitHub"' }); return res.end(); }
+    const cgi = spawn("git", ["http-backend"], { env: { ...process.env, GIT_PROJECT_ROOT: root, GIT_HTTP_EXPORT_ALL: "1", REMOTE_USER: "octo", PATH_INFO: `/${g[1]}${g[2]}`, QUERY_STRING: g[3] || "", REQUEST_METHOD: req.method, CONTENT_TYPE: req.headers["content-type"] || "", GIT_PROTOCOL: req.headers["git-protocol"] || "" } });
+    req.pipe(cgi.stdin);
+    const out = []; cgi.stdout.on("data", (c) => out.push(c));
+    cgi.on("close", () => {
+      const buf = Buffer.concat(out), end = buf.indexOf("\r\n\r\n");
+      const headers = {}; let status = 200;
+      for (const line of buf.slice(0, end).toString().split("\r\n")) {
+        const [k, ...v] = line.split(":");
+        if (k.toLowerCase() === "status") status = parseInt(v.join(":"), 10); else headers[k] = v.join(":").trim();
+      }
+      res.writeHead(status, headers);
+      res.end(buf.slice(end + 4));
+    });
+  });
+  return { ...host, repos, requests, git, token: GITHUB_TOKEN, clientId: CLIENT_ID, close: async () => { await host.close(); fs.rmSync(root, { recursive: true, force: true }); } };
+}
+
+module.exports = { startResend, startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, startGitHost, tarball, PNG };

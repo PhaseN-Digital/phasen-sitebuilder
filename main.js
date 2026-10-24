@@ -18,6 +18,7 @@ const github = require("./lib/github");
 const secrets = require("./lib/secrets");
 const repo = require("./lib/site-repo");
 const folder = require("./lib/sites-folder");
+const sync = require("./lib/sync");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -477,6 +478,24 @@ async function githubToken() {
   if (!s.github) throw new Error("Sign in with GitHub in Settings first.");
   return unseal(s.github.token);
 }
+const syncAuth = async () => ({ login: GITHUB_LOGIN, token: await githubToken(), author: await author() });
+// Commits pending edits, runs fn(dir, auth), and rebuilds the preview if files came in from GitHub.
+async function syncSite(id, fn) {
+  await saveHistory(id);
+  const r = await fn(siteDir(id), await syncAuth());
+  if (r.status === "pulled") await previewBuild(await readSite(id));
+  return r;
+}
+// Shared settings (lib/sync.js shared()): run(auth) defaults to a sync with settings.github.settingsRepo.
+async function syncSettings(run, spec) {
+  const s = await loadSettings();
+  spec ||= s.github?.settingsRepo;
+  if (!spec) throw new Error("Choose a GitHub repository for your settings first.");
+  const r = await (run ? run(await syncAuth()) : sync.syncSettings(data("settings-sync"), { ...(await syncAuth()), spec }, s));
+  const shared = r.shared || (r.status === "pulled" ? JSON.parse(await fs.readFile(data("settings-sync", "shared.json"), "utf8")) : null);
+  await updateSettings((x) => { if (x.github) x.github.settingsRepo = spec; if (shared) sync.applyShared(x, shared); });
+  return { status: r.status, branch: r.branch };
+}
 const publishable = (id) => {
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");
   return github.themeFiles(path.join(localThemes(), id)); // validated; only theme.json/theme.css/preview.png
@@ -752,6 +771,21 @@ const handlers = {
     const { files, json: theme } = await publishable(id);
     return github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" });
   },
+
+  // GitHub sync (#137, lib/sync.js). id null means the shared settings, kept locally in userData/settings-sync.
+  "sync:create": async (owner, name) => sync.createRepo({ api: GITHUB_API, token: await githubToken(), user: (await loadSettings()).github.login, owner, name, description: "A website made with PhaseN Site Builder" }),
+  "sync:connect": async (id, spec) => {
+    await sync.connect(siteDir(id), GITHUB_LOGIN, spec);
+    return syncSite(id, sync.sync);
+  },
+  "sync:now": (id) => (id === null ? syncSettings() : syncSite(id, sync.sync)),
+  "sync:resolve": (id, branch, keep) => (id === null ? syncSettings((o) => sync.resolve(data("settings-sync"), { ...o, branch, keep })) : syncSite(id, (dir, o) => sync.resolve(dir, { ...o, branch, keep }))),
+  "sync:restore": async (spec) => {
+    const { id, dir } = await sync.clone({ root: SITES, login: GITHUB_LOGIN, token: await githubToken(), spec, freeDir: folder.freeDir, has: (x) => sites.has(x) });
+    sites.set(id, dir);
+    return readSite(id);
+  },
+  "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
     return publicSettings(await updateSettings((s) => { s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim(); }));
