@@ -44,9 +44,9 @@ use `scripts/check-commit.js`.
   results are uploaded as the `regression-output` artifact.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
-  the `build` job then builds the Windows installer and the macOS installers
-  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and the Linux x64
-  ones (`…-x86_64.AppImage`, `…-amd64.deb`, unsigned) and attaches them to it. Running the workflow by hand ("Run workflow") builds
+  the `build` job then builds the Windows installer and the Linux x64
+  ones on self-hosted runners (macOS installers are paused until there's a
+  self-hosted Mac, #239) (`…-x86_64.AppImage`, `…-amd64.deb`, unsigned) and attaches them to it. Running the workflow by hand ("Run workflow") builds
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.

@@ -201,9 +201,10 @@ jobs:
   # events trigger other workflows, so such a workflow would never run.
   # Each OS builds its own installer: wrangler's esbuild/workerd binaries are
   # platform-specific npm optional deps, so they can't be cross-built.
-  # That includes CPU arch: macos-latest is Apple Silicon (arm64 dmg) and
-  # macos-15-intel is Intel (x64 dmg); electron-builder builds for the host arch.
-  # ubuntu-latest builds the Linux x64 AppImage and .deb (#153).
+  # That includes CPU arch: electron-builder builds for the host arch.
+  # Every build runs on a self-hosted org runner (#237): Windows (exe) and
+  # Linux x64 (AppImage and .deb, #153). macOS (arm64 and Intel dmg) is left
+  # out until there's a self-hosted Mac (#239).
   # A manual dispatch builds installers as run artifacts without a release.
   # The release comes from either release-please run: a maintainer-merged
   # release PR (first job) or a patch the gate merged (`release`).
@@ -212,9 +213,12 @@ jobs:
     if: ${{ !cancelled() && needs.release-please.result == 'success' && (needs.release-please.outputs.release_created == 'true' || needs.release.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
-    # The Linux build runs on the self-hosted org runner (#237); the others stay GitHub-hosted.
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted", "Linux", "X64"]') || matrix.os }}
+        include:
+          - os: windows
+            runner: '["self-hosted", "Windows", "X64"]'
+          - os: linux
+            runner: '["self-hosted", "Linux", "X64"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
     defaults:
       run:
         shell: bash
@@ -322,13 +326,15 @@ jobs:
           cd dist
           for f in *' '*; do [ -e "$f" ] && mv "$f" "${f// /.}"; done
           exe=$(ls *.exe)
-          arm=$(ls *-arm64.dmg)
-          x64=$(ls *-x64.dmg)
+          # macOS builds are optional until there's a self-hosted Mac (#239);
+          # a missing dmg leaves its download out rather than failing.
+          arm=$(ls *-arm64.dmg 2>/dev/null || true)
+          x64=$(ls *-x64.dmg 2>/dev/null || true)
           linux=$(ls *.AppImage) # the .deb is published too, but the banner links the AppImage
           base="https://github.com/$PUBLIC_REPO/releases/download/$TAG"
           jq -n --arg version "${TAG##*-v}" --arg notes "https://github.com/$PUBLIC_REPO/releases/tag/$TAG" \
-            --arg win "$base/$exe" --arg arm "$base/$arm" --arg x64 "$base/$x64" --arg linux "$base/$linux" \
-            '{version: $version, notes: $notes, downloads: {"win32-x64": $win, "darwin-arm64": $arm, "darwin-x64": $x64, "linux-x64": $linux}}' > latest.json
+            --arg win "$base/$exe" --arg arm "${arm:+$base/$arm}" --arg x64 "${x64:+$base/$x64}" --arg linux "$base/$linux" \
+            '{version: $version, notes: $notes, downloads: ({"win32-x64": $win, "darwin-arm64": $arm, "darwin-x64": $x64, "linux-x64": $linux} | with_entries(select(.value != "")))}' > latest.json
           cat latest.json
           # The changelog section for this version, from the private release.
           gh release view "$TAG" --json body -q .body > ../notes.md

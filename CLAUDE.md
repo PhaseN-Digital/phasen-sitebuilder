@@ -170,10 +170,14 @@ are not, so add them yourself.
   links beyond the changelog text to that repo.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
-  the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
-  Linux (AppImage + deb, x64 only) builds on the self-hosted org runner
-  (`[self-hosted, Linux, X64]`, #237; every other Linux job runs there too, it
-  has no sudo, so preinstall tools on it rather than `apt-get` in a job); the deb needs
+  an Intel dmg needs an Intel Mac, not an arm one.
+  Every job runs on self-hosted org runners (#237), not GitHub-hosted ones
+  (the maintainer doesn't want to pay for hosted minutes): Linux jobs on
+  `[self-hosted, Linux, X64]` (Docker containers with no sudo, so preinstall
+  tools in the runner image rather than `apt-get` in a job), the Windows
+  build on `[self-hosted, Windows, X64]`. macOS builds are dropped until
+  there's a self-hosted Mac (#239); `latest.json` then has no `darwin-*`
+  downloads. Linux (AppImage + deb, x64 only): the deb needs
   `homepage` and `build.linux.maintainer` in package.json or fpm refuses.
   electron-builder can't collect dependencies through a symlinked
   `node_modules` (a worktree's `ln -s`), so packaging needs a real `npm ci`.
