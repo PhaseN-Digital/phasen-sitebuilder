@@ -61,6 +61,38 @@ async function driveApp(wp, el, updates, gh) {
   return sites;
 }
 
+// #149: a second copy on the same userData quits at once and the first
+// window comes to the front; a copy on another userData runs alongside.
+async function singleInstanceChecks() {
+  const dir = path.join(OUT, "instances");
+  fs.mkdirSync(dir, { recursive: true });
+  const launch = (name, userData) => {
+    const result = path.join(dir, `${name}.log`);
+    const env = { ...process.env, SB_USERDATA: path.join(dir, userData), SB_RESULT: result };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const args = ["--no-sandbox", "-r", path.join(__dirname, "instance.js"), "."];
+    const headless = process.platform === "linux" && !process.env.DISPLAY;
+    const child = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env }) : start(ELECTRON, args, { env });
+    child.log = () => (fs.existsSync(result) ? fs.readFileSync(result, "utf8") : "");
+    return child;
+  };
+  const waitFor = async (fn, ms = 30000) => { for (const end = Date.now() + ms; Date.now() < end && !fn(); ) await sleep(200); return fn(); };
+  // One at a time: two `xvfb-run -a` started together can race for a display.
+  const first = launch("first", "shared");
+  let other;
+  try {
+    check("single instance: first copy opens its window", await waitFor(() => first.log().includes("ready")), first.output);
+    other = launch("other", "other");
+    check("single instance: a copy on another userData runs alongside", await waitFor(() => other.log().includes("ready")), other.output);
+    const second = launch("second", "shared");
+    const exited = await Promise.race([second.done.then(() => true), sleep(15000).then(() => false)]);
+    if (!exited) await second.stop();
+    check("single instance: second copy on the same userData exits", exited && !second.log(), second.output);
+    const shown = await waitFor(() => first.log().includes("focus called\nsecond-instance visible=true minimized=false"), 10000);
+    check("single instance: first window is restored and focused", shown, first.log());
+  } finally { await first.stop(); await other?.stop(); }
+}
+
 // Builds a site the way publishing does and serves it with `wrangler dev`.
 async function serve(name, siteId, extra = {}) {
   const siteDir = path.join(OUT, "userdata", "sites", siteId);
@@ -280,6 +312,7 @@ async function workerChecks(sites) {
   console.log(`Regression run, output in ${OUT}`);
   const wp = await startWordPress({ verifyToken: "any" }), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
   try {
+    await singleInstanceChecks();
     const sites = await driveApp(wp, el, updates, gh);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
