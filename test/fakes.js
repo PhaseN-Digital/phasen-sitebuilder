@@ -373,4 +373,22 @@ const cloudflareZones = (zones, next = globalThis.fetch) => async (url, opts) =>
   ? { status: 200, json: async () => ({ success: true, result: zones.map((name, i) => ({ id: `zone${i}`, name })) }) }
   : next(url, opts));
 
-module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, tarball, PNG };
+// Resend's send endpoint for a built Worker (#218): accepts only the keys the
+// app's fake issued (test/legacy.js), records every email it was asked to send.
+async function startResend() {
+  const sent = [];
+  const site = await listen((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const key = (req.headers.authorization || "").replace("Bearer ", "");
+      const ok = /^re_(full|send_\d+)$/.test(key);
+      sent.push({ key, ok, ...JSON.parse(body || "{}") });
+      res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+      res.end(JSON.stringify(ok ? { id: `email-${sent.length}` } : { statusCode: 401, name: "validation_error", message: "API key is invalid" }));
+    });
+  });
+  return { ...site, sent };
+}
+
+module.exports = { startResend, startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, tarball, PNG };

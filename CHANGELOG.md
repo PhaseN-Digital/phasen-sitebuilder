@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.1...phasen-sitebuilder-v0.8.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **publish:** never upload an invalid form key; show Resend's reason in the Inbox ([#218](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/218)) ([#219](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/219)) ([6405c93](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6405c93952abde9dc42272c8a460a731df495ba4))
+* **test:** let wrangler dev pick its own port in regression serve() ([#214](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/214)) ([c00ec1a](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/c00ec1a45e5eefc70a8b6e36b4f387bd886b1202))
+
+## [0.8.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.0...phasen-sitebuilder-v0.8.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **mirror:** warn about robots.txt only when search engines are blocked ([#210](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/210)) ([95e843d](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/95e843dad05f7422f04a5cfe35b478f4c6225bc8))
+
 ## [0.8.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.7.0...phasen-sitebuilder-v0.8.0) (2026-10-24)
 
 

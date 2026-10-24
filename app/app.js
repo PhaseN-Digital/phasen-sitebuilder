@@ -925,12 +925,16 @@ function inboxTab() {
     if (rows.length) remember("sb-inbox-seen", { ...seenMessages(), [site.id]: Math.max(...rows.map((m) => m.id)) });
     unread = 0;
     renderSideMenu();
+    // Failed sends stand out (#218): with Resend's reason, so a bad key or address can be told apart.
+    const failed = rows.filter((m) => m.email_status !== "sent");
+    status.textContent = failed.length ? `${failed.length === 1 ? "1 message wasn't" : `${failed.length} messages weren't`} emailed to you (latest: ${failed[0].email_status}). Reply from here; if this keeps happening, check Settings › Resend and publish the website again.` : "";
     list.replaceChildren(...(rows.length ? rows.map((m) => {
       const fields = JSON.parse(m.fields);
       const item = h("details", { className: "message" },
         h("summary", {}, h("b", {}, formName(m.form)), ` · ${new Date(`${m.created_at.replace(" ", "T")}Z`).toLocaleString()} · `,
           fields.find((f) => f.value)?.value.slice(0, 60) || "",
           m.email_status !== "sent" && h("span", { className: "badge-warn", title: `Email ${m.email_status}` }, "⚠ Email not delivered")),
+        m.email_status !== "sent" && h("p", { className: "error" }, `Email ${m.email_status}.`),
         h("dl", {}, fields.map((f) => [h("dt", {}, f.label), h("dd", {}, f.value || "-")])),
         h("button", { className: "danger", onclick: async () => {
           if (!confirm("Delete this message? This can't be undone.")) return;
