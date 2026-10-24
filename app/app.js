@@ -174,7 +174,7 @@ $("#new-site").addEventListener("submit", async (e) => {
 
 // ---------- layout ----------
 function renderEditor() {
-  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"]];
+  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"], ["history", "History"]];
   $("#main").replaceChildren(
     h("section", { className: "editor-panel" },
       h("header", { className: "panel-head" },
@@ -197,7 +197,7 @@ function renderTab() {
   if (!site) return $("#settings-page") && renderSettings(); // theme sources and accounts on the Settings page
   const body = $("#tab");
   const scroll = body.scrollTop;
-  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab }[tab]();
+  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab, history: historyTab }[tab]();
   body.replaceChildren(...content.flat(Infinity).filter((k) => k != null && k !== false));
   body.scrollTop = scroll;
 }
@@ -751,6 +751,44 @@ function inboxTab() {
   ];
 }
 
+// ---------- History (#136) ----------
+// The site's versions from its git repo (main.js history:*): edits are saved in
+// batches, every publish is tagged. Restoring adds a new version, so nothing is lost.
+function historyTab() {
+  const list = h("div", {}, h("p", { className: "hint" }, "Loading history…"));
+  const status = h("p", { className: "error" });
+  const when = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  call("history:list", site.id).then(({ versions, large }) => {
+    list.replaceChildren(
+      ...(large.length ? [h("div", { className: "warn" }, `Some files are very large (${large.map((f) => f.file).join(", ")}). Sites with files over 100MB can't be stored on GitHub.`)] : []),
+      ...versions.map((v, i) => {
+        const changes = h("ul", { className: "hint" });
+        const item = h("details", { className: "message version", ontoggle: () => {
+          if (!item.open || changes.childElementCount) return;
+          call("history:changes", site.id, v.oid).then((lines) => changes.replaceChildren(...(lines.length ? lines : ["No changes to pages"]).map((l) => h("li", {}, l))), (e) => (status.textContent = errorText(e)));
+        } },
+          h("summary", {}, h("b", {}, v.message), ` · ${when(v.date)}`, ...v.tags.map((t) => h("span", { className: "badge-live", title: "Published" }, t))),
+          changes,
+          i > 0 && h("button", { onclick: async () => {
+            if (!confirm(`Put the website back as it was on ${when(v.date)}? This is saved as a new version, so you can come back to today's too. What's live doesn't change until you publish.`)) return;
+            try {
+              await flushSave();
+              await call("history:revert", site.id, v.oid);
+              delete copyUndo[site.id]; // copied-page undo would re-apply edits from before the restore
+              await openSite(site.id);
+              tab = "history"; renderEditor();
+            } catch (e) { status.textContent = errorText(e); }
+          } }, "Restore this version"));
+        return item;
+      }));
+  }).catch((e) => { list.replaceChildren(); status.textContent = errorText(e); });
+  return [
+    h("p", { className: "hint" }, "Every change you make is kept here, saved a few seconds after you stop editing. Publishing marks the version that went live."),
+    status,
+    list,
+  ];
+}
+
 // ---------- Publish ----------
 function step(title, done, ...content) {
   return h("div", { className: `step${done ? " done" : ""}` }, h("h3", {}, title), content);
@@ -963,4 +1001,16 @@ setInterval(checkForUpdate, 6 * 3600e3);
   [THEMES, settings] = await Promise.all([call("themes"), call("settings:get")]);
   await loadSites();
   loadSources().catch(() => {}); // may download, so not awaited
+  showNotice(await call("notice:get").catch(() => null));
 })();
+
+// Sites moved into the sites folder, or saved secrets that need unlocking or re-entering (#136).
+function showNotice(n) {
+  const text = [n?.moved, n?.locked ? "Your saved passwords and keys are protected with a passphrase. Enter it in Settings › Data to unlock them." : n?.secrets].filter(Boolean);
+  if (!text.length) return;
+  $(".sidebar").append(h("div", { id: "notice-banner", className: "update-banner", role: "status" },
+    ...text.map((t) => h("span", {}, t)),
+    h("div", { className: "inline" },
+      (n.locked || n.secrets) && h("button", { className: "primary", onclick: async () => { await openSettings(); $("#data-status")?.scrollIntoView(); } }, "Open Settings"),
+      h("button", { onclick: () => $("#notice-banner").remove() }, "Dismiss"))));
+}

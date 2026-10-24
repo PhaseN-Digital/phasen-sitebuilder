@@ -57,6 +57,7 @@ async function githubSignIn(privateRepos) {
 const LICENCES = [
   ["Electron", "MIT", "https://github.com/electron/electron/blob/main/LICENSE"],
   ["Quill", "BSD-3-Clause", "https://github.com/slab/quill/blob/main/LICENSE"],
+  ["isomorphic-git", "MIT", "https://github.com/isomorphic-git/isomorphic-git/blob/main/LICENSE.md"],
   ["Wrangler", "MIT or Apache-2.0", "https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler"],
 ];
 
@@ -112,10 +113,11 @@ function renderSettings() {
     updateStatus,
 
     h("h2", { className: "section-title" }, "Data & support"),
-    h("p", { className: "hint" }, "Your websites and settings are stored in ", h("code", {}, settings.dataDir), "."),
+    dataSettings(),
+    h("p", { className: "hint" }, "Previews, caches and the app's own files are in ", h("code", {}, settings.dataDir), "."),
     h("div", { className: "inline", style: "flex-wrap:wrap" },
       h("button", { onclick: () => call("settings:open-data") }, "Open data folder"),
-      soon("Backup/restore (coming)"), soon("Diagnostics (coming)"), soon("Sites folder (coming, #136)"), soon("Portable secrets (coming, #136)")),
+      soon("Backup/restore (coming)"), soon("Diagnostics (coming)")),
 
     h("h2", { className: "section-title" }, "About"),
     h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), "."),
@@ -123,4 +125,67 @@ function renderSettings() {
     h("ul", { className: "licences" }, LICENCES.map(([name, licence, url]) => h("li", {}, `${name} (${licence}) `, link("licence", url)))),
   );
   page.parentElement.scrollTop = scroll;
+}
+
+// Settings › Data (#136): the sites folder (one folder and history per website)
+// and how saved passwords and keys are protected (main.js secrets:*).
+function dataSettings() {
+  const status = h("p", { className: "hint", role: "status" });
+  const act = (fn) => async () => {
+    status.className = "hint"; status.textContent = "Working…";
+    try { await fn(); } catch (e) { status.className = "error"; status.textContent = errorText(e); }
+  };
+  const done = async (s, message) => {
+    settings = s;
+    if (!s.secretsProblem && !s.portable?.locked) $("#notice-banner")?.remove();
+    renderSettings();
+    await loadSites();
+    $("#data-status").textContent = message || "";
+  };
+  const pass = (placeholder) => h("input", { type: "password", placeholder, autocomplete: "new-password" });
+  const p1 = pass("Passphrase (at least 10 characters)"), p2 = pass("Type it again"), unlockIn = pass("Your passphrase");
+  const portable = settings.portable || {};
+  status.id = "data-status";
+  return h("div", { className: "data-settings" },
+    h("h3", {}, "Sites folder"),
+    h("p", { className: "hint" }, "Each website is a folder in ", h("code", {}, settings.sitesFolder),
+      ", with a history of its changes. Back it up or sync it like any of your documents. Passwords and keys are saved there too, encrypted, and never in a website's history."),
+    h("div", { className: "inline", style: "flex-wrap:wrap" },
+      h("button", { onclick: () => call("data:open-sites") }, "Open sites folder"),
+      h("button", { onclick: act(async () => {
+        const n = await call("data:find-sites");
+        await done(settings, `Found ${n} website${n === 1 ? "" : "s"}.`);
+      }) }, "Find sites"),
+      h("button", { onclick: act(async () => {
+        const r = await call("data:choose-folder");
+        if (!r) return (status.textContent = "");
+        let move = false;
+        if (r.sites) {
+          if (!confirm(`${r.path} already has ${r.sites} website${r.sites === 1 ? "" : "s"}. Use ${r.sites === 1 ? "it" : "them"}? Your current websites stay where they are, in ${settings.sitesFolder}.`)) return (status.textContent = "");
+        } else if (r.current) {
+          if (!confirm(`Move your ${r.current} website${r.current === 1 ? "" : "s"} and settings to ${r.path}?`)) return (status.textContent = "");
+          move = true;
+        }
+        await flushSave();
+        await done(await call("data:set-folder", r.path, move), `Now using ${r.path}.`);
+      }) }, "Change folder…")),
+
+    h("h3", {}, "Saved passwords and keys"),
+    settings.secretsProblem && h("div", { className: "warn" }, settings.secretsProblem),
+    portable.locked
+      ? [h("p", {}, "Portable secrets are on: enter your passphrase to unlock your saved passwords and keys on this computer."),
+        h("div", { className: "inline" }, unlockIn, h("button", { className: "primary", onclick: act(async () => done(await call("secrets:unlock", unlockIn.value), "Unlocked.")) }, "Unlock")),
+        h("p", { className: "hint" }, "Forgotten it? ", h("a", { onclick: act(async () => {
+          if (!confirm("Forget your saved passwords and keys? You'll connect your accounts again, and publishing re-creates each website's keys. The old files are kept aside, not deleted.")) return (status.textContent = "");
+          await done(await call("secrets:forget"), "Start again by connecting your accounts.");
+        }) }, "Forget saved secrets"), ".")]
+      : portable.on
+        ? [h("p", {}, "Portable secrets are on: on another computer, your passphrase unlocks them. This computer remembers it."),
+          h("button", { onclick: act(async () => done(await call("secrets:portable-off"), "Portable secrets are off.")) }, "Turn off portable secrets")]
+        : [h("p", { className: "hint" }, "They're protected by this computer's own keychain, so they only open here (also after reinstalling the app). Portable secrets protect them with a passphrase instead, so you can open them on a new computer. The passphrase is never saved, and can't be recovered."),
+          h("div", { className: "inline", style: "flex-wrap:wrap" }, p1, p2, h("button", { onclick: act(async () => {
+            if (p1.value !== p2.value) throw new Error("The passphrases don't match.");
+            await done(await call("secrets:portable-on", p1.value), "Portable secrets are on.");
+          }) }, "Turn on portable secrets"))],
+    status);
 }
