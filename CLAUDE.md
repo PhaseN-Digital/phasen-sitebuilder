@@ -201,6 +201,11 @@ are not, so add them yourself.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
+- The form inbox (#75, README "Form inbox") is read only by the app, through
+  the D1 API with the user's token; never add a Worker route that returns
+  stored messages. The table is created both by the Worker (`SCHEMA` in
+  `runtime/worker.js`) and at publish (`D1_SCHEMA` in `lib/publish.js`):
+  change both together, and never store the honeypot or Turnstile token.
 - Copied (exact-copy) pages are edited in their stored HTML via
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed

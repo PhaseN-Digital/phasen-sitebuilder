@@ -84,6 +84,13 @@ const site = {
   await build({ ...site, analyticsId: "UA-1234" }, siteDir, out, {});
   assert(!read("public/index.html").includes("cookie-banner") && !read("public/privacy.html").includes("Google Analytics"), "malformed ID ignored");
 
+  // Form inbox (#75): retention in the privacy page and Worker vars, D1 binding only once there's a database.
+  await build({ ...site, inboxDays: "30" }, siteDir, out, { workerName: "w", d1: { id: "db-1", name: "w-inbox" } });
+  assert(read("public/privacy.html").includes("inbox for up to 30 days") && read("public/privacy.html").includes("stores the messages you send"));
+  assert(read("wrangler.toml").includes('RETENTION_DAYS = 30\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "w-inbox"\ndatabase_id = "db-1"\n'));
+  await build(site, siteDir, out, {});
+  assert(read("wrangler.toml").includes("RETENTION_DAYS = 90") && !read("wrangler.toml").includes("d1_databases") && read("public/privacy.html").includes("up to 90 days"));
+
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
 
@@ -291,6 +298,38 @@ const site = {
   assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
+
+  // Form inbox D1 API (#75), against a stub: reuse by name, create otherwise, table made either way.
+  const pub = require("./lib/publish");
+  const d1Calls = [];
+  const d1Stub = (dbs) => async (url, { method, body }) => {
+    url = url.replace("https://api.cloudflare.com/client/v4", "");
+    d1Calls.push(`${method} ${url}${body ? ` ${body}` : ""}`);
+    const result = url.endsWith("/query") ? [{ results: [{ id: 1 }], success: true }] : method === "POST" ? { uuid: "new-db" } : method === "DELETE" ? {} : dbs;
+    return { status: 200, json: async () => ({ success: true, result }) };
+  };
+  globalThis.fetch = d1Stub([{ name: "bob-1a2b-inboxx", uuid: "no" }, { name: "bob-1a2b-inbox", uuid: "old-db" }]);
+  assert.deepStrictEqual(await pub.ensureD1("t", "a1", "bob-1a2b"), { id: "old-db", name: "bob-1a2b-inbox" });
+  assert(d1Calls[0] === "GET /accounts/a1/d1/database?name=bob-1a2b-inbox" && /^POST \/accounts\/a1\/d1\/database\/old-db\/query .*CREATE TABLE IF NOT EXISTS messages/.test(d1Calls[1]), d1Calls);
+  d1Calls.length = 0;
+  globalThis.fetch = d1Stub([]);
+  assert.deepStrictEqual(await pub.ensureD1("t", "a1", "bob-1a2b"), { id: "new-db", name: "bob-1a2b-inbox" });
+  assert(d1Calls[1] === 'POST /accounts/a1/d1/database {"name":"bob-1a2b-inbox"}', d1Calls);
+  d1Calls.length = 0;
+  assert.deepStrictEqual(await pub.ensureD1("t", "a1", "bob-1a2b", { id: "kept", name: "bob-1a2b-inbox" }), { id: "kept", name: "bob-1a2b-inbox" });
+  assert(d1Calls.length === 1, "recorded database reused without a lookup");
+  assert.deepStrictEqual(await pub.d1Query("t", "a1", "kept", "SELECT 1"), [{ id: 1 }]);
+  d1Calls.length = 0;
+  const off = await pub.unpublish("t", "k", { accountId: "a1", d1: { id: "kept", name: "x" } }, () => {});
+  assert(d1Calls.includes("DELETE /accounts/a1/d1/database/kept") && !off.state.d1 && !off.failed.length, "taking offline deletes the inbox");
+  globalThis.fetch = async (url) => ({ status: url.includes("/d1/") ? 403 : 200, json: async () => (url.includes("/d1/") ? { success: false, errors: [] } : { success: true, result: [{ id: "a1", name: "A" }] }) });
+  assert((await pub.checkCloudflareToken("t")).warnings.some((w) => w.includes("D1")), "missing D1 permission warned");
+  globalThis.fetch = realFetch;
+  const csv = pub.messagesCsv([
+    { id: 2, form: "f1", fields: JSON.stringify([{ label: "Name", value: "=HYPERLINK(1)" }, { label: "Message", value: 'Hi, "there"\nbye' }]), created_at: "2026-10-24 10:00:00", email_status: "failed (403)" },
+    { id: 1, form: "gone", fields: JSON.stringify([{ label: "Phone", value: "0123" }]), created_at: "2026-10-23 09:00:00", email_status: "sent" },
+  ], { f1: "Contact" });
+  assert.strictEqual(csv, 'Received (UTC),Form,Email,Name,Message,Phone\r\n2026-10-24 10:00:00,Contact,failed (403),\'=HYPERLINK(1),"Hi, ""there""\nbye",\r\n2026-10-23 09:00:00,gone,sent,,,0123\r\n');
 
   const { bump } = require("./scripts/release-bump");
   for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],

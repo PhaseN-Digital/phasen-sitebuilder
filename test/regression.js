@@ -62,11 +62,10 @@ async function serve(name, siteId, extra = {}) {
   const siteDir = path.join(OUT, "userdata", "sites", siteId);
   const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), ...extra };
   const dir = path.join(OUT, "built", name);
-  await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com" });
+  await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com", d1: { id: "00000000-0000-0000-0000-000000000000", name: "regression-inbox" } });
   fs.writeFileSync(path.join(dir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\n`);
   const port = await freePort();
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", CI: "1" };
-  delete env.RESEND_API_KEY;
+  const env = wranglerEnv();
   const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", String(port), "--ip", "127.0.0.1"], { cwd: dir, env, log: path.join(OUT, `wrangler-${name}.log`) });
   const base = `http://127.0.0.1:${port}`;
   for (const end = Date.now() + 60000; Date.now() < end && child.exitCode === null; await sleep(300)) {
@@ -74,6 +73,31 @@ async function serve(name, siteId, extra = {}) {
   }
   await child.stop();
   throw new Error(`wrangler dev didn't start for ${name}:\n${child.output.slice(-2000)}`);
+}
+
+function wranglerEnv() {
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", CI: "1" };
+  delete env.RESEND_API_KEY;
+  return env;
+}
+
+// Runs SQL against the built site's local D1 (the form inbox, #75), the same database `wrangler dev` uses.
+async function d1(dir, sql) {
+  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "d1", "execute", "regression-inbox", "--local", "--json", "--command", sql], { cwd: dir, env: wranglerEnv() });
+  await child.done;
+  try { return JSON.parse(child.output.slice(child.output.indexOf("["))).flatMap((r) => r.results); } catch { return { error: child.output.slice(-1500) }; }
+}
+
+async function inboxChecks(label, s) {
+  const rows = await d1(s.dir, "SELECT form, fields, email_status FROM messages");
+  check(`${label}: valid message stored in the inbox, honeypot and token never stored`, rows.length === 1 && rows[0].email_status === "not sent (no email key)"
+    && rows[0].fields.includes("jo@example.com") && !/spam|DUMMY/.test(rows[0].fields), rows);
+  await d1(s.dir, "INSERT INTO messages (form, fields, created_at) VALUES ('old', '[]', datetime('now', '-91 days'))");
+  const fields = JSON.parse(rows[0].fields);
+  const body = Object.fromEntries(s.site.forms.find((f) => f.id === rows[0].form).fields.map((f) => [f.id, fields.find((x) => x.label === f.label)?.value || ""]));
+  const r = await post(s.base, `/api/forms/${rows[0].form}`, { ...body, "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
+  const after = await d1(s.dir, "SELECT form FROM messages");
+  check(`${label}: messages past the retention period deleted on the next write`, r.json?.ok === true && after.length === 2 && !after.some((m) => m.form === "old"), after);
 }
 
 const get = (base, p) => fetch(base + p, { redirect: "manual" }).then(async (r) => ({ status: r.status, location: r.headers.get("location"), text: await r.text() }));
@@ -152,6 +176,7 @@ async function workerChecks(sites) {
       const fields = s.site.forms[0].fields;
       const valid = Object.fromEntries(fields.map((f) => [f.id, f.type === "email" ? "jo@example.com" : `Regression ${f.id} value`]));
       await formChecks("worker (made in app) form", s, "contact", valid);
+      await inboxChecks("worker (made in app) inbox", s);
     } finally { await s.child.stop(); }
   }
   if (sites.wordpress) {
