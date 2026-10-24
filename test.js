@@ -206,6 +206,28 @@ const site = {
   assert(!r.writes.length && !r.logs, "republish is a no-op");
   r = await runRedirect({ records: [], rules: [] });
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
+
+  // Unpublish (#71): best-effort, only removes what publishing made, keeps failures for a retry.
+  const writes = [];
+  globalThis.fetch = async (url, { method }) => {
+    url = url.replace(/^https:\/\/api\.(cloudflare\.com\/client\/v4|resend\.com)/, "");
+    const reply = (status, result) => ({ status, ok: status < 300, json: async () => (status < 300 ? { success: true, result } : { success: false, errors: [{ message: "boom" }], message: "gone" }) });
+    if (method !== "GET") writes.push(`${method} ${url}`);
+    if (url.includes("/challenges/widgets/")) return reply(500);
+    if (url.startsWith("/api-keys/")) return reply(404);
+    if (method !== "GET") return reply(200, {});
+    if (url.includes("/workers/domains")) return reply(200, [{ id: "d1" }]);
+    if (url.includes("dns_records")) return reply(200, [{ id: "r1", comment: "PhaseN Site Builder: redirects to the apex" }, { id: "r2", comment: "theirs" }]);
+    return reply(200, { id: "rs1", rules: [{ id: "x2", ref: "theirs" }, { id: "x1", ref: "sitebuilder_www_to_apex" }] });
+  };
+  const logs = [];
+  const { unpublish } = require("./lib/publish");
+  const res = await unpublish("t", "k", { accountId: "a1", worker: "bob-1a2b", url: "https://bob.com", publishedAt: "x", www: { id: "z1", name: "bob.com" },
+    turnstile: { sitekey: "s1" }, sendingKey: "sealed", sendingKeyId: "k1", sendingKeyDomain: "dom" }, (l) => logs.push(l));
+  assert.deepStrictEqual(writes, ["DELETE /accounts/a1/workers/domains/d1", "DELETE /accounts/a1/workers/scripts/bob-1a2b?force=true",
+    "DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/challenges/widgets/s1", "DELETE /api-keys/k1"]);
+  assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
+  assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
   const { bump } = require("./scripts/release-bump");

@@ -2,7 +2,7 @@
 // (so typing never loses focus), structural changes call renderTab().
 const { call, onPublishLog, onImportLog } = window.cms;
 
-let THEMES, site, publishedUrl, paths = {}, settings;
+let THEMES, site, publishedUrl, canUnpublish, paths = {}, settings;
 let tab = "design", pageId = null, formId = null, previewMobile = false, publishing = false, publishLog = "";
 const $ = (sel) => document.querySelector(sel);
 const rid = () => Math.random().toString(16).slice(2, 10);
@@ -117,7 +117,7 @@ async function loadSites(activeId) {
 async function openSite(id) {
   clearTimeout(saveTimer);
   publishLog = "";
-  ({ site, url: publishedUrl } = await call("sites:get", id));
+  ({ site, url: publishedUrl, canUnpublish } = await call("sites:get", id));
   pageId = site.pages[0].id;
   formId = site.forms[0]?.id;
   paths = await call("sites:save", site);
@@ -439,20 +439,48 @@ function publishTab() {
 
   const log = h("pre", { className: "log", hidden: !publishLog }, publishLog);
   const status = h("p", { className: "error" });
-  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !settings.resend, onclick: async () => {
-    publishing = true; publishBtn.disabled = true; status.textContent = ""; log.hidden = false; log.textContent = publishLog = "";
+  // Runs a publish/unpublish/delete with its output streamed into the log.
+  const run = async (btn, fn) => {
+    publishing = true; btn.disabled = true; status.textContent = ""; log.hidden = false; log.textContent = publishLog = "";
     logSink = (line) => { publishLog += line; log.textContent = publishLog; log.scrollTop = log.scrollHeight; };
-    try {
+    let ok = true;
+    try { await fn(); } catch (e) { ok = false; status.textContent = errorText(e); btn.disabled = false; }
+    publishing = false;
+    if (!site) return; // deleted
+    ({ url: publishedUrl, canUnpublish } = await call("sites:get", site.id));
+    if (ok) renderTab();
+  };
+  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !settings.resend, onclick: () => run(publishBtn, async () => {
+    clearTimeout(saveTimer);
+    paths = await call("sites:save", site);
+    await call("sites:publish", site.id);
+  }) }, publishedUrl ? "Publish changes" : "Publish website");
+  const unpublishBtn = canUnpublish && h("button", { disabled: publishing || !cfDone, onclick: () => {
+    if (confirm(`Take "${site.name}" offline? This deletes the website from Cloudflare, along with its www redirect and form keys. You can publish it again later.`)) run(unpublishBtn, async () => {
+      await call("sites:unpublish", site.id);
+    });
+  } }, "Take website offline");
+
+  // The delete confirmation, with the choice to take the live site down too (#71).
+  const offline = h("input", { type: "checkbox", checked: Boolean(canUnpublish && cfDone), disabled: !canUnpublish || !cfDone });
+  const deleteDialog = h("dialog", {},
+    h("form", { method: "dialog" },
+      h("p", {}, h("b", {}, `Delete "${site.name}" from this computer?`)),
+      canUnpublish && h("label", {}, offline, " Also take it offline (deletes it from Cloudflare, with its www redirect and form keys)"),
+      canUnpublish && !cfDone && h("p", { className: "hint" }, "Connect Cloudflare above to take it offline too."),
+      h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
+        h("button", { value: "" }, "Cancel"), h("button", { className: "danger", value: "delete" }, "Delete"))));
+  const deleteBtn = h("button", { className: "danger", disabled: publishing, onclick: () => { deleteDialog.returnValue = ""; deleteDialog.showModal(); } }, "Delete this website");
+  deleteDialog.addEventListener("close", () => {
+    if (deleteDialog.returnValue !== "delete") return;
+    run(deleteBtn, async () => {
       clearTimeout(saveTimer);
-      paths = await call("sites:save", site);
-      publishedUrl = await call("sites:publish", site.id);
-      publishing = false;
-      renderTab();
-    } catch (e) {
-      status.textContent = errorText(e);
-      publishing = false; publishBtn.disabled = false;
-    }
-  } }, publishedUrl ? "Publish changes" : "Publish website");
+      await call("sites:delete", site.id, offline.checked); // with offline set, nothing local is deleted unless taking it offline worked
+      site = null;
+      $("#main").replaceChildren(h("div", { className: "welcome" }, h("h1", {}, "Website deleted")));
+      loadSites();
+    });
+  });
 
   return [
     publishedUrl && h("div", { className: "live" }, "Your website is live at ", link(publishedUrl, publishedUrl)),
@@ -503,18 +531,13 @@ function publishTab() {
       area("How long you keep messages", site.privacy, "retention", "Leave blank to say you keep them only as long as you need to deal with the enquiry."),
       h("button", { onclick: () => { $("#preview").src = `preview://${site.id}${paths.privacy}?t=${Date.now()}`; } }, "Show it in the preview")),
     h("div", { className: "inline", style: "align-items:center;margin-top:8px" }, publishBtn,
-      h("button", { onclick: async () => { try { await call("sites:export", site.id); } catch (e) { status.textContent = errorText(e); } } }, "Save as package…")),
+      h("button", { onclick: async () => { try { await call("sites:export", site.id); } catch (e) { status.textContent = errorText(e); } } }, "Save as package…"),
+      unpublishBtn),
     status,
     log,
     h("hr", { style: "margin:32px 0 16px;border:0;border-top:1px solid var(--line)" }),
-    h("button", { className: "danger", onclick: async () => {
-      if (!confirm(`Delete "${site.name}" from this computer? ${publishedUrl ? "The live website stays online; remove it in the Cloudflare dashboard if you no longer need it." : ""}`)) return;
-      clearTimeout(saveTimer);
-      await call("sites:delete", site.id);
-      site = null;
-      $("#main").replaceChildren(h("div", { className: "welcome" }, h("h1", {}, "Website deleted")));
-      loadSites();
-    } }, "Delete this website"),
+    deleteDialog,
+    deleteBtn,
   ];
 }
 
