@@ -187,6 +187,22 @@ Nothing loads in the in-app preview. The site then always gets the privacy
 page, which gains an "Analytics and cookies" section (and drops the form
 parts if there are no forms). Exact-copy pages don't get the banner (#45).
 
+## Search and sharing (SEO)
+
+Pages › Search and sharing sets a page's search title (`page.seoTitle`,
+default "Page | Site", or the site name on the home page), description
+(`page.seoDescription`, default Design › Short description) and social share
+image (`page.shareImage`, picked from the site's uploads, default the logo).
+`renderPage` turns these into `<title>`, the meta description, Open Graph and
+Twitter tags. `canonical`, `og:url`, absolute image URLs, `sitemap.xml` and
+`robots.txt` need the published hostname, so `build()` only writes them when
+given `publish.hostname` (always the case when publishing, only with a domain
+on export) and never in the preview. The sitemap lists every indexable page
+(not the noindex privacy page or 404). An exact copy keeps its own
+`sitemap.xml`/`robots.txt` if the copy has them; otherwise its sitemap lists
+the copied pages, skipping any whose HTML has a `noindex` meta tag. Copied
+pages' own `<head>` tags are left as they were.
+
 ## Importing from WordPress
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
