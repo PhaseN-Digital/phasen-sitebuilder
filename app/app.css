@@ -154,3 +154,17 @@ dialog.publish-theme .inline { margin-top: 12px; }
 .message dt { font-weight: 600; }
 .message dd { margin: 0 0 8px; white-space: pre-wrap; }
 .badge-warn { white-space: nowrap; background: #fff4e5; border: 1px solid #f3c27a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; font-size: .8rem; }
+/* Editable import review step (#161, app/wordpress.js reviewImport) */
+.review-wrap { flex: 1; display: flex; min-width: 0; }
+.review-side { width: 360px; flex: none; display: flex; flex-direction: column; padding: 24px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+.review-pages { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 4px; }
+.review-pages li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.review-pages li:hover { background: var(--tint); }
+.review-pages li.active { outline: 2px solid var(--primary); }
+.review-pages li > span:nth-child(2) { flex: 1; display: grid; min-width: 0; }
+.review-pages small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-pages .badge { font-size: .75rem; color: var(--muted); }
+.review-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 16px; }
+.review-preview { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.review-preview iframe { flex: 1; border: 0; background: #fff; width: 100%; }
+.review-side .hint { margin: 0 0 16px; }

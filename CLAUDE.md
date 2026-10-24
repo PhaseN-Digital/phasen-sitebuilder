@@ -267,9 +267,12 @@ are not, so add them yourself.
   `lib/build.js` marks every built page; `importProvenance.declaredBy` (the
   user's name and email) must never reach the build output (test.js and the
   regression suite check).
-- Anything WordPress-imported is untrusted: editable imports go through the
-  allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
-  `cleanEdit` in `app/copied.js`.
+- Anything imported is untrusted: editable imports (WordPress or any site,
+  #161) go through the allowlist sanitizer in `app/wordpress.js`, and
+  copied-page edits through `cleanEdit` in `app/copied.js`. The review
+  step's preview (`?sb-pick`) must keep the page's own scripts blocked (main.js's
+  nonce CSP): `app/content-detect.js`'s CSS paths only match the frame
+  when no script has changed the page.
 - Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
   leaves the editor or writes/publishes the site (switching site, Settings,
   Themes, Import, delete, publish, and window close via main.js's `close`
