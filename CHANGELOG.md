@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.5.0...phasen-sitebuilder-v0.6.0) (2026-10-24)
+
+
+### Features
+
+* **app:** brand the editor with PhaseN Digital assets ([#59](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/59)) ([#119](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/119)) ([6e68bbd](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6e68bbde62a56da11de5a0c22b9155dc4571b33f))
+* **editor:** fuller rich text editor with Quill 2 ([#120](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/120)) ([#127](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/127)) ([f3b2e21](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/f3b2e219bae3f07060dcad9e185ec2db0f963b44))
+* **forms:** keep form messages in a per-site D1 inbox ([#75](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/75)) ([#121](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/121)) ([f156aa6](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/f156aa69afc3d1457569557b8bfe23dc36f39a79))
+* **themes:** Theme Builder for local themes ([#130](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/130)) ([#132](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/132)) ([a4b3d2d](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/a4b3d2d71ccd92901771d7af922ea9838f460dec))
+
+
+### Bug Fixes
+
+* pick black or white text by higher WCAG contrast ([#124](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/124)) ([#125](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/125)) ([ac88646](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/ac88646e7ecc22380d3f4ee76b6ab56434c77a60))
+
 ## [0.5.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.4...phasen-sitebuilder-v0.5.0) (2026-10-24)
 
 
