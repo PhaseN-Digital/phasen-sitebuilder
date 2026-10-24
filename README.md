@@ -107,7 +107,10 @@ checks the whole app end to end with no accounts, against fake sites in
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
   built from the site's own copy), the copied site's redirect, and form POSTs (honeypot, validation, captcha,
-  a valid message logged instead of emailed since `RESEND_API_KEY` is unset).
+  a valid message logged instead of emailed since `RESEND_API_KEY` is unset),
+  and the form inbox in `wrangler dev`'s local D1 (valid messages stored with
+  their email status, honeypot and Turnstile token never stored, old messages
+  deleted on the next write).
 
 It prints one line per check and a summary, and exits non-zero on any
 failure. On Linux without a display it runs Electron under `xvfb-run`
@@ -199,7 +202,8 @@ notice at `/privacy` (`renderPrivacy` in `lib/build.js`), linked from the
 footer of built pages. It names the business, the contact email (the first
 used form's "Send messages to", else Publish › Form messages), what each form
 collects, Cloudflare/Turnstile and Resend as processors, how long messages
-are kept and the visitor's UK GDPR rights. The business name and retention
+are kept (by default, the Inbox's "Delete messages after" days) and the
+visitor's UK GDPR rights. The business name and retention
 sentence are set in Publish › Privacy page, which says it's a starting point,
 not legal advice. Exact-copy pages keep their own footer, so there the user
 is told the address and adds the link themselves; the notice doesn't cover
@@ -379,9 +383,13 @@ already signed in"). They're only sent over https and aren't stored.
    untouched). Without one, forms send from `onboarding@resend.dev`, which
    Resend only delivers to the Resend account owner's email.
 4. Creates a sending-only Resend key for the site's Worker.
-5. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
+5. Creates (or reuses) the site's form inbox, a D1 database named
+   `<worker>-inbox`, with its `messages` table, and binds it to the Worker as
+   `DB`. If the token lacks D1 permission, publishing carries on without it
+   (forms only email) and the log says so.
+6. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
    Resend key.
-6. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
+7. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
    (`http_request_dynamic_redirect` phase) sending `www.<domain>` to the apex,
    as phasen.digital's Terraform does. An existing `www` record or existing
    redirect rules are left alone (logged, not overwritten). If this step fails,
@@ -389,9 +397,30 @@ already signed in"). They're only sent over https and aren't stored.
    says why.
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
-Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
+Account › Turnstile › Edit, Account › D1 › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
 Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
+
+## Form inbox
+
+Every valid form message is also stored in the site's D1 database (#75) by
+`runtime/worker.js`, before it's emailed: the form id, the fields as JSON
+(`[{ label, value }]`), `created_at` (UTC) and `email_status` (`sent`,
+`failed (<HTTP status>)`, `not sent (no email key)`, or `pending` if the
+Worker stopped mid-send). The honeypot and Turnstile token are never stored.
+If the email fails but the message was stored, the visitor is told it was
+sent, since it's waiting in the Inbox. A database error never stops the
+email.
+
+The app's Inbox tab lists, reads, deletes and exports (CSV) messages through
+Cloudflare's D1 query API with the user's own token (`inbox:*` in main.js),
+so no public endpoint serves them. Messages that weren't emailed get a
+warning badge. Retention is the site's "Delete messages after" setting
+(`site.inboxDays`, default 90): built into the Worker as `RETENTION_DAYS`,
+which deletes older messages on every write, applied again whenever the app
+lists the inbox, and quoted in the privacy page's default retention
+sentence. Exported packages ("Save as package…") include the D1 binding only
+once the site has been published.
 
 ## Taking a site offline
 
@@ -402,7 +431,9 @@ using what `sites/<id>/publish.json` recorded at publish time:
 1. Deletes the Worker and its Custom Domains.
 2. Deletes the `www` record and redirect rule, but only ones publishing made
    (matched by the record's comment and the rule's `ref`).
-3. Deletes the Turnstile widget and the site's Resend sending key.
+3. Deletes the Turnstile widget, the form inbox's D1 database (with its
+   messages; the confirmation says to export them first) and the site's
+   Resend sending key.
 
 Each step is logged and best-effort: one failing doesn't stop the rest, and
 anything already gone (404) counts as removed. Whatever failed stays in
@@ -411,6 +442,11 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Form inbox (#75): the D1 API calls (create, query, delete) are tested only
+  against a stubbed API in test.js, and the Worker's storage only under
+  `wrangler dev`'s local D1, not yet against real Cloudflare. A changed
+  "Delete messages after" value reaches the Worker only on the next publish.
+  The Inbox loads every message at once.
 - Rich text (#120): Quill has no header cells or line breaks inside a
   paragraph, so imported `<th>`s become ordinary cells and `<br>` starts a
   new paragraph; a quote with several paragraphs becomes several quotes, and

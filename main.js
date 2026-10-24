@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { build, pruneAssets, themes, fonts } = require("./lib/build");
+const { build, pruneAssets, themes, fonts, inboxDays } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite } = require("./lib/mirror");
@@ -123,12 +123,21 @@ async function publish(id, log) {
     await writeState(id, state);
   }
 
+  // The form inbox (#75). Older tokens lack D1 permission: publish without it rather than fail.
+  try {
+    state.d1 = await cf.ensureD1(token, accountId, site.workerName, state.d1);
+    await writeState(id, state);
+  } catch (e) {
+    log(`Couldn't set up the form inbox (${e.message}). Form messages will only be emailed. Add Account · D1 · Edit to your Cloudflare token and publish again.\n`);
+  }
+
   const options = {
     workerName: site.workerName,
     hostname,
     sitekey: turnstile.sitekey,
     fromAddress: site.domain ? `website@${site.domain.name}` : "onboarding@resend.dev",
     defaultTo: settings.email,
+    d1: state.d1,
   };
   await build(site, siteDir(id), publishDir(id), options);
   log("Uploading website…\n");
@@ -163,7 +172,26 @@ async function unpublish(id, log) {
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
   log("\nDone. The website is offline.\n");
 }
-const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId);
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1);
+
+// Form inbox (#75): read straight from the site's D1 database with the user's
+// token, so no public endpoint ever serves messages. Returns null when the
+// site has no inbox yet. Listing also applies the retention period, so old
+// messages go even if nobody sends a new one.
+async function inbox(id) {
+  const [settings, state, site] = await Promise.all([loadSettings(), readState(id), readSite(id)]);
+  if (!state.d1) return null;
+  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first (Publish tab).");
+  const token = unseal(settings.cloudflare.token), accountId = state.accountId || settings.cloudflare.accountId;
+  return { site, query: (sql, params) => cf.d1Query(token, accountId, state.d1.id, sql, params) };
+}
+// ponytail: loads every message at once; page it if an inbox ever holds thousands.
+async function listMessages(id) {
+  const box = await inbox(id);
+  if (!box) return null;
+  await box.query("DELETE FROM messages WHERE created_at < datetime('now', ?)", [`-${inboxDays(box.site)} days`]);
+  return box.query("SELECT id, form, fields, created_at, email_status FROM messages ORDER BY id DESC");
+}
 
 // Theme sources (#58): the public repo (hideable via settings.hidePublicThemes)
 // plus settings.themeSources, [{ spec, token? (sealed) }]. Tokens never leave
@@ -272,12 +300,27 @@ const handlers = {
     const out = path.join(filePaths[0], site.workerName);
     await fs.mkdir(out); // throws if it exists, so we never overwrite a user's folder
     const state = await readState(id);
-    await build(site, siteDir(id), out, { workerName: site.workerName, hostname: site.domain?.name, sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.name}` : undefined, defaultTo: (await loadSettings()).email });
+    await build(site, siteDir(id), out, { workerName: site.workerName, hostname: site.domain?.name, sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.name}` : undefined, defaultTo: (await loadSettings()).email, d1: state.d1 });
     shell.showItemInFolder(out);
     return out;
   },
   "sites:publish": (id, event) => publish(id, (line) => event.sender.send("publish-log", line)),
   "sites:unpublish": (id, event) => unpublish(id, (line) => event.sender.send("publish-log", line)),
+
+  "inbox:list": listMessages,
+  "inbox:delete": async (id, messageId) => {
+    const box = await inbox(id);
+    if (box) await box.query("DELETE FROM messages WHERE id = ?", [Number(messageId)]);
+  },
+  "inbox:export": async (id) => {
+    const rows = await listMessages(id);
+    if (!rows) return null;
+    const site = await readSite(id);
+    const { canceled, filePath } = await dialog.showSaveDialog({ title: "Save form messages", defaultPath: `${site.workerName}-messages.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
+    if (canceled) return null;
+    await fs.writeFile(filePath, "\ufeff" + cf.messagesCsv(rows, Object.fromEntries(site.forms.map((f) => [f.id, f.name])))); // BOM so Excel reads UTF-8
+    return filePath;
+  },
 
   "images:save": async (id, bytes) => {
     if (!(bytes instanceof Uint8Array) || bytes.length > 20e6) throw new Error("Image too large.");
