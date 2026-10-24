@@ -983,6 +983,26 @@ const site = {
     let switched = false;
     assert.strictEqual(await folder.moveAll(root, to, async () => { switched = true; assert.strictEqual((await folder.scan(root)).size, 2, "originals still there at the switch"); }), 2);
     assert(switched && (await folder.scan(to)).size === 2 && (await folder.scan(root)).size === 0 && fs.existsSync(path.join(to, ".phasen", "secrets.enc")));
+
+    // Renaming a site renames its folder (#177): a no-op when it already matches, a suffix on a clash, the repo intact.
+    const bikes = path.join(to, "bob-s-bikes"), bikes2 = path.join(to, "bob-s-bikes-2");
+    assert.strictEqual(await folder.renameToMatch(bikes, "Bob's Bikes!"), bikes);
+    assert.strictEqual(await folder.renameToMatch(bikes2, "Bob's bikes"), bikes2, "a numbered folder still matches");
+    fs.mkdirSync(path.join(to, "cycles"));
+    const cycles = await folder.renameToMatch(bikes2, "Cycles");
+    assert.strictEqual(cycles, path.join(to, "cycles-2"));
+    const moved = await folder.scan(to);
+    assert(moved.size === 2 && [...moved.values()].includes(cycles) && (await repo.log(cycles))[0].message === "Moved into the PhaseN Sites folder");
+    // Interrupted: a rename that fails (a file open on Windows, a power cut) leaves the folder whole under its old name.
+    const rename = fs.promises.rename;
+    fs.promises.rename = async () => { throw Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" }); };
+    await assert.rejects(folder.renameToMatch(cycles, "Wheels"), /EBUSY/);
+    fs.promises.rename = rename;
+    assert.deepStrictEqual(await folder.scan(to), moved, "nothing moved, nothing lost");
+    // Killed after the rename but before the app recorded it: the next scan finds the site at its new name, once.
+    const wheels = await folder.renameToMatch(cycles, "Wheels");
+    const rescanned = await folder.scan(to);
+    assert(rescanned.size === 2 && [...rescanned.values()].includes(wheels) && !fs.existsSync(cycles) && await repo.isRepo(wheels));
     fs.rmSync(base, { recursive: true, force: true });
   }
 

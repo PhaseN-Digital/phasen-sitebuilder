@@ -161,7 +161,9 @@ published always-pass test secret, so that one step needs internet access.
 - Sites folder, secrets and history (#136): `<Documents>/PhaseN Sites/` by
   default (Settings › Data › Change folder… moves the sites there, or points
   at a folder that already has some; the choice is in `userData/location.json`).
-  One sub-folder per site, named from its name when it was made, each its
+  One sub-folder per site, named from its name (renamed with the site, #177,
+  once the edit is committed and nothing else is running; if a file in it is
+  open on Windows it keeps its old name until the next commit), each its
   own git repo (`lib/site-repo.js`, through
   [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
   no git), plus `.phasen/` for the app's settings. On start, and with
@@ -750,8 +752,8 @@ site's local files until taking it offline has fully worked.
   placeholders.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
-  Windows/macOS keychains or with a synced folder (OneDrive/iCloud). Site
-  folders keep the name they were made with when a site is renamed. A lost
+  Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
+  a site's folder (#177) likewise only on Linux. A lost
   sending key is re-created without deleting the old one at Resend. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
