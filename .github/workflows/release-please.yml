@@ -154,20 +154,29 @@ jobs:
             gh pr comment "$PR" --body "Regression suite passed on $SHA ([run]($run)). This is a **$BUMP** release, so it waits for the maintainer to merge it."
             exit 0
           fi
-          # Last look at main right before merging; --match-head-commit pins the
-          # head, this pins the base.
-          if [ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$MAIN" ]; then
-            regate "main moved after the gate checked it"
-            exit 0
+          # Merge by fast-forwarding main to the tested commit, not with
+          # `gh pr merge` (#99): GitHub's merge API can't require an unchanged
+          # base, so a push in the second before it still landed under the
+          # squash. The lease makes this push a compare-and-swap on main: it's
+          # rejected unless main is still $MAIN (which $SHA contains, checked
+          # above), so main only ever becomes exactly the tested commit. GitHub
+          # then marks the PR merged with $SHA as its merge commit, which is
+          # what the `release` job's release-please tags.
+          if ! git push --force-with-lease="refs/heads/main:$MAIN" origin "$SHA:refs/heads/main"; then
+            if [ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$MAIN" ]; then
+              regate "main moved after the gate checked it"
+              exit 0
+            fi
+            exit 1
           fi
-          gh pr merge "$PR" --squash --match-head-commit "$SHA"
-          # GitHub has no compare-and-swap on the base, so a push in the second
-          # between the check above and the merge is caught here: the squash must
-          # be exactly the tested tree. If not, fail loudly and don't release.
-          merged=$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid)
-          git fetch -q origin "$merged"
-          if [ "$(git rev-parse "$merged^{tree}")" != "$(git rev-parse "$SHA^{tree}")" ]; then
-            gh pr comment "$PR" --body "**Merged onto a main that moved during the merge**, so $merged isn't what regression tested ([run]($run)). Not releasing from this run; the maintainer must check the next release."
+          # GitHub notices the PR's head on main asynchronously, usually within seconds.
+          for _ in $(seq 30); do
+            merged=$(gh pr view "$PR" --json state,mergeCommit -q 'select(.state == "MERGED") | .mergeCommit.oid')
+            [ -n "$merged" ] && break
+            sleep 5
+          done
+          if [ "$merged" != "$SHA" ]; then
+            gh pr comment "$PR" --body "**main was fast-forwarded to the tested $SHA, but GitHub hasn't marked this PR merged with it** (merge commit: \`${merged:-none}\`, [run]($run)). Not releasing from this run; the maintainer must check this PR and the next release."
             exit 1
           fi
           echo "merged=true" >> "$GITHUB_OUTPUT"

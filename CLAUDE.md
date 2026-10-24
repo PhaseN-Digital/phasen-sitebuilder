@@ -137,15 +137,20 @@ are not, so add them yourself.
   the PR's head sha, read from the branch ref with `git ls-remote` after
   release-please finishes (never the PR API's `headRefOid`, which lags a ref
   update by seconds and once tested the previous head, #111), `release-gate` labels/comments or, for a passing patch
-  (`scripts/release-bump.js`), squash-merges it with `--match-head-commit`, and
+  (`scripts/release-bump.js`), merges it by fast-forwarding main to the tested
+  head (#99, below), and
   `release` runs release-please again to create the release. The gate only
   merges onto the main it tested (#97): the first step records main's sha,
   and right before merging the gate re-fetches main and the PR and refuses
   (with a PR comment and the `regate` label) if main
   moved, the PR's base isn't that main, its head isn't the tested sha or
   doesn't contain main; it re-classifies the bump from the current versions,
-  checks main once more just before `gh pr merge`, and fails without
-  releasing if the squash isn't exactly the tested tree. A `regate` PR is
+  then pushes the tested sha to main with `--force-with-lease=main:<that
+  sha>` (#99) instead of `gh pr merge`, whose API can't pin the base: the
+  push is rejected (and re-gated) if main moved even a second earlier, so
+  main only ever becomes exactly the tested commit. GitHub then marks the PR
+  merged with that commit; the gate waits for that and fails without
+  releasing if it doesn't happen. Don't go back to `gh pr merge` there. A `regate` PR is
   re-gated by the next run of any kind (a push, the daily `schedule`, or a
   dispatch), so a refusal never strands it; the label goes once a gate
   reaches a verdict. **Release manager: to re-gate a stuck release PR now

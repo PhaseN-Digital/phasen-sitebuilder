@@ -59,7 +59,10 @@ use `scripts/check-commit.js`.
   released when the maintainer merges it. A failure gets the
   `regression-failed` label and a comment, and is never merged. The gate
   only merges if `main` is still exactly what the regression run tested
-  against (#97); if anything landed on `main` meanwhile it comments, labels
+  against (#97): it merges by pushing the tested commit to `main` as a
+  fast-forward with `--force-with-lease`, which is rejected if `main` moved
+  even a second earlier (#99), rather than with GitHub's merge API, which
+  can't pin the base. If anything landed on `main` meanwhile it comments, labels
   the PR `regate` and leaves it to the next run (a push, the daily schedule,
   or `gh workflow run release-please.yml`), which re-gates it. This all
   happens in one run because release-please's PR updates and a
@@ -753,10 +756,9 @@ site's local files until taking it offline has fully worked.
   shared. Sites published before 0.5 didn't record their Resend key's id, so
   that key has to be deleted at resend.com by hand (the log says so). Only
   tested against a fake Cloudflare/Resend API so far, not the real ones.
-- Release gate: GitHub's merge API can't require an unchanged base, so a
-  push to `main` in the second between the gate's last check and its merge
-  still lands under the squash. The gate catches it and doesn't release from
-  that run, but the next run would (#99).
+- Release gate: the fast-forward merge (#99) hasn't run on GitHub yet; that
+  GitHub marks the PR merged with the tested commit, and that release-please
+  then tags it, is untested until the next patch release.
 
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
