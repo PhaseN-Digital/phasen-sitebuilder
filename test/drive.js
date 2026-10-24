@@ -258,6 +258,12 @@ app.on("browser-window-created", (_e, win) => {
       await shot("copy-link");
       await setLink("https://example.com/about-acme"); await settle();
       check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
+      // Linked image (the header logo, site-wide): same link panel from the image panel.
+      await waitFor(() => inFrame(`{ const i = document.querySelector(".elementor-location-header a > img"); if (i) i.click(); Boolean(i) }`));
+      const logoShown = await waitFor(() => run(`selectedCopyImage && document.querySelector(".copy-link input")?.value`), 5000);
+      check("copy image link: panel shows the logo's target", logoShown === "/", logoShown);
+      await setLink("/contact-us/"); await settle(); await shot("copy-image-link");
+      check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(path.join(M, f)))));
     }
   });
 });

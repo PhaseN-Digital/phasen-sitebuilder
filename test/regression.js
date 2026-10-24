@@ -168,6 +168,7 @@ async function workerChecks(sites) {
       const copySitemap = (await get(s.base, "/sitemap.xml")).text;
       check("worker (exact copy): sitemap from copied pages (#74)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>"), copySitemap);
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
+      check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);
