@@ -45,7 +45,7 @@ async function driveApp(wp, el, updates, gh) {
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url };
+  const env = { ...process.env, SB_USERDATA: path.join(OUT, "userdata"), SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url, SITEBUILDER_GITHUB_CLIENT_ID: gh.clientId };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -54,6 +54,13 @@ async function driveApp(wp, el, updates, gh) {
   if (!fs.existsSync(result)) { check("app run produced results", false, "see the log above"); return {}; }
   const { checks: appChecks, sites, closeEdit } = JSON.parse(fs.readFileSync(result, "utf8"));
   checks.push(...appChecks); // already printed by drive.js
+  // Theme publishing (#60): what the app sent to the fake GitHub.
+  const only = (files) => Object.keys(files).filter((f) => f.startsWith("themes/regression-bikes-theme/"));
+  const ok = (list) => list.length >= 2 && list.every((f) => /\/(theme\.json|theme\.css|preview\.png)$/.test(f));
+  const pushed = only(gh.files("PhaseN-Digital/phasen-themes-private"));
+  check("theme push: only theme.json/theme.css/preview.png committed", ok(pushed) && pushed.includes("themes/regression-bikes-theme/theme.json"), pushed);
+  check("theme submit: PR titled with the theme name, only its files", gh.pulls.length === 1 && gh.pulls[0].title === "Add theme: Regression Bikes theme" && ok(only(gh.pulls[0].files)), gh.pulls.map((p) => [p.title, only(p.files)]));
+  check("github sign-in: asked for private repos when ticked", gh.logins.at(-1)?.scope === "public_repo repo", gh.logins);
   if (closeEdit) {
     const kept = JSON.parse(fs.readFileSync(path.join(OUT, "userdata", "sites", closeEdit.id, "site.json"), "utf8")).pages[0].sections[0].buttonText;
     check("pending edit: kept when the app quits", kept === closeEdit.buttonText, kept);

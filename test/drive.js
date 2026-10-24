@@ -56,7 +56,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, closeWithPendingEdit };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -178,6 +178,47 @@ app.on("browser-window-created", (_e, win) => {
       const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
       check("theme builder: site uses the local theme", s.themeSource === "local" && s.theme === "regression-bikes-theme" && read(path.join(UD, "preview", id, "public", "styles.css")).includes("/* theme-builder "), { theme: s.theme, themeSource: s.themeSource });
       await shot("theme-builder-design");
+    }
+
+    // ---------- GitHub sign-in (device flow) and publishing the Theme Builder theme (#60), against the fake GitHub ----------
+    // test/regression.js checks what reached the fake's repos and PRs.
+    async function themePublish() {
+      await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`); // left open by an earlier step, it hides these screenshots
+      await run(`document.querySelector("#open-settings").click()`);
+      await waitFor(() => run(`Boolean(document.querySelector("#settings-page h1"))`));
+      await run(`[...document.querySelectorAll("label.field")].find((l) => l.textContent === "Also allow private repositories").querySelector("input").click(); 0`);
+      await run(`[...document.querySelectorAll(".step")].find((s) => s.textContent.startsWith("GitHub")).scrollIntoView(); 0`);
+      await shot("github-sign-in");
+      await clickButton("Sign in with GitHub");
+      const code = await waitFor(() => run(`document.querySelector(".device-code")?.textContent`), 5000);
+      check("github: device code shown", code === "WDJB-MJHT", code);
+      await shot("github-code");
+      check("github: signed in", await waitFor(() => run(`settings.github?.login === "octo" && settings.github.privateRepos && document.querySelector("#settings-page").textContent.includes("Signed in as octo")`)));
+      await shot("github-signed-in");
+      const stored = JSON.parse(read(path.join(UD, "settings.json"))).github;
+      check("github: token stored sealed", stored?.login === "octo" && stored.token && !JSON.stringify(stored).includes("github_pat_fake"), stored && Object.keys(stored));
+
+      const inDialog = (js) => run(`{ const d = document.querySelector("dialog.publish-theme[open]"); d ? (${js}) : null }`);
+      const status = () => inDialog(`d.querySelector("[role=status]").textContent + d.querySelector(".error").textContent`);
+      await run(`document.querySelector("#open-themes").click()`);
+      await waitFor(() => run(`[...document.querySelectorAll("button")].some((b) => b.textContent === "Push to repo…")`));
+      await clickButton("Push to repo…");
+      const target = await waitFor(() => inDialog(`d.querySelector("input").value`));
+      check("theme push: defaults to PhaseN's private themes repo", target === "PhaseN-Digital/phasen-themes-private", target);
+      await shot("theme-push");
+      await clickButton("Push");
+      const pushed = await waitFor(() => status().then((t) => t.startsWith("Pushed") && t));
+      check("theme push: done", Boolean(pushed), await status());
+      await shot("theme-pushed");
+      await inDialog(`d.close()`);
+      await clickButton("Submit to public repo…");
+      await waitFor(() => inDialog(`true`));
+      await shot("theme-submit");
+      await clickButton("Open pull request");
+      const opened = await waitFor(() => status().then((t) => t.startsWith("Pull request opened") && t));
+      check("theme submit: pull request opened", Boolean(opened), await status());
+      await shot("theme-submitted");
+      await inDialog(`d.close()`);
     }
 
     // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------

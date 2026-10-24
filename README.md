@@ -90,6 +90,11 @@ use `scripts/check-commit.js`.
   `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarisation.
   Windows: `WIN_CSC_LINK` (base64 .pfx) and `WIN_CSC_KEY_PASSWORD`; Azure
   Trusted Signing or a cloud-HSM certificate needs extra config (#32).
+- GitHub sign-in (#60) needs the OAuth App's client ID in the repository
+  **variable** (not secret) `SITEBUILDER_GITHUB_CLIENT_ID`; the `build` job
+  writes it into `lib/github-config.json` (gitignored). Without it the
+  installers say "GitHub sign-in isn't configured". Local runs read the
+  environment variable of the same name instead.
 
 ## Regression tests
 
@@ -105,7 +110,9 @@ checks the whole app end to end with no accounts, against fake sites in
   (from a fake `latest.json`), create a site, preview,
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
   a site's design, contrast hint, preview on that site, save, pick it in the
-  Design tab) (theme sources point at a fake
+  Design tab), GitHub sign-in through the device flow and both ways of
+  publishing that theme (push to PhaseN's private themes repo, PR to the
+  public one; the suite checks only the theme's three files arrived) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
@@ -193,7 +200,7 @@ published always-pass test secret, so that one step needs internet access.
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo for its CI, so **keep the two copies in sync**: change both together.
 - Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
-  (Cloudflare, Resend; GitHub sign-in is #60), defaults for every website
+  (Cloudflare, Resend, GitHub), defaults for every website
   (form-message email, business name, message retention days and wording,
   analytics ID), theme sources, updates, data and about. A website can
   override any default where that setting appears ("Using app default (…)",
@@ -247,7 +254,23 @@ published always-pass test secret, so that one step needs internet access.
   any source theme. "New theme from a website's design" starts from the
   site's colours, font and theme (a builder theme's controls, or another
   theme's CSS as Advanced CSS; exact copies: colours and font only).
-  Publishing a theme to GitHub is #60.
+  Each valid theme in the list can be published to GitHub (#60):
+- GitHub sign-in and theme publishing (`lib/github.js`, Settings › Accounts,
+  Themes… › "Push to repo…"/"Submit to public repo…", #60). Sign-in is the
+  OAuth device flow (the app shows a code, the user approves it on
+  github.com; no client secret), scope `public_repo`, plus `repo` when
+  "Also allow private repositories" is ticked. The token is app-wide,
+  sealed in `settings.json`'s `github`, and also used for theme sources that
+  have no token of their own. Publishing validates the theme with
+  `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
+  `preview.png`, as one commit through the git data API. "Push to repo"
+  commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
+  user can write to, defaulting to the last one used, else
+  PhaseN-Digital/phasen-themes-private when the user can write to it.
+  "Submit to public repo" forks phasen-sitebuilder-themes (GitHub reuses an
+  existing fork), syncs the fork, commits on a new branch and opens a PR
+  titled with the theme's name, its description as the body; the themes
+  repo's CI and PhaseN's review do the rest.
 
 ## Privacy page
 
@@ -580,8 +603,7 @@ site's local files until taking it offline has fully worked.
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
   only on Linux. Moving a live site to another Cloudflare account means taking
-  it offline first. Backup/restore (#70), diagnostics (#86), GitHub sign-in
-  (#60), the sites folder and portable secrets (#136) are disabled
+  it offline first. Backup/restore (#70), diagnostics (#86), the sites folder and portable secrets (#136) are disabled
   placeholders.
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
@@ -593,7 +615,13 @@ site's local files until taking it offline has fully worked.
   local theme can be used and deleted, not edited). Editing a local theme
   doesn't change websites already using it until they press "Update theme".
   `preview.png` capture is tested headlessly on Linux only; if capture fails
-  the theme is saved without one. Publishing to GitHub is #60.
+  the theme is saved without one.
+- GitHub publishing (#60): tested against a fake GitHub API only (device
+  flow, git data API, fork, PR), not yet the real one. Signing out only
+  forgets the token; revoking it is done on GitHub (the app has no client
+  secret to revoke it with). A file dropped from a theme (an old
+  `preview.png`) stays in the target repo, since a push only adds or
+  replaces files.
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS
