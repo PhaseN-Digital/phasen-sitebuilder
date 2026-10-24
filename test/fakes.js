@@ -146,6 +146,52 @@ async function startSubfolder() {
   return { ...site, forbidden };
 }
 
+// Non-WordPress sites for the editable import of any website (#161):
+// "semantic" uses <header>/<nav>/<main>/<footer>; "soup" is all divs (the
+// Readability path), with .html addresses, a menu order unlike the crawl's, an
+// "extra" block Readability leaves out (the regression flow picks the wider
+// block instead) and a contact form; "sidebar" has a sidebar and a cookie
+// banner beside its content, neither of which may be imported. Every page's
+// chrome includes CHROME_MARKER, which must never reach imported content.
+const CHROME_MARKER = "Chrome marker 77";
+async function startPlainSite(kind) {
+  const para = (topic) => `<p>${topic} is what we are known for in town. ${"Fresh ingredients, careful cooking and friendly service every single day of the week. ".repeat(3)}</p>`;
+  const pages = {
+    semantic: {
+      "/": ["Home", `<h1>Welcome to Landmark Ltd</h1>${para("Consulting")}<p>See <a href="/services/">our services</a>.</p>`],
+      "/services/": ["Services", `<h1>Services</h1>${para("Advice")}<img src="/img/photo.png" alt="Office">`],
+      "/about/": ["About", `<h1>About</h1>${para("History")}`],
+    },
+    soup: {
+      "/": ["Home", `<div class="big">Soup Co kitchen</div>${para("Soup")}<div><img src="/img/photo.png" alt="Bowl"></div><p>Read <a href="/menu.html">our menu</a>, <a href="/old-news.html">old news</a> or <a href="https://elsewhere.example/x">a review</a>.</p>`],
+      "/old-news.html": ["Old news", `<div class="big">We moved</div>${para("Moving")}`],
+      "/menu.html": ["Our menu", `<div class="big">The menu</div>${para("Tomato soup")}<p><b>Leek</b> and <i>potato</i>.</p>`],
+      "/visit.html": ["Visit us", `<div class="big">Find us</div>${para("Our cafe")}`, `<div class="extra">Opening hours: 9 to 5, Monday to Saturday.</div>`],
+    },
+    sidebar: {
+      "/": ["Home", `<h2>Side Street news</h2>${para("Printing")}`],
+      "/work/": ["Work", `<h2>Our work</h2>${para("Posters")}`],
+    },
+  }[kind];
+  const nav = { semantic: ["/", "/services/", "/about/"], soup: ["/", "/visit.html", "/menu.html"], sidebar: ["/", "/work/"] }[kind];
+  const links = nav.map((p) => `<a href="${p}">${pages[p][0]}</a>`).join(" ");
+  const cookie = `<div class="cookie-notice"><p>We use cookies to make this website work and to understand how it is used, ${CHROME_MARKER}.</p><button>Accept</button></div>`;
+  const body = (p) => {
+    const [, content, extra = ""] = pages[p];
+    if (kind === "semantic") return `<header><img src="/img/logo.png" alt="Landmark logo"><nav>${links}</nav></header><main>${content}</main><footer>${CHROME_MARKER} Landmark Ltd</footer>`;
+    if (kind === "soup") return `<div class="top"><div class="brand"><img src="/img/logo.png" alt="Soup Co"></div><div class="links">${links}</div></div><div class="wrap"><div class="col-a"><div class="txt">${content}</div>${extra}</div></div><div class="bottom">${CHROME_MARKER}: 1 High Street. <form method="post" action="/subscribe"><label for="e">Your email</label><input type="email" id="e" name="email" required><button>Join</button></form></div>`;
+    return `<div class="masthead"><div class="menu">${links}</div></div><div class="layout"><div class="post">${content}</div><div class="side-col">Recent posts and archives from Side Street, ${CHROME_MARKER}, plus a tag cloud, links to friends and our printing price list.</div></div>${cookie}`;
+  };
+  const site = await listen((req, res) => {
+    const u = new URL(req.url, "http://x");
+    if (u.pathname.startsWith("/img/")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+    if (!pages[u.pathname]) { res.writeHead(404, { "content-type": "text/html" }); return res.end("<h1>Not found</h1>"); }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html><html><head><title>${pages[u.pathname][0]} | ${kind} site</title><meta property="og:site_name" content="${kind} site"><style>body{background:#fdf6e3;color:#222222;font-family:Georgia,serif}a{color:#cc3300}button{background:#0a7d4b;color:#fff}</style></head><body>${body(u.pathname)}</body></html>`);
+  });
+  return site;
+}
+
 // A releases host serving latest.json for the update check (#37), so the app
 // shows its "Version 99.0.0 is available" banner. Has an installer for every
 // platform/arch the suite runs on.
@@ -327,4 +373,4 @@ const cloudflareZones = (zones, next = globalThis.fetch) => async (url, opts) =>
   ? { status: 200, json: async () => ({ success: true, result: zones.map((name, i) => ({ id: `zone${i}`, name })) }) }
   : next(url, opts));
 
-module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startUpdates, startGitHub, tarball, PNG };
+module.exports = { startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, tarball, PNG };

@@ -198,7 +198,7 @@ are not, so add them yourself.
   `redirect: "manual"` and fetches the redirect without it (test.js asserts
   this). `SITEBUILDER_GITHUB_API` (the fake in the regression suite) must stay
   ignored when `app.isPackaged`. A site using a source theme builds from its
-  own copy in `sites/<id>/theme/` (`site.themeSource`), never from the cache.
+  own copy in its folder's `theme/` (`site.themeSource`), never from the cache.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
@@ -209,7 +209,7 @@ are not, so add them yourself.
 - GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
   and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
   be sent (`themeFiles`). The sign-in token stays in the main process
-  (sealed `settings.github`), only goes to the API host, and never to the
+  (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
   ignored when `app.isPackaged` (packaged apps read
@@ -218,12 +218,25 @@ are not, so add them yourself.
   publish, unpublish, inbox, import) get settings only through
   `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
   never `loadSettings()` directly, and all settings storage stays in
-  `lib/settings.js` `store()` so #136 can move it. Unpublish and the inbox
+  `lib/settings.js` `store()`. Unpublish and the inbox
   must use the account recorded in `publish.json`, not the current one.
-  Per-site secrets go in `sites/<id>/accounts.json` (sealed), never
+  Per-site accounts go in the site's `accounts.json`, never
   `site.json`. Account IPC handlers take an optional site id last; the
   renderer must always pass it (or null), since the IPC wrapper appends the
   event.
+- Sites folder, secrets and history (#136, README "How it fits together"):
+  sites live in the user's sites folder, found by `siteDir(id)` (an id ->
+  folder map filled by scanning it), never `userData/sites`; preview and
+  publish builds stay in userData so they never land in a site's git repo.
+  Secrets only ever go through `store()` (`lib/secrets.js` splits every
+  `token`/`resendKey`/`secret`/`sendingKey`/`password` value into an
+  encrypted `secrets.enc`); a new secret field needs one of those key names,
+  or it'd be written in plain text and committed. `seal`/`unseal` in main.js
+  are no-ops kept as markers. `lib/site-repo.js` must keep refusing to stage
+  `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
+  it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
+  so they can be interrupted: keep that order. A channel that changes files
+  in a site folder belongs in `EDITS` in main.js, so it's committed.
 - JSON stores (#147): settings.json, accounts.json, site.json and
   publish.json are read and written only through `lib/json-store.js`
   (per-file queue, atomic temp+fsync+rename, `<file>.bak` fallback when a
@@ -271,9 +284,12 @@ are not, so add them yourself.
   `lib/build.js` marks every built page; `importProvenance.declaredBy` (the
   user's name and email) must never reach the build output (test.js and the
   regression suite check).
-- Anything WordPress-imported is untrusted: editable imports go through the
-  allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
-  `cleanEdit` in `app/copied.js`.
+- Anything imported is untrusted: editable imports (WordPress or any site,
+  #161) go through the allowlist sanitizer in `app/wordpress.js`, and
+  copied-page edits through `cleanEdit` in `app/copied.js`. The review
+  step's preview (`?sb-pick`) must keep the page's own scripts blocked (main.js's
+  nonce CSP): `app/content-detect.js`'s CSS paths only match the frame
+  when no script has changed the page.
 - Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
   leaves the editor or writes/publishes the site (switching site, Settings,
   Themes, Import, delete, publish, and window close via main.js's `close`
@@ -288,6 +304,12 @@ are not, so add them yourself.
   checks one). Videos are only the placeholder `div.video-embed[data-src]`
   for `SAFE_VIDEO` hosts; `lib/build.js` makes the player, never an
   `<iframe src>` in stored HTML.
+- Page layouts (#169) are defined only in `lib/layouts.js`, which the editor
+  loads as a plain `<script>` (no `require`, no Node APIs in it) and
+  `lib/build.js` requires. A new layout id also goes in
+  `lib/theme-validate.js`'s `LAYOUT_IDS` (and its vendored copy in the
+  themes repo); `npm test` checks the two lists match. Every layout must keep
+  passing WCAG AA text contrast and the mobile menu in all bundled themes.
 - Uploaded images are found by `usedAssets` (`lib/build.js`) searching
   site.json and the `mirror`/`mirror-original` HTML for `assets/<name>`. A
   new place that stores an image reference must be covered there, or

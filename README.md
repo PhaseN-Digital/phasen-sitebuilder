@@ -117,7 +117,11 @@ checks the whole app end to end with no accounts, against fake sites in
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
-  Elementor site (kit colours/font, header logo); the ownership declaration
+  Elementor site (kit colours/font, header logo); content detection on three
+  fake non-WordPress sites (landmarks, div soup, sidebar and cookie banner)
+  and an editable import of the div-soup one (review in menu order, cancel,
+  one page's block re-chosen in the frame, one page left out, built pages
+  checked for content and no copied chrome); the ownership declaration
   (modal, main-process refusal, provenance recorded, verification file, a
   pre-#141 import asked to declare before publishing); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
@@ -125,6 +129,11 @@ checks the whole app end to end with no accounts, against fake sites in
   Settings page (app defaults and accounts, a per-site default override and
   Cloudflare account, then publish and take offline with Cloudflare/Resend
   stubbed in `lib/publish.js`, checking which account and values were used);
+  site history (the publish tag, an edit shown as a version with its
+  page-level changes, restore, no secrets or build output in any commit) and
+  portable secrets; then the app is started again with a fresh userData on
+  the same sites folder (a reinstall or new computer): sites found, asked
+  for the passphrase, a wrong one refused, unlocked;
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
@@ -143,14 +152,56 @@ published always-pass test secret, so that one step needs internet access.
 
 ## How it fits together
 
-- `main.js`: Electron main process. Stores sites under the app's user-data
-  folder (`sites/<id>/site.json` + `assets/`; uploads nothing uses any more
-  are left out of published/exported sites and deleted at the next startup
-  once a day old), serves the live preview through a
-  `preview://` protocol, and holds API keys encrypted with the OS keychain
-  (`safeStorage`).
+- `main.js`: Electron main process. Stores each site in its own folder in
+  the sites folder (below; `site.json` + `assets/`; uploads nothing uses any
+  more are left out of published/exported sites and deleted at the next
+  startup once a day old), serves the live preview through a `preview://`
+  protocol, and keeps API keys encrypted (below). In this README,
+  `sites/<id>/` means that site's folder.
+- Sites folder, secrets and history (#136): `<Documents>/PhaseN Sites/` by
+  default (Settings › Data › Change folder… moves the sites there, or points
+  at a folder that already has some; the choice is in `userData/location.json`).
+  One sub-folder per site, named from its name when it was made, each its
+  own git repo (`lib/site-repo.js`, through
+  [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
+  no git), plus `.phasen/` for the app's settings. On start, and with
+  Settings › Data › Find sites, every sub-folder with a `site.json` and a
+  `.git` is loaded (`lib/sites-folder.js` `scan`), so a reinstall or a new
+  computer finds its sites. userData keeps only machine-local things:
+  previews and publish builds (so they're never in a repo), caches, local
+  themes and `location.json`. Edits are committed after 15 seconds without
+  one, when another site opens, before publishing and on quit, with messages
+  from a page-level summary ("Edited page Home; Added page Contact");
+  publishing commits "Published the website" and tags it
+  `live-YYYYMMDD-HHMM`. The History tab lists versions and tags, shows what
+  each changed, and restores one as a new commit (`publish.json` and
+  `accounts.json` are left as they are, since they describe what's live).
+  **Secrets** (`lib/secrets.js`) never sit in a JSON file: every value under
+  a `token`, `resendKey`, `secret`, `sendingKey` or `password` key is split
+  out on write into `<site>/.secrets/secrets.enc` (per site: its accounts,
+  Turnstile secret, sending key) or `.phasen/secrets.enc` (the app's
+  accounts and theme-source tokens), and joined back on read. The commit
+  code never stages `.secrets/` or a `secrets.enc`, whatever `.gitignore`
+  says. They're encrypted with `safeStorage` by default (survives a
+  reinstall on the same machine and user), or with **portable secrets**
+  (Settings › Data) by a passphrase: scrypt (N=2^15) → AES-256-GCM, with the
+  salt and a check value in `.phasen/portable.json` and the derived key
+  remembered with `safeStorage` in `location.json`; the passphrase is never
+  stored. A secrets file that can't be decrypted (another computer, damage)
+  leaves those values missing, with a "re-enter" message in Settings and at
+  startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
+  a secret is next saved. A published site whose Turnstile secret was lost
+  gets a new one (`rotate_secret`) on the next publish; a lost sending key is
+  re-created. Sites and settings from before #136 (`userData/sites`,
+  `userData/settings.json`, each secret sealed separately) are moved on the
+  first start of this version: copied, verified (file hashes), secrets
+  re-encrypted, committed, renamed into place, and only then removed, so an
+  interrupted move is finished by the next start; a one-time notice says
+  where they went.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
-  is the WordPress import screen and HTML sanitizer; `app/copied.js` and
+  is the import screen and HTML sanitizer; `app/content-detect.js` and
+  `app/content-pick-frame.js` find and review the content of non-WordPress
+  sites for the editable import; `app/copied.js` and
   `app/copy-edit-frame.js` edit exact-copy pages. Colours are the PhaseN
   Digital palette (tokens at the top of `app/app.css`; `--primary` is the
   darker brand green so white text on it passes WCAG AA), and
@@ -207,16 +258,16 @@ published always-pass test secret, so that one step needs internet access.
   override any default where that setting appears ("Using app default (…)",
   "Override for this site", "Reset to default"; stored in
   `site.json`'s `overrides`, where a present key, even blank, is an override)
-  and use its own Cloudflare/Resend accounts (Publish tab; sealed with
-  `safeStorage` in `sites/<id>/accounts.json`, never in `site.json`).
+  and use its own Cloudflare/Resend accounts (Publish tab; in
+  `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
+  never in `site.json`).
 - Documentation (#165): the sidebar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
   in `app/app.js`, its only copy.
   `lib/settings.js` is the one resolver (`resolve`, via `settingsFor` in
   main.js) that build, publish, unpublish, inbox and import use, and the one
-  place settings are stored, so the sites folder and portable secrets (#136)
-  can move them. Those JSON files are written atomically through one queue
+  place settings are stored (`store()`, which splits secrets out, #136). Those JSON files are written atomically through one queue
   per file (`lib/json-store.js`), with a `.bak` copy that is read if the file
   is ever unreadable. That queue is per process, so only one copy of the app
   runs per data folder (#149): opening it again brings the existing window
@@ -236,7 +287,7 @@ published always-pass test secret, so that one step needs internet access.
   unauthenticated 60/hour limit goes a long way), every theme in it is
   validated with `lib/theme-validate.js`, and the result is cached in
   `userData/theme-cache`. Private repos use a fine-grained token (Contents:
-  Read-only) saved per source with `safeStorage`; it's only ever sent to
+  Read-only) saved per source (encrypted, like every secret); it's only ever sent to
   api.github.com, and the download link GitHub redirects to is fetched
   without it. Choosing a theme copies it to `sites/<id>/theme/` and sets
   `site.themeSource`, so builds and publishes never need the repo or the
@@ -274,7 +325,7 @@ published always-pass test secret, so that one step needs internet access.
   OAuth device flow (the app shows a code, the user approves it on
   github.com; no client secret), scope `public_repo`, plus `repo` when
   "Also allow private repositories" is ticked. The token is app-wide,
-  sealed in `settings.json`'s `github`, and also used for theme sources that
+  in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
   `preview.png`, as one commit through the git data API. "Push to repo"
@@ -314,6 +365,43 @@ Nothing loads in the in-app preview. The site then always gets the privacy
 page, which gains an "Analytics and cookies" section (and drops the form
 parts if there are no forms). Exact-copy pages don't get the banner (#45).
 
+## Page layouts (#169)
+
+Every page built from the themes has a layout (`page.layout`), defined once
+in `lib/layouts.js` (id, label, description, the sections "Add page" seeds,
+the extra fields it adds, and the chooser's wireframe thumbnail, a small
+static SVG so it needs no rendering per theme). `lib/build.js` requires it and
+`app/index.html` loads it as a plain script. Sites saved before layouts are
+migrated when read (`migrateLayouts` in main.js's `readSite`): the first page
+becomes Home, the rest Standard; copied pages have none.
+
+| Layout | Seeds | Build adds |
+|---|---|---|
+| Home | banner, cards, text & image, review cards, closing banner | nothing (the banner is the title) |
+| Standard | text | a title band |
+| Landing | banner, cards, form | no menu |
+| Services | intro, cards | a title band |
+| Contact | form, details, "find us" | a title band; forms beside text, two columns |
+| Blog post | rich text | article header: title, date, author; featured image |
+| Blog | nothing | the post list |
+| Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
+
+Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
+keeps the sections. The page is `<body class="layout-<id>">`; only its
+first heading is an `h1` (the title band, else the first banner, later
+banners get `h2`), and the title band is left out when a banner opens the
+page. Rich text sections can be "shown as cards": each Heading 3 starts a
+card. Blog post pages have `date` (YYYY-MM-DD), `author`, `featuredImage` and
+`excerpt` (else the start of the first text). A Blog page lists them newest
+first (undated last), ten to a page, at `<blog>/page/2/` and so on, all in the
+sitemap with their own canonical; with a Blog page, posts leave the menu.
+`base.css` styles every layout, and each bundled theme restyles them with
+`.layout-<id>` rules; a theme without any still looks right. A theme package
+may add `"layouts": { "<id>": { "notes": "…" } }` to theme.json, and
+`lib/theme-validate.js` rejects unknown layout ids there and in theme.css's
+`.layout-<id>` selectors (its own `LAYOUT_IDS` list, kept equal to
+`lib/layouts.js` by `npm test`).
+
 ## Search and sharing (SEO)
 
 Pages › Search and sharing sets a page's search title (`page.seoTitle`,
@@ -339,13 +427,14 @@ robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 
 ## Importing a website
 
-"Import a website…" takes any address. WordPress sites can come in editable
-or as an exact copy; any other site is copied exactly. "Decide for me" picks an
-exact copy when the address isn't a WordPress site, when the home page shows a page builder (Elementor, Divi, Beaver
-Builder, WPBakery, Bricks, Oxygen, Avada; detected from the builder's own
-markup) or there's no REST API (including one hidden from visitors when no
-username and application password were given), and the editable import
-otherwise.
+"Import a website…" takes any address, and any site can come in editable or
+as an exact copy. "Decide for me" picks an exact copy when the home page shows
+a page builder (Elementor, Divi, Beaver Builder, WPBakery, Bricks, Oxygen,
+Avada; detected from the builder's own markup), when a WordPress site's REST
+API can't be read (including one hidden from visitors when no username and
+application password were given), or when the address isn't a WordPress site
+and the content of most pages can't be told apart from their design; the
+editable import otherwise.
 
 ### Ownership declaration and provenance (#141)
 
@@ -505,6 +594,41 @@ already signed in"). They're only sent over https and aren't stored.
 - Not imported: blog posts, menus (page order follows WordPress's page
   order), page layouts, plugins.
 
+### Editable import of any other website (#161)
+
+When the address isn't a WordPress site, the site is first copied exactly
+(`lib/mirror.js`, with the same declaration and provenance), then
+`app/content-detect.js` works on the copied pages:
+
+- Shared chrome (`sharedChrome`): container blocks near the top of the page
+  (header, nav, footer, aside, div, section, list, dialog, form) whose tag,
+  classes, text and images are identical on at least 60% of pages. That's the
+  header, menu, footer, sidebar and cookie banner; the theme has its own.
+- Content (`mainContent`): a `<main>`/`[role=main]` (or a lone `<article>`)
+  outside the chrome, with high confidence; otherwise Mozilla Readability
+  (`@mozilla/readability`, Apache-2.0, loaded by `app/index.html` from
+  `node_modules` like Quill) run on a copy without the chrome, mapped back to
+  the tightest block around the text it kept. Medium confidence with real text,
+  low otherwise. The result is a CSS path (`body > div:nth-child(2) > …`).
+- Review step: each page in menu order (home first, then the menu's order,
+  then the rest), with its preview (`?sb-pick`: main.js injects
+  `app/content-pick-frame.js` and blocks the page's own scripts with a nonce
+  CSP, so the frame shows exactly the HTML being imported) and the detected
+  content outlined. Clicking another block (or "Choose the block around it")
+  picks it; unticking a page leaves it out. "Keep an exact copy" stops there.
+  Cancel deletes the copy.
+- Import (`toSections`, `rebuildEditable`): each page's content, minus any
+  chrome, menus and pop-ups inside it, becomes a "Rich text" section (one per
+  `<section>` if that's all it holds) through the same sanitizer, image
+  download and link rewriting as WordPress; pages keep their old address
+  (`page.path`, `.html` addresses get a 301). An enquiry form in the content
+  becomes a form section with the copied fields (checkbox groups become text
+  answers); forms in the chrome are dropped. The logo is a "logo"-named (else
+  the first) image in the chrome; colours and font are the home page's
+  computed styles (body background and text, link colour, button colour),
+  mapped to the closest built-in theme as for WordPress. The copied files are
+  then deleted (`mirror:discard`).
+
 ## What publishing does
 
 1. Uses the workers.dev subdomain, or the chosen Cloudflare zone (plus an
@@ -617,8 +741,17 @@ site's local files until taking it offline has fully worked.
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
   only on Linux. Moving a live site to another Cloudflare account means taking
-  it offline first. Backup/restore (#70), diagnostics (#86), the sites folder and portable secrets (#136) are disabled
+  it offline first. Backup/restore (#70), diagnostics (#86) are disabled
   placeholders.
+- Sites folder and history (#136): tested on Linux only (unit tests, and the
+  regression suite with `safeStorage` in its plain-text mode), not yet on
+  Windows/macOS keychains or with a synced folder (OneDrive/iCloud). Site
+  folders keep the name they were made with when a site is renamed. A lost
+  sending key is re-created without deleting the old one at Resend. A secrets
+  problem for a deleted site's folder shows until the app restarts. Nothing
+  is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
+  only lists files in the History tab. Restoring a version doesn't restore
+  the site's accounts or publish state, by design.
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
   repo. Sources are only downloaded when first listed, on "Refresh" and on
@@ -660,6 +793,14 @@ site's local files until taking it offline has fully worked.
   file also end to end against the fake WordPress. The application-password
   result is remembered per origin in memory only, so it's lost if the app
   restarts between connecting and the exact-copy fallback.
+- Editable import of other sites (#161): tested only against fake sites, not
+  yet real ones. Chrome detection needs blocks to match exactly, so a menu
+  that marks the current page in its text, or a single-page site, keeps it
+  inside the content unless it's a `<nav>`. Only content in the HTML is seen
+  (nothing a script adds), headings made of styled `<div>`s come in as plain
+  text, and lazy-loaded images with no `src` are dropped. Links to an address
+  the crawl saw redirect keep pointing at the old site. The review frame's
+  colours come from the home page only.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an

@@ -14,6 +14,8 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "isomorphic-git": "1.44.4",
     "quill": "2.0.3",
     "wrangler": "^4.48.0"
   },
