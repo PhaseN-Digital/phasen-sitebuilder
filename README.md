@@ -187,6 +187,22 @@ Nothing loads in the in-app preview. The site then always gets the privacy
 page, which gains an "Analytics and cookies" section (and drops the form
 parts if there are no forms). Exact-copy pages don't get the banner (#45).
 
+## Search and sharing (SEO)
+
+Pages › Search and sharing sets a page's search title (`page.seoTitle`,
+default "Page | Site", or the site name on the home page), description
+(`page.seoDescription`, default Design › Short description) and social share
+image (`page.shareImage`, picked from the site's uploads, default the logo).
+`renderPage` turns these into `<title>`, the meta description, Open Graph and
+Twitter tags. `canonical`, `og:url`, absolute image URLs, `sitemap.xml` and
+`robots.txt` need the published hostname, so `build()` only writes them when
+given `publish.hostname` (always the case when publishing, only with a domain
+on export) and never in the preview. The sitemap lists every indexable page
+(not the noindex privacy page or 404). An exact copy keeps its own
+`sitemap.xml`/`robots.txt` if the copy has them; otherwise its sitemap lists
+the copied pages, skipping any whose HTML has a `noindex` meta tag. Copied
+pages' own `<head>` tags are left as they were.
+
 ## Importing from WordPress
 
 "Import from WordPress…" offers two kinds of import. "Decide for me" picks an
@@ -260,8 +276,8 @@ live DOM, which page scripts have modified), and the build strips the tags.
 Clicking a tagged text element that is (or is inside, or holds exactly one)
 link also shows a Link panel for changing where it points, applied like any
 other edit (site-wide for `s-` keys, undoable). Targets must be an http(s)
-address, `mailto:`, `tel:` or a copied page's path. Links on images (e.g. a
-logo) can't be changed yet.
+address, `mailto:`, `tel:` or a copied page's path. Clicking an image inside
+a link (e.g. a logo) shows the same Link panel under the Image panel.
 Before a page's file is first edited, its HTML is kept in
 `sites/<id>/mirror-original/`, for "Revert this page to the original" (which
 also drops that page's share of site-wide edits; they stay on other pages).
@@ -340,8 +356,29 @@ Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redire
 Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
+## Taking a site offline
+
+"Take website offline" in the Publish tab, or ticking "Also take it offline"
+when deleting a site, undoes publishing (`unpublish` in `lib/publish.js`),
+using what `sites/<id>/publish.json` recorded at publish time:
+
+1. Deletes the Worker and its Custom Domains.
+2. Deletes the `www` record and redirect rule, but only ones publishing made
+   (matched by the record's comment and the rule's `ref`).
+3. Deletes the Turnstile widget and the site's Resend sending key.
+
+Each step is logged and best-effort: one failing doesn't stop the rest, and
+anything already gone (404) counts as removed. Whatever failed stays in
+`publish.json` so trying again only retries that, and a delete keeps the
+site's local files until taking it offline has fully worked.
+
 ## Known gaps
 
+- Taking a site offline (#71) leaves the domain registered with Resend and
+  Resend's DNS records in the zone, since they may predate the app or be
+  shared. Sites published before 0.5 didn't record their Resend key's id, so
+  that key has to be deleted at resend.com by hand (the log says so). Only
+  tested against a fake Cloudflare/Resend API so far, not the real ones.
 - Release gate: GitHub's merge API can't require an unchanged base, so a
   push to `main` in the second between the gate's last check and its merge
   still lands under the squash. The gate catches it and doesn't release from
