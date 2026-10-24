@@ -160,6 +160,10 @@ are not, so add them yourself.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
+  Linux (AppImage + deb, x64 only) builds on `ubuntu-latest`; the deb needs
+  `homepage` and `build.linux.maintainer` in package.json or fpm refuses.
+  electron-builder can't collect dependencies through a symlinked
+  `node_modules` (a worktree's `ln -s`), so packaging needs a real `npm ci`.
 - `package.json`'s `allowScripts` approves the dependency install scripts
   those binaries need (esbuild, workerd, electron-winstaller, fsevents on
   macOS). Newer npm blocks unapproved install scripts, which would ship

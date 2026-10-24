@@ -575,6 +575,10 @@ const site = {
   assert.strictEqual(pickDownload(downloads, "darwin", "arm64"), gh + "b.dmg");
   assert.strictEqual(pickDownload(downloads, "darwin", "x64"), null, "http refused");
   assert.strictEqual(pickDownload(downloads, "linux", "x64"), null, "other hosts refused");
+  // Linux x64 gets the AppImage (#153); there's no Linux arm64 build, so no fallback.
+  const linux = { "linux-x64": gh + "PhaseN.Site.Builder-1.0.0-x86_64.AppImage", "win32-x64": gh + "a.exe" };
+  assert.strictEqual(pickDownload(linux, "linux", "x64"), gh + "PhaseN.Site.Builder-1.0.0-x86_64.AppImage");
+  assert.strictEqual(pickDownload(linux, "linux", "arm64"), null);
   assert.strictEqual(pickDownload({ "darwin-x64": "https://github.com.evil.example/x" }, "darwin", "x64"), null);
   assert.strictEqual(pickDownload(undefined, "darwin", "arm64"), null);
 
