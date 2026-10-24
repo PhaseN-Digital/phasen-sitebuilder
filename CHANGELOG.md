@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.7.0...phasen-sitebuilder-v0.8.0) (2026-10-24)
+
+
+### Features
+
+* **import:** editable import for any website ([#161](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/161)) ([#174](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/174)) ([9cba8aa](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/9cba8aa973dbe5bb16460f3f61e5c60273aa7f97))
+* **layouts:** page layouts with Add page chooser and blog ([#169](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/169)) ([#184](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/184)) ([e8742d2](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e8742d24deff4d82e29a07f03dff3cae711baf96))
+* Linux AppImage and deb installers ([#153](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/153)) ([#157](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/157)) ([eb4e689](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/eb4e6891a96a963e49be20cb02c0a41ee5779626))
+* **sites:** sites folder with git history and encrypted secrets ([#136](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/136)) ([#175](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/175)) ([e6bb7d3](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e6bb7d30cd96ee72de67cb642f59db0312abe8e4))
+* **theme-builder:** right-click the preview to create or select a CSS rule ([#156](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/156)) ([#179](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/179)) ([c77802f](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/c77802fd44a9a71c898932a6a01ef9011ea6449c))
+* **themes:** publish Theme Builder themes to GitHub ([#60](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/60)) ([#160](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/160)) ([d32d1a2](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/d32d1a2d666a368d3da311408edb6b73f481224c))
+* **ui:** Documentation button and About link ([#165](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/165)) ([#172](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/172)) ([92151bd](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/92151bd2c89b2c9963652a382c359ef28c4beab3))
+
+
+### Bug Fixes
+
+* **preview:** serve a copied site's own /assets/ files ([#163](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/163)) ([#168](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/168)) ([0ac9515](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/0ac951577237511e47e81383c77787dec713c8e5))
+
 ## [0.7.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.6.0...phasen-sitebuilder-v0.7.0) (2026-10-24)
 
 
