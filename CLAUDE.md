@@ -202,6 +202,14 @@ are not, so add them yourself.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
+- GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
+  and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
+  be sent (`themeFiles`). The sign-in token stays in the main process
+  (sealed `settings.github`), only goes to the API host, and never to the
+  device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
+  github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
+  ignored when `app.isPackaged` (packaged apps read
+  `lib/github-config.json`, written by `release-please.yml`'s build job).
 - Settings (#134, README "How it fits together"): site operations (build,
   publish, unpublish, inbox, import) get settings only through
   `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
