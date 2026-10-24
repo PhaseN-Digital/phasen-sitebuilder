@@ -211,6 +211,17 @@ const site = {
     const local = home.match(/href='(\/google-fonts\/\w+\.css)'/)[1];
     assert.strictEqual(fs.readFileSync(path.join(out, local), "utf8"), "@font-face{font-family:'Sbtest';src:url(/google-fonts/s/sbtest/v1/a.woff2) format('woff2')}");
     assert.strictEqual(fs.readFileSync(path.join(out, "google-fonts/s/sbtest/v1/a.woff2"), "utf8"), "GOOGLEFONT");
+    // Page-address tags, robots.txt and sitemap.xml: root-relative in the copy, absolute on the published hostname (#115).
+    const about = fs.readFileSync(path.join(out, "about/index.html"), "utf8");
+    assert(about.includes('<link rel="canonical" href="/">') && about.includes('<meta property="og:url" content="/about/">') && about.includes('<meta property="og:image" content="/wp-content/uploads/2024/01/hero.png">') && about.includes('content="https://cdn.example/x.png"'));
+    assert.strictEqual(fs.readFileSync(path.join(out, "robots.txt"), "utf8"), "User-agent: *\nDisallow: /wp-admin/\n\nSitemap: https://other.example/s.xml\n\nSitemap: /sitemap.xml\n");
+    assert.strictEqual(fs.readFileSync(path.join(out, "sitemap.xml"), "utf8"), '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>/</loc><lastmod>2024-01-01</lastmod></url>\n<url><loc>/about/</loc></url>\n</urlset>\n');
+    const elDir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-elsite-")), elBuilt = fs.mkdtempSync(path.join(os.tmpdir(), "sb-elout-"));
+    fs.cpSync(out, path.join(elDir, "mirror"), { recursive: true });
+    await build({ ...site, mirror: {}, forms: [], pages: r.pages.map((p, i) => ({ id: `m${i}`, title: p.title, mirror: p.path, file: p.file, sections: [] })) }, elDir, elBuilt, { hostname: "new.example" });
+    const pub = (f) => fs.readFileSync(path.join(elBuilt, "public", f), "utf8");
+    assert(pub("about/index.html").includes('<link rel="canonical" href="https://new.example/">') && pub("about/index.html").includes('content="https://new.example/about/"') && pub("about/index.html").includes('content="https://new.example/wp-content/uploads/2024/01/hero.png"'));
+    assert(pub("robots.txt").endsWith("Sitemap: https://new.example/sitemap.xml\n") && pub("sitemap.xml").includes("<loc>https://new.example/about/</loc>"));
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.

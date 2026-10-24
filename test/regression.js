@@ -168,7 +168,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/");
       check("worker (exact copy): copied page", about.status === 200);
       const copySitemap = (await get(s.base, "/sitemap.xml")).text;
-      check("worker (exact copy): sitemap from copied pages (#74)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>"), copySitemap);
+      check("worker (exact copy): original sitemap, copied pages only (#74, #115)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>") && !copySitemap.includes("old-post"), copySitemap);
+      check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);

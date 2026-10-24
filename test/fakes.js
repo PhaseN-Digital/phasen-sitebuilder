@@ -68,7 +68,7 @@ async function startElementor() {
     if (u.pathname === "/feed/" || u.pathname.startsWith("/wp-admin")) { forbidden.push(u.pathname); res.writeHead(500); return res.end(); }
     const body = routes()[u.pathname];
     if (body == null) { res.writeHead(404, { "content-type": "text/html" }); return res.end(page("Page not found", "<h1>Oops, nothing here</h1>")); }
-    const types = { css: "text/css", js: "application/javascript", woff2: "font/woff2" };
+    const types = { css: "text/css", js: "application/javascript", woff2: "font/woff2", txt: "text/plain", xml: "application/xml" };
     res.writeHead(200, { "content-type": types[u.pathname.split(".").pop()] || "text/html; charset=utf-8" });
     res.end(body);
   });
@@ -83,7 +83,7 @@ async function startElementor() {
   const page = (title, body) => `<!doctype html><html><head><title>${title} &#8211; Acme Ltd</title><meta property="og:site_name" content="Acme Ltd">
 <link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin><link rel='stylesheet' id='google-fonts-1-css' href='https://fonts.googleapis.com/css?family=Sbtest%3A400&#038;display=swap' media='all'>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-OLDSITE1"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag("js",new Date());gtag("config","G-OLDSITE1");</script>
-<link rel="stylesheet" href="${B}/wp-content/uploads/elementor/css/post-5.css?ver=1"><link rel="canonical" href="${B}/">
+<link rel="stylesheet" href="${B}/wp-content/uploads/elementor/css/post-5.css?ver=1"><link rel="canonical" href="${B}/"><meta property="og:url" content="https://acme.example/${title === "Home" ? "" : title.toLowerCase() + "/"}"><meta property="og:image" content="${B}/wp-content/uploads/2024/01/hero.png"><meta name="twitter:image" content="https://cdn.example/x.png">
 <script src="${B}/wp-includes/js/jquery/jquery.min.js?ver=3"></script>
 <script>var elementorFrontendConfig = {"urls":{"assets":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/","bundle":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/js\\/frontend.min.js"}};</script></head>
 <body class="elementor-kit-5 elementor-page"><noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=123&ev=PageView&noscript=1"></noscript><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
@@ -109,6 +109,8 @@ ${body}
     "/wp-content/themes/hello/fonts/acme.woff2": "FONTDATA",
     "/css": "@font-face{font-family:'Sbtest';src:url(https://fonts.gstatic.com/s/sbtest/v1/a.woff2) format('woff2')}",
     "/s/sbtest/v1/a.woff2": "GOOGLEFONT",
+    "/robots.txt": `User-agent: *\nDisallow: /wp-admin/\n\nSitemap: ${B}/sitemap_index.xml\nSitemap: https://other.example/s.xml\n`,
+    "/sitemap.xml": `<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type="text/xsl" href="//${H}/main-sitemap.xsl"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>${B}/</loc><lastmod>2024-01-01</lastmod></url>\n<url><loc>${B}/about/</loc></url>\n<url><loc>${B}/old-post/</loc></url>\n</urlset>\n`,
   });
   return { ...site, forbidden };
 }
