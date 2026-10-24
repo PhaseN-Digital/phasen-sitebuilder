@@ -260,8 +260,8 @@ live DOM, which page scripts have modified), and the build strips the tags.
 Clicking a tagged text element that is (or is inside, or holds exactly one)
 link also shows a Link panel for changing where it points, applied like any
 other edit (site-wide for `s-` keys, undoable). Targets must be an http(s)
-address, `mailto:`, `tel:` or a copied page's path. Links on images (e.g. a
-logo) can't be changed yet.
+address, `mailto:`, `tel:` or a copied page's path. Clicking an image inside
+a link (e.g. a logo) shows the same Link panel under the Image panel.
 Before a page's file is first edited, its HTML is kept in
 `sites/<id>/mirror-original/`, for "Revert this page to the original" (which
 also drops that page's share of site-wide edits; they stay on other pages).

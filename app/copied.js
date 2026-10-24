@@ -221,7 +221,7 @@ function copiedPageCard(page) {
   return [
     h("div", { className: "card" },
       h("strong", {}, page.title), h("p", { className: "hint" }, `Address: ${page.mirror}`),
-      h("p", {}, "Click any outlined text in the preview to change it (and where it links to), or click an image to replace it."),
+      h("p", {}, "Click any outlined text in the preview to change it, or click an image to replace it. Linked text and images also let you change where they go."),
       h("ul", { className: "legend" },
         h("li", {}, h("i", { className: "swatch page" }), "This page's content"),
         h("li", {}, h("i", { className: "swatch site" }), "Header, menu and footer: changes apply to every page")),
@@ -230,8 +230,8 @@ function copiedPageCard(page) {
         h("button", { className: "copy-undo", disabled: !copyUndo[site.id]?.length, onclick: undoCopyEdit }, "Undo last change"),
         h("button", { onclick: () => revertCopiedPage(page) }, "Revert this page to the original")),
       h("p", { className: "hint" }, "Reverting also undoes header, menu and footer changes on this page only; they stay on your other pages.")),
-    linkPanel,
     imagePanel,
+    linkPanel,
   ];
 }
 
@@ -246,9 +246,13 @@ window.addEventListener("message", (event) => {
   } else if (type === "link") {
     const href = event.data.href;
     selectedCopyLink = typeof href === "string" ? { key, href, pageId, error: "" } : null;
+    selectedCopyImage = null; // so a link panel never sits under an image it doesn't belong to
     renderTab();
   } else if (type === "image") {
     selectedCopyImage = { key, alt: String(alt || ""), src: String(src || "") };
+    // A linked image (e.g. a logo) gets the same link panel as linked text.
+    const href = event.data.href;
+    selectedCopyLink = typeof href === "string" ? { key, href, pageId, error: "" } : null;
     renderTab();
   }
 });
