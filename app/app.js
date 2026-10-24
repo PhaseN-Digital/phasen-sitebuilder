@@ -347,6 +347,7 @@ function pagesTab() {
           site.pages.splice(index, 1); pageId = site.pages[0].id; save(); renderTab();
         } }, "Delete page")),
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
+    seoCard(page, index),
     h("h3", { className: "section-title" }, "Sections on this page"),
     page.sections.map((s, i) =>
       h("div", { className: "card" },
@@ -361,6 +362,26 @@ function pagesTab() {
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
       h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
+}
+
+// Search and sharing settings for a page (#74). The share image is picked
+// from images already uploaded to the site; the logo is the default.
+function seoCard(page, index) {
+  const images = [...new Set(JSON.stringify(site).match(/assets\/[\w.-]+/g) || [])];
+  const fallbackTitle = index === 0 ? site.name : `${page.title} | ${site.name}`;
+  const pick = (src) => { if (src) page.shareImage = src; else delete page.shareImage; save(); renderTab(); };
+  return h("div", { className: "card" },
+    h("strong", {}, "Search and sharing"),
+    text("Title in search results", page, "seoTitle", "Leave blank to use the page name and website name.", { placeholder: fallbackTitle }),
+    area("Description in search results", page, "seoDescription", "Leave blank to use the website's short description (Design tab)."),
+    h("div", { className: "field" },
+      h("span", {}, "Image when shared on social media"),
+      h("div", { className: "chips" },
+        h("button", { className: page.shareImage ? "" : "active", onclick: () => pick(null) }, site.logo ? "Logo (default)" : "None"),
+        images.filter((src) => src !== site.logo?.src).map((src) =>
+          h("button", { className: page.shareImage === src ? "active" : "", title: src, onclick: () => pick(src) },
+            h("img", { className: "thumb", src: thumbUrl(src), alt: "" })))),
+      h("p", { className: "hint" }, "Shown in link previews on Facebook, LinkedIn, X and messaging apps. Images uploaded anywhere on the site can be chosen here.")));
 }
 
 // ---------- Forms ----------

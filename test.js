@@ -78,6 +78,33 @@ const site = {
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
 
+  // SEO (#74): per-page title/description/share image, canonical + sitemap only with a published hostname.
+  const seoSite = { ...site, logo: { src: "assets/logo.webp", alt: "" }, pages: [{ ...site.pages[0], seoTitle: 'Bob\'s "best" <bikes>', seoDescription: "Fix & ride" }, { ...site.pages[2], shareImage: "assets/abc123.webp" }, site.pages[1]] };
+  await build(seoSite, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
+  const seoHome = read("public/index.html"), seoPage = read("public/404-2.html");
+  assert(seoHome.includes("<title>Bob&#39;s &quot;best&quot; &lt;bikes&gt;</title>") && seoHome.includes('<meta name="description" content="Fix &amp; ride">'), "SEO title/description escaped");
+  assert(seoHome.includes('<link rel="canonical" href="https://bobsbikes.co.uk/">') && seoHome.includes('<meta property="og:url" content="https://bobsbikes.co.uk/">'));
+  assert(seoHome.includes('<meta property="og:image" content="https://bobsbikes.co.uk/assets/logo.webp">'), "logo is the default share image");
+  assert(seoPage.includes('<meta property="og:image" content="https://bobsbikes.co.uk/assets/abc123.webp">') && seoPage.includes("<title>404 | Bob&#39;s &lt;Bikes&gt;</title>") && seoPage.includes('content="Bikes &amp; repairs"'), "per-page image, fallbacks");
+  assert(!read("public/privacy.html").includes("canonical") && !read("public/404.html").includes("canonical"), "no canonical on noindex/404 pages");
+  assert.strictEqual(read("public/sitemap.xml"), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://bobsbikes.co.uk/</loc></url>\n  <url><loc>https://bobsbikes.co.uk/404-2</loc></url>\n  <url><loc>https://bobsbikes.co.uk/contact-us</loc></url>\n</urlset>\n');
+  assert.strictEqual(read("public/robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://bobsbikes.co.uk/sitemap.xml\n");
+  await build(seoSite, siteDir, out, { preview: true, hostname: "bobsbikes.co.uk" });
+  assert(!read("public/index.html").includes("canonical") && !read("public/index.html").includes("og:url") && read("public/index.html").includes('content="/assets/logo.webp"') && !fs.existsSync(path.join(out, "public/sitemap.xml")), "preview: no canonical/sitemap");
+  // Exact copies: sitemap from the copied pages (skipping noindex ones) unless they brought their own.
+  const copyDir = fs.mkdtempSync(path.join(os.tmpdir(), "site-"));
+  fs.mkdirSync(path.join(copyDir, "mirror/caf\u00e9"), { recursive: true });
+  fs.writeFileSync(path.join(copyDir, "mirror/index.html"), "<p>home</p>");
+  fs.writeFileSync(path.join(copyDir, "mirror/caf\u00e9/index.html"), "<p>caf</p>");
+  fs.writeFileSync(path.join(copyDir, "mirror/thanks.html"), '<meta name="robots" content="noindex, follow">');
+  const copySite = { ...site, mirror: {}, forms: [], pages: [{ id: "m1", title: "Home", mirror: "/", file: "index.html", sections: [] }, { id: "m2", title: "Caf", mirror: "/caf\u00e9/", file: "caf\u00e9/index.html", sections: [] }, { id: "m3", title: "Thanks", mirror: "/thanks.html", file: "thanks.html", sections: [] }] };
+  await build(copySite, copyDir, out, { hostname: "copy.example" });
+  assert(read("public/sitemap.xml").includes("<loc>https://copy.example/</loc>") && read("public/sitemap.xml").includes("<loc>https://copy.example/caf%C3%A9/</loc>") && !read("public/sitemap.xml").includes("thanks"));
+  fs.writeFileSync(path.join(copyDir, "mirror/robots.txt"), "User-agent: *\nDisallow:\n");
+  fs.writeFileSync(path.join(copyDir, "mirror/sitemap.xml"), "<urlset>own</urlset>");
+  await build(copySite, copyDir, out, { hostname: "copy.example" });
+  assert(read("public/sitemap.xml") === "<urlset>own</urlset>" && read("public/robots.txt") === "User-agent: *\nDisallow:\n", "an exact copy keeps its own sitemap/robots");
+
   // Editable WordPress import keeps each page's old address where it can, and 301s the rest (#72).
   const wpPage = (id, title, p, sections = []) => ({ id, title, ...(p && { path: p }), sections });
   const wpSite = { ...site, pages: [
