@@ -208,6 +208,12 @@ are not, so add them yourself.
   `site.json`. Account IPC handlers take an optional site id last; the
   renderer must always pass it (or null), since the IPC wrapper appends the
   event.
+- JSON stores (#147): settings.json, accounts.json, site.json and
+  publish.json are read and written only through `lib/json-store.js`
+  (per-file queue, atomic temp+fsync+rename, `<file>.bak` fallback when a
+  file doesn't parse). Change settings or accounts with
+  `settingsStore.update(fn)`/`updateSite(dir, fn)`, never load-then-save,
+  or two overlapping changes drop one of them.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.

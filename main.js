@@ -12,6 +12,7 @@ const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
+const json = require("./lib/json-store");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -39,8 +40,6 @@ const mirrorFile = (id, file, dir = "mirror") => {
 };
 const publishDir = (id) => data("publish", id);
 
-const readJson = (file, fallback) => fs.readFile(file, "utf8").then(JSON.parse, () => fallback);
-const writeJson = (file, value) => fs.writeFile(file, JSON.stringify(value, null, 2));
 const seal = (v) => safeStorage.encryptString(v).toString("base64");
 const unseal = (v) => (v ? safeStorage.decryptString(Buffer.from(v, "base64")) : "");
 const hex = (n) => crypto.randomBytes(n).toString("hex");
@@ -48,8 +47,8 @@ const hex = (n) => crypto.randomBytes(n).toString("hex");
 // App-wide settings. Site operations go through settingsFor() instead (#134).
 const settingsStore = config.store(app.getPath("userData"));
 const loadSettings = () => settingsStore.load();
-const saveSettings = (s) => settingsStore.save(s);
-const readSite = (id) => readJson(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
+const updateSettings = (change) => settingsStore.update(change); // read-modify-write under one queue (#147)
+const readSite = (id) => json.read(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
 // Everything a site operation needs: the site's overrides, else the app's settings.
 // `published` is the accounts the site was last published with (lib/settings.js publishedWith).
 async function settingsFor(id, site) {
@@ -61,8 +60,8 @@ const buildSite = (site, outDir, options = {}) => settingsFor(site.id, site).the
 const previewBuild = (site) => queueBuild(() => buildSite(site, previewDir(site.id), { preview: true }));
 // Per-site deploy state (Turnstile keys, Resend sending key). Kept apart from
 // site.json so secrets never end up in a build or export.
-const readState = (id) => readJson(path.join(siteDir(id), "publish.json"), {});
-const writeState = (id, s) => writeJson(path.join(siteDir(id), "publish.json"), s);
+const readState = (id) => json.read(path.join(siteDir(id), "publish.json"), {});
+const writeState = (id, s) => json.write(path.join(siteDir(id), "publish.json"), s);
 
 // ponytail: one global build queue, per-site queues if builds ever get slow.
 let buildQueue = Promise.resolve();
@@ -287,16 +286,8 @@ const publicSettings = (s) => ({
 });
 // Account changes apply to the app's accounts, or to one site's own when siteId is given (#134).
 async function editAccounts(siteId, change) {
-  if (typeof siteId === "string") {
-    const dir = siteDir(siteId), accounts = await settingsStore.loadSite(dir);
-    change(accounts);
-    await settingsStore.saveSite(dir, accounts);
-    return publicAccounts(accounts);
-  }
-  const s = await loadSettings();
-  change(s);
-  await saveSettings(s);
-  return publicSettings(s);
+  if (typeof siteId === "string") return publicAccounts(await settingsStore.updateSite(siteDir(siteId), change));
+  return publicSettings(await updateSettings(change));
 }
 
 // Theme Builder (#130): local themes in userData/themes-local, listed in the
@@ -363,22 +354,18 @@ const handlers = {
     if (sourcesOf(s).some((x) => x.spec === spec)) throw new Error(`${spec} is already in your theme sources.`);
     const source = { spec, ...(String(token || "").trim() && { token: seal(String(token).trim()) }) };
     await fetchSource(source); // throws with GitHub's reason, so a wrong name or token is never saved
-    const latest = await loadSettings();
-    latest.themeSources = [...(latest.themeSources || []), source];
-    await saveSettings(latest);
+    await updateSettings((latest) => {
+      if (!sourcesOf(latest).some((x) => x.spec === spec)) latest.themeSources = [...(latest.themeSources || []), source];
+    });
     return listSources();
   },
   "themes:remove": async (spec) => {
-    const s = await loadSettings();
-    s.themeSources = (s.themeSources || []).filter((x) => x.spec !== spec);
-    await saveSettings(s);
+    await updateSettings((s) => { s.themeSources = (s.themeSources || []).filter((x) => x.spec !== spec); });
     await fs.rm(path.join(themeCache(), themeSources.cacheKey(spec)), { recursive: true, force: true });
     return listSources();
   },
   "themes:hide-public": async (hidden) => {
-    const s = await loadSettings();
-    s.hidePublicThemes = Boolean(hidden);
-    await saveSettings(s);
+    await updateSettings((s) => { s.hidePublicThemes = Boolean(hidden); });
     return listSources();
   },
   "themes:refresh": async (spec) => {
@@ -400,7 +387,7 @@ const handlers = {
   "sites:create": async (name, theme) => {
     const site = newSite(String(name).trim() || "My website", theme);
     await fs.mkdir(path.join(siteDir(site.id), "assets"), { recursive: true });
-    await writeJson(path.join(siteDir(site.id), "site.json"), site);
+    await json.write(path.join(siteDir(site.id), "site.json"), site);
     await previewBuild(site);
     return site;
   },
@@ -409,7 +396,7 @@ const handlers = {
     return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state), accounts: publicAccounts(await settingsStore.loadSite(siteDir(id))) };
   },
   "sites:save": async (site) => {
-    await writeJson(path.join(siteDir(site.id), "site.json"), site);
+    await json.write(path.join(siteDir(site.id), "site.json"), site);
     return previewBuild(site); // page id -> preview path
   },
   "sites:delete": async (id, offline, event) => {
@@ -472,16 +459,10 @@ const handlers = {
   "settings:disconnect": (which, siteId) => editAccounts(siteId, (a) => { delete a[which === "cloudflare" ? "cloudflare" : "resendKey"]; }),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
-    const s = await loadSettings();
-    s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim();
-    await saveSettings(s);
-    return publicSettings(s);
+    return publicSettings(await updateSettings((s) => { s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim(); }));
   },
   "settings:auto-update": async (on) => {
-    const s = await loadSettings();
-    s.autoUpdate = Boolean(on);
-    await saveSettings(s);
-    return publicSettings(s);
+    return publicSettings(await updateSettings((s) => { s.autoUpdate = Boolean(on); }));
   },
   "settings:open-data": () => shell.openPath(data()),
   zones: async (siteId) => {
@@ -504,7 +485,7 @@ const handlers = {
     const site = await readSite(id);
     if (!site || !isImported(site)) throw new Error("Only imported websites need an ownership declaration.");
     site.importProvenance = await importProvenance(url, declaration, { imported: false });
-    await writeJson(path.join(siteDir(id), "site.json"), site);
+    await json.write(path.join(siteDir(id), "site.json"), site);
     return site.importProvenance;
   },
   "wp:image": (url) => wp.downloadImage(url),
@@ -531,7 +512,7 @@ const handlers = {
       site.forms = result.forms.map((f) => ({ id: f.id, name: f.name, to: "", success: "Thanks, your message has been sent.", fields: f.fields, mirrored: true, shownOn: f.pages }));
       site.mirror = { formFiles: result.formFiles };
       site.importProvenance = await importProvenance(url, declaration);
-      await writeJson(path.join(dir, "site.json"), site);
+      await json.write(path.join(dir, "site.json"), site);
       await previewBuild(site);
       return site.id;
     } catch (e) {
@@ -558,9 +539,7 @@ const handlers = {
         if (force) throw new Error(`Couldn't check for updates (${e.message}). Check your internet connection and try again.`);
         return null;
       }
-      const s = await loadSettings(); // re-read: settings may have changed during the fetch
-      s.updateCheck = updateCheck;
-      await saveSettings(s);
+      await updateSettings((s) => { s.updateCheck = updateCheck; });
     }
     return { version: updateCheck.version, url: updateCheck.url, newer: Boolean(updateCheck.url && update.isNewer(updateCheck.version, app.getVersion())) };
   },
