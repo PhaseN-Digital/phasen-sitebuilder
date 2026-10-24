@@ -44,7 +44,7 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, themeBuilder };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -53,6 +53,43 @@ app.on("browser-window-created", (_e, win) => {
     } finally {
       fs.writeFileSync(SB_RESULT, JSON.stringify(result, null, 2));
       app.quit();
+    }
+
+    // ---------- Theme Builder (#130): a theme from the created site's design, saved, then used by that site ----------
+    async function themeBuilder() {
+      const id = result.sites.created;
+      await run(`document.querySelector("#open-themes").click()`);
+      await waitFor(() => run(`[...document.querySelectorAll("button")].some((b) => b.textContent === "Start")`));
+      await run(`document.querySelector(".theme-list select").value = ${JSON.stringify(id)}; [...document.querySelectorAll("button")].find((b) => b.textContent === "Start").click()`);
+      const start = await waitFor(() => run(`tbEdit && JSON.stringify(tbEdit)`)).then((j) => j && JSON.parse(j));
+      check("theme builder: starts from a website's design", start?.label === "Regression Bikes theme" && start.font === "serif" && start.colors.background === "#faf7f2" && start.css.includes("flex-direction: column"), start);
+      check("theme builder: sample preview", await waitFor(() => inFrame(`document.querySelector("h1")?.textContent.startsWith("Websites that work")`)), "no sample hero");
+      await run(`{ const s = ${fieldInput("Header style", "select")}; s.value = "bar"; s.dispatchEvent(new Event("change")); }
+        { const c = ${fieldInput("Text")}; c.value = "#eeeeee"; c.dispatchEvent(new Event("input")); } 0`);
+      check("theme builder: contrast hint", await waitFor(() => run(`document.querySelector("#tb-warnings").textContent.includes("Text may be hard to read")`)));
+      check("theme builder: preview restyled", await waitFor(() => inFrame(`getComputedStyle(document.querySelector(".site-header")).backgroundColor !== "rgba(0, 0, 0, 0)"`)), "header isn't a coloured bar");
+      await run(`{ const c = ${fieldInput("Text")}; c.value = "#222222"; c.dispatchEvent(new Event("input")); } { const s = document.querySelector(".preview-bar select"); s.value = ${JSON.stringify(id)}; s.dispatchEvent(new Event("change")); } 0`);
+      check("theme builder: preview on one of the user's sites", await waitFor(() => inFrame(`document.querySelector("h1")?.textContent === "Edited headline"`)), "site content not shown");
+      await shot("theme-builder");
+      await clickButton("Save theme");
+      const dir = path.join(UD, "themes-local", "regression-bikes-theme");
+      const ok = await waitFor(() => fs.existsSync(path.join(dir, "theme.css")) && run(`document.querySelector(".save-state").textContent.startsWith("Saved")`));
+      const { validateTheme } = require("../lib/theme-validate");
+      check("theme builder: saved as a valid package", ok && validateTheme(dir).length === 0 && read(path.join(dir, "theme.css")).includes("var(--primary-text)"), ok && validateTheme(dir));
+      const png = fs.existsSync(path.join(dir, "preview.png")) && fs.readFileSync(path.join(dir, "preview.png"));
+      if (png) check("theme builder: preview.png is 640x400", png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 400);
+      else console.log("preview.png not captured (capturePage unavailable here, #87)");
+      await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
+      await waitFor(() => run(`site?.id === ${JSON.stringify(id)} && Boolean(document.querySelector("#tab"))`));
+      await run(`tab = "design"; renderEditor(); 0`);
+      const btn = await waitFor(() => run(`[...document.querySelectorAll("button.theme")].some((b) => b.querySelector("strong").textContent === "Regression Bikes theme")`));
+      check("theme builder: listed in the Design tab picker", btn);
+      await run(`[...document.querySelectorAll("button.theme")].find((b) => b.querySelector("strong").textContent === "Regression Bikes theme").click()`);
+      await waitFor(() => run(`site.themeSource === "local"`));
+      await saved();
+      const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
+      check("theme builder: site uses the local theme", s.themeSource === "local" && s.theme === "regression-bikes-theme" && read(path.join(UD, "preview", id, "public", "styles.css")).includes("/* theme-builder "), { theme: s.theme, themeSource: s.themeSource });
+      await shot("theme-builder-design");
     }
 
     // ---------- 0. update banner, from test/fakes.js's latest.json ----------

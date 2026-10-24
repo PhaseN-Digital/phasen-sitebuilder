@@ -122,6 +122,10 @@ async function sourceTheme(siteId) {
 
 async function workerChecks(sites) {
   if (sites.created) {
+    // Built with the Theme Builder's theme the app chose for it (#130), before serve() swaps in a source theme.
+    const siteDir = path.join(OUT, "userdata", "sites", sites.created), localOut = path.join(OUT, "built", "local-theme");
+    await build(JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), siteDir, localOut, { workerName: "local-theme" });
+    check("build (made in app): with a Theme Builder theme", fs.readFileSync(path.join(localOut, "public", "styles.css"), "utf8").includes("/* theme-builder "));
     const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1", ...(await sourceTheme(sites.created)) });
     try {
       const home = await get(s.base, "/");

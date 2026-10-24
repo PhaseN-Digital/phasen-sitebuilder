@@ -96,7 +96,9 @@ checks the whole app end to end with no accounts, against fake sites in
 
 - the real app, driven headlessly by `test/drive.js`: the update banner
   (from a fake `latest.json`), create a site, preview,
-  edit + rebuild, theme switch, image upload (theme sources point at a fake
+  edit + rebuild, theme switch, image upload, Theme Builder (new theme from
+  a site's design, contrast hint, preview on that site, save, pick it in the
+  Design tab) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
@@ -106,7 +108,7 @@ checks the whole app end to end with no accounts, against fake sites in
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
-  built from the site's own copy), the copied site's redirect, and form POSTs (honeypot, validation, captcha,
+  built from the site's own copy), a site built with a Theme Builder theme, the copied site's redirect, and form POSTs (honeypot, validation, captcha,
   a valid message logged instead of emailed since `RESEND_API_KEY` is unset).
 
 It prints one line per check and a summary, and exits non-zero on any
@@ -181,6 +183,24 @@ published always-pass test secret, so that one step needs internet access.
   `site.themeSource`, so builds and publishes never need the repo or the
   cache; "Update theme" downloads the source again and replaces the copy
   (colours and font stay as the user set them).
+- Theme Builder (`lib/theme-builder.js`, `app/theme-builder.js`, sidebar ›
+  Themes…, #130): makes theme packages from controls (colours, font, corner
+  radius, header/button/link style, section spacing, plus Advanced CSS) and
+  keeps them in `userData/themes-local/<id>/`, apart from any website. The
+  controls are stored as the first-line comment of `theme.css`, so a package
+  stays in the plain #57 format. Every save is validated with
+  `lib/theme-validate.js` (nothing is replaced if it fails) and bumps the
+  patch version; `preview.png` is the sample preview captured in a hidden
+  1280x800 window and scaled to 640x400. The live preview builds built-in
+  sample content (or one of the user's sites) as a hidden pseudo-site
+  (`sites/00000000-0000-4000-8000-000000000000`, no `site.json`, so never
+  listed) served through `preview://`. Contrast hints use `lib/build.js`'s
+  `contrastRatio`. Local themes show in the Design tab as the `local` theme
+  source ("Your themes"); choosing one copies it to `sites/<id>/theme/` like
+  any source theme. "New theme from a website's design" starts from the
+  site's colours, font and theme (a builder theme's controls, or another
+  theme's CSS as Advanced CSS; exact copies: colours and font only).
+  Publishing a theme to GitHub is #60.
 
 ## Privacy page
 
@@ -425,6 +445,11 @@ site's local files until taking it offline has fully worked.
   "Update theme"; there's no automatic check for newer versions. Tested
   against a fake GitHub API and the real public repo, not yet with a real
   private repo and token.
+- Theme Builder (#130): only themes it made can be edited (a hand-written
+  local theme can be used and deleted, not edited). Editing a local theme
+  doesn't change websites already using it until they press "Update theme".
+  `preview.png` capture is tested headlessly on Linux only; if capture fails
+  the theme is saved without one. Publishing to GitHub is #60.
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS
