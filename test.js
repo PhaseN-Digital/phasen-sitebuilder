@@ -322,6 +322,17 @@ const site = {
   assert.deepStrictEqual(validateAll("themes"), {});
   assert.deepStrictEqual(Object.keys(themes), ["clean", "bold", "elegant"]);
   assert(read("public/styles.css").includes("--font: Georgia") && read("public/styles.css").includes("text-transform"), "bold theme.css + serif font");
+  // Black/white text is whichever contrasts more, and every bundled theme's
+  // defaults meet WCAG AA (4.5:1) for text, links, buttons and the header/hero.
+  const { contrastRatio, contrastText } = require("./lib/build");
+  assert.strictEqual(contrastText("#f97316"), "#111111", "orange gets dark text");
+  assert.strictEqual(contrastText("#1e3a8a"), "#ffffff", "navy gets white text");
+  for (const [id, { colors: c }] of Object.entries(themes)) {
+    for (const [what, fg, bg] of [["text", c.text, c.background], ["links", c.primary, c.background],
+      ["button text", contrastText(c.accent), c.accent], ["header text", contrastText(c.primary), c.primary]]) {
+      assert(contrastRatio(fg, bg) >= 4.5, `${id} ${what}: ${contrastRatio(fg, bg).toFixed(2)}:1`);
+    }
+  }
   const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themes-"));
   const pkg = (id, json, css) => {
     fs.mkdirSync(path.join(tdir, id));

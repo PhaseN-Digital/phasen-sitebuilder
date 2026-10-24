@@ -5,8 +5,8 @@
   "colors": {
     "background": "#0f172a",
     "text": "#f1f5f9",
-    "primary": "#7c3aed",
+    "primary": "#9863f1",
     "accent": "#22d3ee"
   },
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
