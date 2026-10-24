@@ -26,6 +26,11 @@ alters a flow it covers, extend `test/drive.js` (UI, via `executeJavaScript`)
 or `test/regression.js` (built site under `wrangler dev`), and the fakes in
 `test/fakes.js` if needed. For anything else in the UI, launch the app and
 exercise it (headlessly with `xvfb-run` and `executeJavaScript`).
+In `drive.js`, wait for the state an action finishes in, not one it passes
+through (#155): `siteOpened()` rather than `site` being set (openSite is
+still saving and about to re-render), the re-rendered button rather than
+"Done!" in a streamed log, and a preview reload's own `?t=` before touching
+the frame. Never add sleeps or retries; check flakes under CPU load.
 
 ## Tracking work: required for every change
 
