@@ -47,7 +47,10 @@ a:where(:not(.wp-element-button)){color: var(--wp--preset--color--primary);}
 }
 
 // Elementor site: header/footer templates, a hidden mobile menu, CSS with
-// url()/@import/@font-face, JSON-escaped URLs, a redirect, a 404 and a form.
+// url()/@import/@font-face, JSON-escaped URLs, a redirect, a 404 and a form,
+// plus tracking tags and a Google Fonts stylesheet (#45). Its /css and /s/...
+// routes stand in for fonts.googleapis.com and fonts.gstatic.com when a test
+// points those hosts here.
 // `forbidden` collects requests the copier must never make (feeds, admin).
 async function startElementor() {
   let H, B;
@@ -74,10 +77,12 @@ async function startElementor() {
 <button type="submit" class="elementor-button">Send</button></form>`;
   const menu = (title) => `<ul class="elementor-nav-menu">${[["Home", B], ["About", "/about/"], ["Contact", B + "/contact/"]].map(([t, h]) => `<li class="menu-item${t === title ? " current-menu-item" : ""}"><a href="${h}">${t}</a></li>`).join("")}</ul>`;
   const page = (title, body) => `<!doctype html><html><head><title>${title} &#8211; Acme Ltd</title><meta property="og:site_name" content="Acme Ltd">
+<link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin><link rel='stylesheet' id='google-fonts-1-css' href='https://fonts.googleapis.com/css?family=Sbtest%3A400&#038;display=swap' media='all'>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-OLDSITE1"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag("js",new Date());gtag("config","G-OLDSITE1");</script>
 <link rel="stylesheet" href="${B}/wp-content/uploads/elementor/css/post-5.css?ver=1"><link rel="canonical" href="${B}/">
 <script src="${B}/wp-includes/js/jquery/jquery.min.js?ver=3"></script>
 <script>var elementorFrontendConfig = {"urls":{"assets":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/","bundle":"http:\\/\\/${H}\\/wp-content\\/plugins\\/elementor\\/assets\\/js\\/frontend.min.js"}};</script></head>
-<body class="elementor-kit-5 elementor-page"><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
+<body class="elementor-kit-5 elementor-page"><noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=123&ev=PageView&noscript=1"></noscript><div data-elementor-type="header" class="elementor elementor-location-header"><a href="${B}"><img src="${B}/wp-content/uploads/2024/01/logo.png" alt="Acme"></a>
 <nav class="elementor-nav-menu--main">${menu(title)}</nav><nav class="elementor-nav-menu--dropdown" aria-hidden="true">${menu(title)}</nav><a href="/feed/">RSS</a> <a href="/wp-admin/">Admin</a> <a href="/?p=5">P</a></div>
 <div data-elementor-type="wp-page" class="elementor"><section class="elementor-section"><div class="elementor-container"><div class="elementor-column"><div class="elementor-widget-wrap">
 <div class="elementor-widget elementor-widget-image"><div class="elementor-widget-container"><img src="${B}/wp-content/uploads/2024/01/hero.png" srcset="${B}/wp-content/uploads/2024/01/hero.png 40w, ${B}/wp-content/uploads/2024/01/hero-2x.png 80w" alt="Hero" width="40" height="40"></div></div>
@@ -98,6 +103,8 @@ ${body}
     "/wp-includes/js/jquery/jquery.min.js": "/* jquery */",
     "/wp-content/plugins/elementor/assets/js/frontend.min.js": `var base="${B}/wp-content/";`,
     "/wp-content/themes/hello/fonts/acme.woff2": "FONTDATA",
+    "/css": "@font-face{font-family:'Sbtest';src:url(https://fonts.gstatic.com/s/sbtest/v1/a.woff2) format('woff2')}",
+    "/s/sbtest/v1/a.woff2": "GOOGLEFONT",
   });
   return { ...site, forbidden };
 }

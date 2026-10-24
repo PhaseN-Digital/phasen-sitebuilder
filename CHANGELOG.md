@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.4](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.3...phasen-sitebuilder-v0.4.4) (2026-10-24)
+
+
+### Bug Fixes
+
+* **mirror:** strip copied trackers and self-host Google Fonts ([#105](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/105)) ([c4b34f9](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/c4b34f968ecbc24afb4757f1b950a748aab67613))
+* **release:** gate the release PR's head from the branch ref and re-gate stuck PRs ([#112](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/112)) ([54d4b57](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/54d4b57f657f6e6a7a834920e2fa86d2c6ab5960))
+* **test:** narrow wordpress built-page check to the fixture's hostile markup ([#110](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/110)) ([e51ebb1](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e51ebb17b166a08cf45f5b14faa5313cbe515381))
+* **themes:** mobile menu toggle for theme headers ([#82](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/82)) ([#104](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/104)) ([c544685](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/c544685d2cc1443a6a5d514989ae2fd8e0baedb7))
+
+## [0.4.3](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.2...phasen-sitebuilder-v0.4.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **import:** keep WordPress page addresses, 301 the rest ([#72](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/72)) ([#98](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/98)) ([577a7c5](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/577a7c5a1c3c86932cabd555e95d215b2e2dbd25))
+
 ## [0.4.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.1...phasen-sitebuilder-v0.4.2) (2026-10-23)
 
 

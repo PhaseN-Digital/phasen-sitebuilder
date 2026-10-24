@@ -121,24 +121,33 @@ are not, so add them yourself.
   `on: release`/tag workflow: release-please's GITHUB_TOKEN tags can't
   trigger other workflows, so a separate one would never run.
 - Release gate (same workflow, #47): when release-please opens or updates
-  the release PR (`prs_created`), `regression` calls `regression.yml` on the
-  PR's head sha, `release-gate` labels/comments or, for a passing patch
+  the release PR (`prs_created`), on any manual dispatch on main, or when the
+  PR carries the `regate` label (#111), `regression` calls `regression.yml` on
+  the PR's head sha, read from the branch ref with `git ls-remote` after
+  release-please finishes (never the PR API's `headRefOid`, which lags a ref
+  update by seconds and once tested the previous head, #111), `release-gate` labels/comments or, for a passing patch
   (`scripts/release-bump.js`), squash-merges it with `--match-head-commit`, and
   `release` runs release-please again to create the release. The gate only
   merges onto the main it tested (#97): the first step records main's sha,
   and right before merging the gate re-fetches main and the PR and refuses
-  (with a PR comment, leaving it to the run the newer push queued) if main
+  (with a PR comment and the `regate` label) if main
   moved, the PR's base isn't that main, its head isn't the tested sha or
   doesn't contain main; it re-classifies the bump from the current versions,
   checks main once more just before `gh pr merge`, and fails without
-  releasing if the squash isn't exactly the tested tree. Keep
+  releasing if the squash isn't exactly the tested tree. A `regate` PR is
+  re-gated by the next run of any kind (a push, the daily `schedule`, or a
+  dispatch), so a refusal never strands it; the label goes once a gate
+  reaches a verdict. **Release manager: to re-gate a stuck release PR now
+  (e.g. after a flaky `regression-failed`), run
+  `gh workflow run release-please.yml`** (dispatch on main gates any open
+  release PR; it also builds installers as run artifacts). Don't use
+  `gh run rerun --failed`: it reuses the old run's head sha. Keep
   `cancel-in-progress: false`: the queued run is what re-gates the PR. `build` runs on
   either release-please job's `release_created` and checks out the tag
   (after a gate merge `github.sha` is the pre-release commit). It all stays
   in one run because release-please's PR updates and GITHUB_TOKEN merges
   don't start new workflow runs. A manual dispatch still builds installers
-  without a release (it gates the release PR too if release-please updates
-  it).
+  without a release (and gates any open release PR).
 - `publish-installers` (#37) copies each release's installers plus a
   generated `latest.json` to the same tag in the public
   `PhaseN-Digital/phasen-sitebuilder-releases` repo using `RELEASES_TOKEN`
@@ -195,6 +204,11 @@ are not, so add them yourself.
   without migrating existing sites. Every write to a copied page goes
   through `mirror:keep-original` first and pushes onto the undo stack
   (`applyCopyEdit`), or undo/revert will miss it.
+- `page.path` (set only by the editable WordPress import) is the page's
+  address and wins over its title, so renames never move it; `pagePaths`
+  returns `{ paths, redirects }` and `build()` writes the redirects (old
+  addresses it couldn't keep) to `_redirects`. Don't derive kept pages'
+  addresses from titles.
 - `pagePaths` in `lib/build.js` always reserves the generated privacy page's
   slug and returns it under the `privacy` key (page ids are hex, so it can't
   clash); `build()` drops it when the site has no forms and no valid
@@ -202,7 +216,9 @@ are not, so add them yourself.
   `paths.privacy` to decide whether to show the Privacy page settings.
 - With `site.analyticsId` set, the Google tag must only ever be injected by
   `runtime/consent.js` after Accept (UK PECR); never add `gtag.js` to a page
-  head. `test.js` asserts no built page mentions it.
+  head. `test.js` asserts no built page mentions it. Exact copies strip the
+  original site's trackers (`TRACKERS` in `lib/mirror.js`, extend the table
+  rather than adding special cases) and self-host Google Fonts.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
