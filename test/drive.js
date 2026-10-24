@@ -181,6 +181,47 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const c = ${fieldInput("Text")}; c.value = "#222222"; c.dispatchEvent(new Event("input")); } { const s = document.querySelector(".preview-bar select"); s.value = ${JSON.stringify(id)}; s.dispatchEvent(new Event("change")); } 0`);
       check("theme builder: preview on one of the user's sites", await waitFor(() => inFrame(`document.querySelector("h1")?.textContent === "Edited headline"`)), "site content not shown");
       await shot("theme-builder");
+      // Right-click menu (#156): a real right-click on the hero heading adds a rule, a second one finds it, and editing it restyles the preview.
+      // Real clicks hit whatever is on top: an earlier step's declaration dialog, opened when pendingEdits
+      // switched sites by script, is still open over the page (a user couldn't get here past the modal).
+      await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`);
+      const rightClick = async () => {
+        await waitFor(() => inFrame(`Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
+        const { x, y } = await run(`(() => { const r = document.querySelector("#preview").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
+        const at = await inFrame(`(() => { const r = document.querySelector(".hero h1").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
+        const pos = { x: Math.round(x + at.x), y: Math.round(y + at.y) };
+        // Real mouse input through CDP: sendInputEvent stops at the <iframe> and never reaches the preview's document.
+        const dbg = win.webContents.debugger;
+        if (!dbg.isAttached()) dbg.attach("1.3");
+        for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await dbg.sendCommand("Input.dispatchMouseEvent", { type, ...pos, button: type === "mouseMoved" ? "none" : "right", clickCount: 1 });
+        return waitFor(() => run(`document.querySelector(".tb-menu")?.textContent`));
+      };
+      const css = () => run(`(() => { const b = document.querySelector("#tb-css"); return { value: b.value, sel: b.value.slice(b.selectionStart, b.selectionEnd), caret: b.selectionStart, focused: document.activeElement === b }; })()`);
+      check("rule menu: opens on right-click", /Style this element.*Choose selector.*Show current styles/.test(await rightClick() || ""));
+      await run(`[...document.querySelectorAll(".tb-menu button")].find((b) => b.textContent === "Choose selector…").click(); [...document.querySelectorAll(".tb-menu button")].find((b) => b.textContent === "Show current styles").click(); 0`);
+      check("rule menu: selector choices", await run(`[...document.querySelectorAll(".tb-menu-sub code")].map((c) => c.textContent).join()`) === ".hero h1,main h1,h1");
+      check("rule menu: current styles", await run(`document.querySelector("dl.tb-menu-sub").textContent.includes("font-size")`));
+      await shot("theme-rule-menu");
+      await run(`[...document.querySelectorAll(".tb-menu button")].find((b) => b.textContent === "Style this element…").click(); 0`);
+      let c = await waitFor(() => css().then((v) => v.value.includes(".hero h1 {") && v));
+      check("rule menu: adds the rule with the cursor inside", c && c.focused && c.value.slice(c.caret - 13, c.caret) === ".hero h1 {\n  ", c);
+      await run(`{ const b = document.querySelector("#tb-css"); b.setRangeText("color: #ff0000;", b.selectionStart, b.selectionEnd, "end"); b.dispatchEvent(new Event("input")); } 0`);
+      check("rule menu: preview uses the new rule", await waitFor(() => inFrame(`getComputedStyle(document.querySelector(".hero h1")).color === "rgb(255, 0, 0)"`)), "hero heading isn't red");
+      await rightClick();
+      await run(`[...document.querySelectorAll(".tb-menu button")].find((b) => b.textContent === "Style this element…").click(); 0`);
+      c = await waitFor(() => css().then((v) => v.sel.startsWith(".hero h1") && v));
+      check("rule menu: second right-click selects the rule", c && c.sel === ".hero h1 {\n  color: #ff0000;\n}" && c.value.split(".hero h1 {").length === 2, c);
+      await shot("theme-rule-selected");
+      await run(`{ const b = document.querySelector("#tb-css"); b.setRangeText(b.value.slice(b.selectionStart, b.selectionEnd).replace("#ff0000", "#00aa00"), b.selectionStart, b.selectionEnd); b.dispatchEvent(new Event("input")); } 0`);
+      check("rule menu: changed colour reaches the preview", await waitFor(() => inFrame(`getComputedStyle(document.querySelector(".hero h1")).color === "rgb(0, 170, 0)"`)), "hero heading isn't green");
+      // Keyboard: Pick element, then Enter on the first heading opens the same menu.
+      await clickButton("Pick element");
+      await waitFor(() => inFrame(`Boolean(document.querySelector(".sb-picked"))`));
+      await inFrame(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); 0`);
+      check("rule menu: Pick element + Enter", await waitFor(() => run(`document.querySelector(".tb-menu [role=menuitem]") === document.activeElement`)));
+      await run(`document.querySelector(".tb-menu").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0`);
+      await clickButton("Pick element");
+      if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
       await clickButton("Save theme");
       const dir = path.join(UD, "themes-local", "regression-bikes-theme");
       const ok = await waitFor(() => fs.existsSync(path.join(dir, "theme.css")) && run(`document.querySelector(".save-state").textContent.startsWith("Saved")`));

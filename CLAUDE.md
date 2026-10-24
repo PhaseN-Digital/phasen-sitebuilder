@@ -212,6 +212,10 @@ are not, so add them yourself.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
+  The preview's right-click menu (#156, `app/theme-builder-frame.js`) may
+  only offer selectors built from its `STABLE` classes, which test.js
+  requires to equal the classes `lib/build.js` generates: when you add or
+  rename a class in `renderPage`/`renderSection`, update `STABLE` too.
 - GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
   and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
   be sent (`themeFiles`). The sign-in token stays in the main process

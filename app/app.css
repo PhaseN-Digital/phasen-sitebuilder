@@ -154,6 +154,15 @@ dialog.publish-theme .inline { margin-top: 12px; }
 .message dt { font-weight: 600; }
 .message dd { margin: 0 0 8px; white-space: pre-wrap; }
 .badge-warn { white-space: nowrap; background: #fff4e5; border: 1px solid #f3c27a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; font-size: .8rem; }
+/* Theme Builder right-click menu (#156) */
+.tb-menu { position: fixed; z-index: 50; min-width: 220px; max-width: 360px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 30px #0003; }
+.tb-menu button { display: block; width: 100%; text-align: left; border: 0; padding: 7px 10px; }
+.tb-menu button:hover, .tb-menu button:focus { background: var(--tint); outline: none; }
+.tb-menu-sub { margin: 0 0 4px 12px; border-left: 2px solid var(--line); }
+.tb-menu-sub button { padding: 5px 10px; }
+dl.tb-menu-sub { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 4px 10px; font-size: 12px; }
+dl.tb-menu-sub dt { color: var(--muted); }
+dl.tb-menu-sub dd { margin: 0; overflow-wrap: anywhere; font-family: monospace; }
 .layout-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
 .layout-choice { display: grid; gap: 4px; align-content: start; text-align: left; padding: 10px; }
 .layout-choice img { width: 100%; aspect-ratio: 3 / 2; border: 1px solid var(--line); border-radius: 4px; }

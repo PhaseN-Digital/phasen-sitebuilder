@@ -109,8 +109,9 @@ checks the whole app end to end with no accounts, against fake sites in
 - the real app, driven headlessly by `test/drive.js`: the update banner
   (from a fake `latest.json`), create a site, preview,
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
-  a site's design, contrast hint, preview on that site, save, pick it in the
-  Design tab), GitHub sign-in through the device flow and both ways of
+  a site's design, contrast hint, preview on that site, right-click the hero
+  heading to add a rule and again to select it, edit it and see the preview
+  change, Pick element + Enter, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
   publishing that theme (push to PhaseN's private themes repo, PR to the
   public one; the suite checks only the theme's three files arrived) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
@@ -309,6 +310,15 @@ published always-pass test secret, so that one step needs internet access.
   any source theme. "New theme from a website's design" starts from the
   site's colours, font and theme (a builder theme's controls, or another
   theme's CSS as Advanced CSS; exact copies: colours and font only).
+  Right-clicking (or Alt+clicking) the preview, or "Pick element" then the
+  arrow keys and Enter, opens a menu (#156) to add or select the element's
+  rule in Advanced CSS, choose a broader selector, or see its current styles.
+  `app/theme-builder-frame.js` is injected into the preview (`?sb-theme`) and
+  reports over postMessage; the menu is drawn by the builder. Selectors use
+  only the classes and landmarks `lib/build.js` generates (the script's `STABLE`,
+  checked against built output by test.js); rules are found and added by
+  `cssRule` in `lib/theme-builder.js`, which splits top-level rules
+  properly (comments, strings, `@media` blocks).
   Each valid theme in the list can be published to GitHub (#60):
 - GitHub sign-in and theme publishing (`lib/github.js`, Settings › Accounts,
   Themes… › "Push to repo…"/"Submit to public repo…", #60). Sign-in is the
@@ -752,7 +762,9 @@ site's local files until taking it offline has fully worked.
   local theme can be used and deleted, not edited). Editing a local theme
   doesn't change websites already using it until they press "Update theme".
   `preview.png` capture is tested headlessly on Linux only; if capture fails
-  the theme is saved without one.
+  the theme is saved without one. The right-click menu (#156) only finds a
+  rule whose selector matches exactly (not one inside a selector list or
+  `@media`).
 - GitHub publishing (#60): tested against a fake GitHub API only (device
   flow, git data API, fork, PR), not yet the real one. Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client

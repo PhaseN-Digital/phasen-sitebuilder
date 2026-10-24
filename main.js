@@ -464,6 +464,11 @@ const handlers = {
   "builder:list": () => builder.listLocal(localThemes()),
   "builder:new": () => builder.clean({}),
   "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
+  // Selectors come from the preview's frame script: classes and tag names only.
+  "builder:css-rule": (css, selectors) => {
+    if (typeof css !== "string" || !Array.isArray(selectors) || !selectors.length || !selectors.every((s) => typeof s === "string" && /^[\w.\- >]{1,200}$/.test(s))) throw new Error("Bad selector");
+    return builder.cssRule(css, { selectors });
+  },
   "builder:save": async (controls) => {
     const { errors } = await previewTheme(controls);
     if (errors.length) return { errors };
@@ -856,7 +861,7 @@ app.whenReady().then(() => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
     const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
-    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js" }[p];
+    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
     if (frameScript) {
       return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
     }
@@ -887,6 +892,11 @@ app.whenReady().then(() => {
       const nonce = found && params.has("sb-pick") && hex(16);
       if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
       return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
+    }
+    // The Theme Builder's preview gets its right-click menu script (#156).
+    if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
+      const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
+      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     }
     const res = await net.fetch(pathToFileURL(file).href);
     // Every save rewrites these files, so the preview must never cache them.
