@@ -62,7 +62,7 @@ async function serve(name, siteId, extra = {}) {
   const siteDir = path.join(OUT, "userdata", "sites", siteId);
   const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), ...extra };
   const dir = path.join(OUT, "built", name);
-  await build(site, siteDir, dir, { workerName: site.workerName, sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com" });
+  await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com" });
   fs.writeFileSync(path.join(dir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\n`);
   const port = await freePort();
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", CI: "1" };
@@ -135,6 +135,9 @@ async function workerChecks(sites) {
       check("worker (made in app): cookie banner, no gtag before consent", home.text.includes('id="cookie-banner"') && !home.text.includes("googletagmanager")
         && (await get(s.base, "/consent.js")).text.includes("googletagmanager"));
       check("worker (made in app): privacy page", (await get(s.base, "/privacy")).text.includes("owner@example.com"));
+      const sitemap = (await get(s.base, "/sitemap.xml")).text, robots = (await get(s.base, "/robots.txt")).text;
+      check("worker (made in app): sitemap, robots.txt and canonical (#74)", sitemap.includes("<loc>https://regression.workers.dev/contact</loc>") && !sitemap.includes("privacy")
+        && robots.includes("Sitemap: https://regression.workers.dev/sitemap.xml") && home.text.includes('<link rel="canonical" href="https://regression.workers.dev/">'), sitemap);
       const missing = await get(s.base, "/no-such-page");
       check("worker (made in app): custom 404", missing.status === 404 && missing.text.includes("Page not found"), missing.status);
       check("worker (made in app): unknown form", (await post(s.base, "/api/forms/nope", {})).status === 404);
@@ -150,6 +153,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/"), contact = await get(s.base, "/contact/");
       check("worker (editable import): pages keep their WordPress addresses", about.status === 200 && about.text.includes("We <strong>fix</strong> bikes.")
         && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
+      const cart = await get(s.base, "/cart/");
+      check("worker (editable import): WordPress-only pages skipped", cart.status === 404 && !s.site.pages.some((p) => ["Members", "Cart"].includes(p.title)), cart.status);
     } finally { await s.child.stop(); }
   }
   if (sites.mirror) {
@@ -162,6 +167,9 @@ async function workerChecks(sites) {
       check("worker (exact copy): old site's tracking and Google Fonts hosts gone", !/googletagmanager|facebook\.com\/tr|fonts\.googleapis/.test(home.text));
       const about = await get(s.base, "/about/");
       check("worker (exact copy): copied page", about.status === 200);
+      const copySitemap = (await get(s.base, "/sitemap.xml")).text;
+      check("worker (exact copy): original sitemap, copied pages only (#74, #115)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>") && !copySitemap.includes("old-post"), copySitemap);
+      check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);

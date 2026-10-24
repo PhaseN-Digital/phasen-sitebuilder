@@ -157,6 +157,7 @@ async function copySite(url, log) {
 
 async function importWordPress(wp, log) {
   log(`Found "${plainText(wp.name)}" with ${wp.pages.length} page${wp.pages.length === 1 ? "" : "s"}.`);
+  if (wp.skipped?.length) log(`Skipped ${wp.skipped.map((t) => `"${plainText(t)}"`).join(", ")}: shop, log-in and account pages only work on WordPress itself.`);
   const home = new DOMParser().parseFromString(wp.homeHtml, "text/html");
 
   const style = wordpressStyle(home, wp.kitCss);
@@ -213,8 +214,8 @@ async function importWordPress(wp, log) {
         if (figure && !figure.querySelector("img") && !figure.textContent.trim()) figure.remove();
       }
       const sections = [{ id: rid(), type: "richtext", html: body.innerHTML.trim() }];
-      // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours.
-      if (/<form[\s>]/i.test(p.html)) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
+      // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours. Never for log-in/shop forms (lib/wordpress.js).
+      if (p.form) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
       // The old address, so lib/build.js can keep it (or 301 it) and renaming the page doesn't move it.
       let oldPath = null;
       try { oldPath = decodeURIComponent(new URL(p.link, wp.base + "/").pathname); } catch {}
