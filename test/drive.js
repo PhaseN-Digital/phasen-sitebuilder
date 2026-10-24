@@ -237,6 +237,8 @@ app.on("browser-window-created", (_e, win) => {
       check("legacy import: Publish tab says why and offers the declaration", /imported before Site Builder asked/.test(notice || "") && await run(`[...document.querySelectorAll("button")].some((b) => b.textContent === "Confirm ownership…")`), notice);
       const refused = await run(`cms.call("sites:publish", ${JSON.stringify(id)}).then(() => "published", (e) => e.message)`);
       check("legacy import: main process refuses to publish it", /ownership declaration/.test(refused), refused);
+      const exportRefused = await run(`cms.call("sites:export", ${JSON.stringify(id)}).then(() => "exported", (e) => e.message)`);
+      check("legacy import: main process refuses to export it (#145)", /ownership declaration/.test(exportRefused), exportRefused);
       await shot("legacy-declaration");
       await clickButton("Confirm ownership…");
       await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
@@ -451,6 +453,9 @@ app.on("browser-window-created", (_e, win) => {
       const M = path.join(UD, "sites", id, "mirror");
       const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
       check("declaration: provenance recorded (exact copy), unverified", s.importProvenance?.source === new URL(SB_EL).origin && s.importProvenance.verification?.status === "unverified" && s.importProvenance.declaredBy?.name === "Jo Declarer", s.importProvenance);
+      const previewed = await Promise.all(["/", "/about/", "/nope/"].map((p) => require("electron").net.fetch(`preview://${id}${p}`).then((r) => r.text())));
+      check("exact copy: in-app preview shows the provenance marker (#145)", previewed.every((h) => h.includes(`<meta name="phasen:imported-from" content="${new URL(SB_EL).origin}">`) && (h.match(/name="generator"/g) || []).length === 1)
+        && !read(path.join(M, "index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
       check("exact copy: pages", JSON.stringify(s.pages.map((p) => p.mirror).sort()) === JSON.stringify(["/", "/about/", "/contact-us/"]), s.pages.map((p) => p.mirror));
 
       const files = [];
