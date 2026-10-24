@@ -637,14 +637,16 @@ app.whenReady().then(() => {
   protocol.handle("preview", async (request) => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host)) return new Response("Not found", { status: 404 });
-    const p = decodeURIComponent(pathname);
+    const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
     if (p === "/__sb-edit.js") {
       return new Response(await fs.readFile(path.join(__dirname, "app", "copy-edit-frame.js")), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
     }
     // Uploaded images come straight from the site folder so a fresh upload
     // shows before the next preview build finishes; exact-copy pages are
     // served from the site folder too rather than copied on every save.
-    const roots = p.startsWith("/assets/") ? [siteDir(host)] : [path.join(siteDir(host), "mirror"), path.join(previewDir(host), "public")];
+    // A copied site's own /assets/ files sit in mirror/ (#163).
+    const mirror = path.join(siteDir(host), "mirror");
+    const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
     const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
     const find = async (candidates) => {
       for (const name of candidates) for (const root of roots) {
@@ -658,7 +660,7 @@ app.whenReady().then(() => {
     // Copied pages get the provenance marker the published copy will have (#145),
     // and open in edit mode on the Pages tab (app/copied.js). The editor reads
     // and writes the file itself (mirror:read/write), so neither ends up in it.
-    if (file.endsWith(".html") && file.startsWith(path.join(siteDir(host), "mirror") + path.sep)) {
+    if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
       let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
       if (found && new URL(request.url).searchParams.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
       return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
