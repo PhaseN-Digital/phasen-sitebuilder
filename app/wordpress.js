@@ -334,8 +334,8 @@ function renderImport() {
   $("#main").replaceChildren(h("div", { className: "import-wrap" }, form));
 }
 
-$("#import-wp").addEventListener("click", () => {
-  clearTimeout(saveTimer);
+$("#import-wp").addEventListener("click", async () => {
+  await flushSave();
   site = null;
   loadSites();
   renderImport();

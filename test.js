@@ -608,6 +608,44 @@ const site = {
     assert.strictEqual(cfg.publishedWith(appS, site, {}, id).cloudflare.token, "T-site", "older publishes: the current account");
   }
 
+  // JSON stores (#147): overlapping updates all survive, writes are atomic, a broken file recovers from its backup.
+  {
+    const cfg = require("./lib/settings");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-store-"));
+    const st = cfg.store(root);
+    const file = path.join(root, "settings.json");
+    await Promise.all(Array.from({ length: 50 }, (_, i) => st.update((s) => { s.defaults[`k${i}`] = i; })));
+    const saved = JSON.parse(fs.readFileSync(file, "utf8")).defaults;
+    assert.strictEqual(Object.keys(saved).length, 50, "all 50 concurrent updates survive");
+    assert(Object.entries(saved).every(([k, v]) => k === `k${v}`));
+    assert.deepStrictEqual(fs.readdirSync(root).sort(), ["settings.json", "settings.json.bak"], "no temp files left behind");
+    // A crash mid-write elsewhere, or a hand edit: truncated JSON falls back to the last good backup.
+    const errors = [];
+    const realError = console.error;
+    console.error = (m) => errors.push(m);
+    try {
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").slice(0, 40));
+      assert.strictEqual(Object.keys((await st.load()).defaults).length, 50, "truncated file read from the backup");
+      await st.update((s) => { s.autoUpdate = false; });
+      const fixed = JSON.parse(fs.readFileSync(file, "utf8"));
+      assert(fixed.autoUpdate === false && Object.keys(fixed.defaults).length === 50, "an update after recovery keeps the backed-up values");
+      fs.writeFileSync(file, "");
+      fs.writeFileSync(`${file}.bak`, "{");
+      assert.deepStrictEqual(await st.load(), { defaults: {} }, "both unreadable: defaults");
+      fs.rmSync(file); fs.rmSync(`${file}.bak`);
+    } finally {
+      console.error = realError;
+    }
+    assert(errors.length === 3 && /using settings.json.bak/.test(errors[0]) && /using defaults/.test(errors[2]), "recoveries are logged");
+    // A failing change saves nothing and doesn't block the queue.
+    await assert.rejects(st.update(() => { throw new Error("nope"); }), /nope/);
+    assert.strictEqual((await st.update((s) => { s.after = 1; })).after, 1);
+    // Site accounts go through the same store.
+    await Promise.all(["cloudflare", "resendKey"].map((k) => st.updateSite(root, (a) => { a[k] = k; })));
+    assert.deepStrictEqual(await st.loadSite(root), { cloudflare: "cloudflare", resendKey: "resendKey" });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);

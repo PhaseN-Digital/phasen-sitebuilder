@@ -56,7 +56,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, themeBuilder, settingsPage };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -178,6 +178,46 @@ app.on("browser-window-created", (_e, win) => {
       const s = JSON.parse(read(path.join(UD, "sites", id, "site.json")));
       check("theme builder: site uses the local theme", s.themeSource === "local" && s.theme === "regression-bikes-theme" && read(path.join(UD, "preview", id, "public", "styles.css")).includes("/* theme-builder "), { theme: s.theme, themeSource: s.themeSource });
       await shot("theme-builder-design");
+    }
+
+    // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------
+    async function pendingEdits() {
+      const { created, wordpress, mirror } = result.sites;
+      const editButton = (text) => `{ const i = ${fieldInput("Button text")}; i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); }`;
+      const leave = { "switching site": `openSite(${JSON.stringify(wordpress)})`, "opening Settings": "openSettings()", "opening Themes": "openThemes()",
+        "opening Import": `document.querySelector("#import-wp").click()` };
+      for (const [way, js] of Object.entries(leave)) {
+        await run(`openSite(${JSON.stringify(created)})`);
+        await run(`tab = "pages"; pageId = site.pages[0].id; renderEditor(); ${editButton(`Book now, then ${way}`)} ${js}`);
+        await sleep(1000);
+        await run(`openSite(${JSON.stringify(created)})`);
+        const kept = await run(`site.pages[0].sections[0].buttonText`);
+        check(`pending edit: kept when ${way}`, kept === `Book now, then ${way}`, kept);
+      }
+      // Rich text (Quill) goes through the same debounce.
+      await run(`openSite(${JSON.stringify(wordpress)})`);
+      await run(`tab = "pages"; pageId = site.pages[1].id; renderEditor(); 0`);
+      await waitFor(() => run(`Boolean(document.querySelector(".rich-editor .ql-editor"))`));
+      await run(`Quill.find(document.querySelector(".rich")).insertText(0, "Pending rich text. ", "user"); openSite(${JSON.stringify(created)})`);
+      const rich = JSON.parse(read(path.join(UD, "sites", wordpress, "site.json"))).pages[1].sections[0].html;
+      check("pending edit: rich text kept when switching site", rich.includes("Pending rich text."), rich.slice(0, 80));
+      // A copied page's edit is written by the time the next site has opened.
+      if (mirror) {
+        await run(`openSite(${JSON.stringify(mirror)})`);
+        await run(`tab = "pages"; pageId = site.pages.find((p) => p.mirror === "/").id; renderEditor(); 0`);
+        await waitFor(() => inFrame(`document.readyState === "complete" && Boolean(document.querySelector("h1[data-sb-edit]"))`));
+        await inFrame(`{ const el = document.querySelector("h1"); el.click(); el.textContent = "Welcome to Acme Widgets!"; el.dispatchEvent(new FocusEvent("blur")); 0 }`);
+        await waitFor(() => run(`document.querySelector(".save-state")?.textContent === "Saving…"`), 3000);
+        await run(`openSite(${JSON.stringify(created)})`);
+        check("pending edit: copied page edit written before the next site opens", read(path.join(UD, "sites", mirror, "mirror", "index.html")).includes(">Welcome to Acme Widgets!</h1>"));
+      }
+    }
+
+    // Last step: an edit, then the app quits straight away. regression.js checks it reached site.json (#143).
+    async function closeWithPendingEdit() {
+      await run(`openSite(${JSON.stringify(result.sites.created)})`);
+      await run(`tab = "pages"; pageId = site.pages[0].id; renderEditor(); { const i = ${fieldInput("Button text")}; i.value = "Book before closing"; i.dispatchEvent(new Event("input")); } 0`);
+      result.closeEdit = { id: result.sites.created, buttonText: "Book before closing" };
     }
 
     // ---------- 3b. a site imported before #141 must declare ownership before it can be published again ----------

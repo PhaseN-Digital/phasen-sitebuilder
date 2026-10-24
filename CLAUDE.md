@@ -208,6 +208,12 @@ are not, so add them yourself.
   `site.json`. Account IPC handlers take an optional site id last; the
   renderer must always pass it (or null), since the IPC wrapper appends the
   event.
+- JSON stores (#147): settings.json, accounts.json, site.json and
+  publish.json are read and written only through `lib/json-store.js`
+  (per-file queue, atomic temp+fsync+rename, `<file>.bak` fallback when a
+  file doesn't parse). Change settings or accounts with
+  `settingsStore.update(fn)`/`updateSite(dir, fn)`, never load-then-save,
+  or two overlapping changes drop one of them.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
@@ -249,6 +255,12 @@ are not, so add them yourself.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
+- Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
+  leaves the editor or writes/publishes the site (switching site, Settings,
+  Themes, Import, delete, publish, and window close via main.js's `close`
+  handler) must `await flushSave()` first, never just `clearTimeout`, or the
+  last edit is lost (#143). `flushSave` also waits for copied-page edits
+  (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
 - Rich text is Quill 2 (`richTextEditor` in `app/app.js`), loaded from
   `node_modules/quill/dist` by `app/index.html`. Everything it saves goes
   through the same sanitizer, so a new Quill format needs a matching

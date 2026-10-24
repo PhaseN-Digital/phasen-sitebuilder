@@ -199,7 +199,9 @@ published always-pass test secret, so that one step needs internet access.
   `lib/settings.js` is the one resolver (`resolve`, via `settingsFor` in
   main.js) that build, publish, unpublish, inbox and import use, and the one
   place settings are stored, so the sites folder and portable secrets (#136)
-  can move them. Publishing records the account (`accountId`, and a hash of
+  can move them. Those JSON files are written atomically through one queue
+  per file (`lib/json-store.js`), with a `.bak` copy that is read if the file
+  is ever unreadable. Publishing records the account (`accountId`, and a hash of
   the Resend key) in `publish.json`; taking offline and the inbox use that
   account, not whatever is current, and publishing to a different account
   while the site is live is refused. Older settings and sites migrate on read

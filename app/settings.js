@@ -4,10 +4,7 @@
 // and siteAccount; main.js settingsFor resolves them). Uses app.js's helpers.
 
 async function openSettings() {
-  if (site) { // keep an edit made just before leaving the editor
-    clearTimeout(saveTimer);
-    await call("sites:save", site).catch(() => {});
-  }
+  await flushSave();
   site = null;
   loadSites();
   settings = await call("settings:get");

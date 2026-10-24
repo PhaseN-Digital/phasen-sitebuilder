@@ -104,20 +104,36 @@ function imageField(label, obj, key, max = 1920, hint) {
 }
 
 // ---------- saving + preview ----------
-let saveTimer;
+let saveTimer = null, saving = Promise.resolve();
 function save() {
   $(".save-state").textContent = "Saving…";
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      paths = await call("sites:save", site);
-      $(".save-state").textContent = "All changes saved";
-      refreshPreview();
-      document.querySelector(`#site-list [data-id="${site.id}"]`).textContent = site.name || "Untitled";
-    } catch (e) {
-      $(".save-state").textContent = `Not saved: ${errorText(e)}`;
-    }
-  }, 400);
+  saveTimer = setTimeout(flushSave, 400);
+}
+
+// Writes any edit still waiting for save()'s debounce, and waits for copied-page
+// edits (copied.js) to finish. Everything that leaves the editor (switching site,
+// Settings, Themes, Import, delete, publish, closing the window) awaits this
+// first, or the last 400ms of typing would be lost (#143). Never throws.
+function flushSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    const s = site;
+    saving = saving.then(async () => {
+      try {
+        const saved = await call("sites:save", s);
+        if (site !== s) return; // the editor has moved on; the write is all that mattered
+        paths = saved;
+        $(".save-state").textContent = "All changes saved";
+        refreshPreview();
+        document.querySelector(`#site-list [data-id="${s.id}"]`).textContent = s.name || "Untitled";
+      } catch (e) {
+        if (site === s) $(".save-state").textContent = `Not saved: ${errorText(e)}`;
+      }
+    });
+  }
+  return Promise.all([saving, copyEdits]).then(() => {});
 }
 
 function refreshPreview() {
@@ -135,7 +151,7 @@ async function loadSites(activeId) {
 }
 
 async function openSite(id) {
-  clearTimeout(saveTimer);
+  await flushSave();
   publishLog = "";
   overriding = {};
   ({ site, url: publishedUrl, canUnpublish, accounts: siteAccounts } = await call("sites:get", id));
@@ -856,7 +872,7 @@ function publishTab() {
     : ["This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it, or have permission to copy it, before you publish it again. ",
        h("button", { onclick: () => askDeclaration(true) }, "Confirm ownership…")]);
   const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !(siteAccounts.resend || settings.resend) || undeclared, onclick: () => run(publishBtn, async () => {
-    clearTimeout(saveTimer);
+    await flushSave();
     paths = await call("sites:save", site);
     await call("sites:publish", site.id);
   }) }, publishedUrl ? "Publish changes" : "Publish website");
@@ -879,7 +895,7 @@ function publishTab() {
   deleteDialog.addEventListener("close", () => {
     if (deleteDialog.returnValue !== "delete") return;
     run(deleteBtn, async () => {
-      clearTimeout(saveTimer);
+      await flushSave();
       await call("sites:delete", site.id, offline.checked); // with offline set, nothing local is deleted unless taking it offline worked
       site = null;
       $("#main").replaceChildren(h("div", { className: "welcome" }, h("h1", {}, "Website deleted")));

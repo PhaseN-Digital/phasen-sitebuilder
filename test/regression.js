@@ -52,8 +52,12 @@ async function driveApp(wp, el, updates, gh) {
   await app.done;
   clearTimeout(timer);
   if (!fs.existsSync(result)) { check("app run produced results", false, "see the log above"); return {}; }
-  const { checks: appChecks, sites } = JSON.parse(fs.readFileSync(result, "utf8"));
+  const { checks: appChecks, sites, closeEdit } = JSON.parse(fs.readFileSync(result, "utf8"));
   checks.push(...appChecks); // already printed by drive.js
+  if (closeEdit) {
+    const kept = JSON.parse(fs.readFileSync(path.join(OUT, "userdata", "sites", closeEdit.id, "site.json"), "utf8")).pages[0].sections[0].buttonText;
+    check("pending edit: kept when the app quits", kept === closeEdit.buttonText, kept);
+  }
   return sites;
 }
 
