@@ -124,6 +124,11 @@ checks the whole app end to end with no accounts, against fake sites in
   Settings page (app defaults and accounts, a per-site default override and
   Cloudflare account, then publish and take offline with Cloudflare/Resend
   stubbed in `lib/publish.js`, checking which account and values were used);
+  site history (the publish tag, an edit shown as a version with its
+  page-level changes, restore, no secrets or build output in any commit) and
+  portable secrets; then the app is started again with a fresh userData on
+  the same sites folder (a reinstall or new computer): sites found, asked
+  for the passphrase, a wrong one refused, unlocked;
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
@@ -142,12 +147,52 @@ published always-pass test secret, so that one step needs internet access.
 
 ## How it fits together
 
-- `main.js`: Electron main process. Stores sites under the app's user-data
-  folder (`sites/<id>/site.json` + `assets/`; uploads nothing uses any more
-  are left out of published/exported sites and deleted at the next startup
-  once a day old), serves the live preview through a
-  `preview://` protocol, and holds API keys encrypted with the OS keychain
-  (`safeStorage`).
+- `main.js`: Electron main process. Stores each site in its own folder in
+  the sites folder (below; `site.json` + `assets/`; uploads nothing uses any
+  more are left out of published/exported sites and deleted at the next
+  startup once a day old), serves the live preview through a `preview://`
+  protocol, and keeps API keys encrypted (below). In this README,
+  `sites/<id>/` means that site's folder.
+- Sites folder, secrets and history (#136): `<Documents>/PhaseN Sites/` by
+  default (Settings › Data › Change folder… moves the sites there, or points
+  at a folder that already has some; the choice is in `userData/location.json`).
+  One sub-folder per site, named from its name when it was made, each its
+  own git repo (`lib/site-repo.js`, through
+  [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
+  no git), plus `.phasen/` for the app's settings. On start, and with
+  Settings › Data › Find sites, every sub-folder with a `site.json` and a
+  `.git` is loaded (`lib/sites-folder.js` `scan`), so a reinstall or a new
+  computer finds its sites. userData keeps only machine-local things:
+  previews and publish builds (so they're never in a repo), caches, local
+  themes and `location.json`. Edits are committed after 15 seconds without
+  one, when another site opens, before publishing and on quit, with messages
+  from a page-level summary ("Edited page Home; Added page Contact");
+  publishing commits "Published the website" and tags it
+  `live-YYYYMMDD-HHMM`. The History tab lists versions and tags, shows what
+  each changed, and restores one as a new commit (`publish.json` and
+  `accounts.json` are left as they are, since they describe what's live).
+  **Secrets** (`lib/secrets.js`) never sit in a JSON file: every value under
+  a `token`, `resendKey`, `secret`, `sendingKey` or `password` key is split
+  out on write into `<site>/.secrets/secrets.enc` (per site: its accounts,
+  Turnstile secret, sending key) or `.phasen/secrets.enc` (the app's
+  accounts and theme-source tokens), and joined back on read. The commit
+  code never stages `.secrets/` or a `secrets.enc`, whatever `.gitignore`
+  says. They're encrypted with `safeStorage` by default (survives a
+  reinstall on the same machine and user), or with **portable secrets**
+  (Settings › Data) by a passphrase: scrypt (N=2^15) → AES-256-GCM, with the
+  salt and a check value in `.phasen/portable.json` and the derived key
+  remembered with `safeStorage` in `location.json`; the passphrase is never
+  stored. A secrets file that can't be decrypted (another computer, damage)
+  leaves those values missing, with a "re-enter" message in Settings and at
+  startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
+  a secret is next saved. A published site whose Turnstile secret was lost
+  gets a new one (`rotate_secret`) on the next publish; a lost sending key is
+  re-created. Sites and settings from before #136 (`userData/sites`,
+  `userData/settings.json`, each secret sealed separately) are moved on the
+  first start of this version: copied, verified (file hashes), secrets
+  re-encrypted, committed, renamed into place, and only then removed, so an
+  interrupted move is finished by the next start; a one-time notice says
+  where they went.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the WordPress import screen and HTML sanitizer; `app/copied.js` and
   `app/copy-edit-frame.js` edit exact-copy pages. Colours are the PhaseN
@@ -206,16 +251,16 @@ published always-pass test secret, so that one step needs internet access.
   override any default where that setting appears ("Using app default (…)",
   "Override for this site", "Reset to default"; stored in
   `site.json`'s `overrides`, where a present key, even blank, is an override)
-  and use its own Cloudflare/Resend accounts (Publish tab; sealed with
-  `safeStorage` in `sites/<id>/accounts.json`, never in `site.json`).
+  and use its own Cloudflare/Resend accounts (Publish tab; in
+  `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
+  never in `site.json`).
 - Documentation (#165): the sidebar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
   in `app/app.js`, its only copy.
   `lib/settings.js` is the one resolver (`resolve`, via `settingsFor` in
   main.js) that build, publish, unpublish, inbox and import use, and the one
-  place settings are stored, so the sites folder and portable secrets (#136)
-  can move them. Those JSON files are written atomically through one queue
+  place settings are stored (`store()`, which splits secrets out, #136). Those JSON files are written atomically through one queue
   per file (`lib/json-store.js`), with a `.bak` copy that is read if the file
   is ever unreadable. That queue is per process, so only one copy of the app
   runs per data folder (#149): opening it again brings the existing window
@@ -235,7 +280,7 @@ published always-pass test secret, so that one step needs internet access.
   unauthenticated 60/hour limit goes a long way), every theme in it is
   validated with `lib/theme-validate.js`, and the result is cached in
   `userData/theme-cache`. Private repos use a fine-grained token (Contents:
-  Read-only) saved per source with `safeStorage`; it's only ever sent to
+  Read-only) saved per source (encrypted, like every secret); it's only ever sent to
   api.github.com, and the download link GitHub redirects to is fetched
   without it. Choosing a theme copies it to `sites/<id>/theme/` and sets
   `site.themeSource`, so builds and publishes never need the repo or the
@@ -264,7 +309,7 @@ published always-pass test secret, so that one step needs internet access.
   OAuth device flow (the app shows a code, the user approves it on
   github.com; no client secret), scope `public_repo`, plus `repo` when
   "Also allow private repositories" is ticked. The token is app-wide,
-  sealed in `settings.json`'s `github`, and also used for theme sources that
+  in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
   `preview.png`, as one commit through the git data API. "Push to repo"
@@ -607,8 +652,17 @@ site's local files until taking it offline has fully worked.
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
   only on Linux. Moving a live site to another Cloudflare account means taking
-  it offline first. Backup/restore (#70), diagnostics (#86), the sites folder and portable secrets (#136) are disabled
+  it offline first. Backup/restore (#70), diagnostics (#86) are disabled
   placeholders.
+- Sites folder and history (#136): tested on Linux only (unit tests, and the
+  regression suite with `safeStorage` in its plain-text mode), not yet on
+  Windows/macOS keychains or with a synced folder (OneDrive/iCloud). Site
+  folders keep the name they were made with when a site is renamed. A lost
+  sending key is re-created without deleting the old one at Resend. A secrets
+  problem for a deleted site's folder shows until the app restarts. Nothing
+  is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
+  only lists files in the History tab. Restoring a version doesn't restore
+  the site's accounts or publish state, by design.
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
   repo. Sources are only downloaded when first listed, on "Refresh" and on
