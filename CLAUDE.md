@@ -171,7 +171,9 @@ are not, so add them yourself.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
-  Linux (AppImage + deb, x64 only) builds on `ubuntu-latest`; the deb needs
+  Linux (AppImage + deb, x64 only) builds on the self-hosted org runner
+  (`[self-hosted, Linux, X64]`, #237; every other Linux job runs there too, it
+  has no sudo, so preinstall tools on it rather than `apt-get` in a job); the deb needs
   `homepage` and `build.linux.maintainer` in package.json or fpm refuses.
   electron-builder can't collect dependencies through a symlinked
   `node_modules` (a worktree's `ln -s`), so packaging needs a real `npm ci`.

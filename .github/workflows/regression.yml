@@ -22,7 +22,7 @@ jobs:
   # permission beyond contents: read (the release gate calls this workflow).
   changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       test: ${{ steps.diff.outputs.test }}
     steps:
@@ -43,7 +43,7 @@ jobs:
       !cancelled() && (github.event_name != 'pull_request'
         || startsWith(github.head_ref, 'release-please--')
         || needs.changes.outputs.test == 'true')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -53,7 +53,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      # The self-hosted runner has xvfb preinstalled and no sudo (#237).
+      - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
       - run: npm ci
       - run: npm run test:regression
         env:

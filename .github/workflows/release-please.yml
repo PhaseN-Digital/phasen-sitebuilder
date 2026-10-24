@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -96,7 +96,7 @@ jobs:
   release-gate:
     needs: [release-please, regression]
     if: ${{ !cancelled() && needs.release-please.outputs.pr_sha != '' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       merged: ${{ steps.gate.outputs.merged }}
     env:
@@ -177,7 +177,7 @@ jobs:
   release:
     needs: release-gate
     if: ${{ needs.release-gate.outputs.merged == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -205,7 +205,8 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    # The Linux build runs on the self-hosted org runner (#237); the others stay GitHub-hosted.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted", "Linux", "X64"]') || matrix.os }}
     defaults:
       run:
         shell: bash
@@ -291,7 +292,7 @@ jobs:
   publish-installers:
     needs: [release-please, release, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && (needs.release-please.outputs.release_created == 'true' || needs.release.outputs.release_created == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       TAG: ${{ needs.release-please.outputs.tag_name || needs.release.outputs.tag_name }}
       PUBLIC_REPO: PhaseN-Digital/phasen-sitebuilder-releases
