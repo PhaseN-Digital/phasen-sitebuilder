@@ -616,7 +616,21 @@ for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, (event, ...args) => fn(...args, event));
 }
 
+// One running copy per userData (#149): lib/json-store.js queues writes per
+// process, so two copies could each overwrite the other's changes. A second
+// launch quits and brings the existing window to the front instead.
+const firstInstance = app.requestSingleInstanceLock();
+let mainWindow;
+if (!firstInstance) app.quit();
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  if (!firstInstance) return;
   // Replaced/removed images (#14); see pruneAssets for why only at startup.
   handlers["sites:list"]().then((sites) => Promise.all(sites.map(async ({ id }) => pruneAssets(await readSite(id), siteDir(id)))))
     .catch((e) => console.error("Couldn't remove unused images:", e));
@@ -656,7 +670,7 @@ app.whenReady().then(() => {
     return new Response(res.body, { status: found ? 200 : 404, headers });
   });
 
-  const win = new BrowserWindow({
+  const win = mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1000,

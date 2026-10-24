@@ -160,6 +160,10 @@ are not, so add them yourself.
 - Installers must be built on each OS (platform-specific esbuild/workerd
   binaries), which is why `build` is a matrix. The same goes for CPU arch:
   the Intel dmg comes from an Intel runner (`macos-15-intel`), not an arm one.
+  Linux (AppImage + deb, x64 only) builds on `ubuntu-latest`; the deb needs
+  `homepage` and `build.linux.maintainer` in package.json or fpm refuses.
+  electron-builder can't collect dependencies through a symlinked
+  `node_modules` (a worktree's `ln -s`), so packaging needs a real `npm ci`.
 - `package.json`'s `allowScripts` approves the dependency install scripts
   those binaries need (esbuild, workerd, electron-winstaller, fsevents on
   macOS). Newer npm blocks unapproved install scripts, which would ship
@@ -221,7 +225,10 @@ are not, so add them yourself.
   (per-file queue, atomic temp+fsync+rename, `<file>.bak` fallback when a
   file doesn't parse). Change settings or accounts with
   `settingsStore.update(fn)`/`updateSite(dir, fn)`, never load-then-save,
-  or two overlapping changes drop one of them.
+  or two overlapping changes drop one of them. The queue is in-process, so
+  main.js takes `app.requestSingleInstanceLock()` (#149, per userData dir:
+  test harnesses with their own userData never block each other or a
+  running app); keep it before anything writes.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.

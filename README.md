@@ -10,7 +10,7 @@ npm install
 npm start        # run the app
 npm test         # builder self-check
 npm run test:regression   # end-to-end suite, see "Regression tests"
-npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS)
+npm run dist     # installer for the current OS (.exe on Windows, .dmg on macOS, .AppImage and .deb on Linux)
 ```
 
 Users download installers from the public
@@ -45,8 +45,8 @@ use `scripts/check-commit.js`.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
   the `build` job then builds the Windows installer and the macOS installers
-  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and attaches
-  them to it. Running the workflow by hand ("Run workflow") builds
+  (`…-arm64.dmg` for Apple Silicon, `…-x64.dmg` for Intel) and the Linux x64
+  ones (`…-x86_64.AppImage`, `…-amd64.deb`, unsigned) and attaches them to it. Running the workflow by hand ("Run workflow") builds
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
@@ -67,7 +67,8 @@ use `scripts/check-commit.js`.
 - Public downloads and update check (#37): once `build` succeeds for a
   release, `publish-installers` copies the installers and a generated
   `latest.json` (`version`, `notes` URL, `downloads` keyed
-  `<platform>-<arch>`: `win32-x64`, `darwin-arm64`, `darwin-x64`) to a
+  `<platform>-<arch>`: `win32-x64`, `darwin-arm64`, `darwin-x64`, `linux-x64`, the AppImage; the
+  .deb is published alongside but not linked) to a
   release with the same tag in the public
   `PhaseN-Digital/phasen-sitebuilder-releases` repo, with this release's
   changelog section as its notes. No source goes there. It authenticates
@@ -101,6 +102,10 @@ use `scripts/check-commit.js`.
 checks the whole app end to end with no accounts, against fake sites in
 `test/fakes.js`:
 
+- single instance (`test/instance.js`): a second copy on the same data
+  folder quits and the first window is restored and focused (that `focus()`
+  is called; whether the OS grants focus is up to the window manager, and
+  xvfb has none), while a copy on another data folder runs alongside;
 - the real app, driven headlessly by `test/drive.js`: the update banner
   (from a fake `latest.json`), create a site, preview,
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
@@ -208,7 +213,9 @@ published always-pass test secret, so that one step needs internet access.
   place settings are stored, so the sites folder and portable secrets (#136)
   can move them. Those JSON files are written atomically through one queue
   per file (`lib/json-store.js`), with a `.bak` copy that is read if the file
-  is ever unreadable. Publishing records the account (`accountId`, and a hash of
+  is ever unreadable. That queue is per process, so only one copy of the app
+  runs per data folder (#149): opening it again brings the existing window
+  to the front instead. Publishing records the account (`accountId`, and a hash of
   the Resend key) in `publish.json`; taking offline and the inbox use that
   account, not whatever is current, and publishing to a different account
   while the site is live is refused. Older settings and sites migrate on read
@@ -560,6 +567,11 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Linux (#153): x64 only (no arm64 build), unsigned, and checked only
+  headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
+  `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used
+  on a real Linux desktop. The update banner links the AppImage; .deb users
+  update by downloading the new .deb themselves.
 - Form inbox (#75): the D1 API calls (create, query, delete) are tested only
   against a stubbed API in test.js, and the Worker's storage only under
   `wrangler dev`'s local D1, not yet against real Cloudflare. A changed

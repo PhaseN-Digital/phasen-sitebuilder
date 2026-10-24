@@ -195,6 +195,7 @@ jobs:
   # platform-specific npm optional deps, so they can't be cross-built.
   # That includes CPU arch: macos-latest is Apple Silicon (arm64 dmg) and
   # macos-15-intel is Intel (x64 dmg); electron-builder builds for the host arch.
+  # ubuntu-latest builds the Linux x64 AppImage and .deb (#153).
   # A manual dispatch builds installers as run artifacts without a release.
   # The release comes from either release-please run: a maintainer-merged
   # release PR (first job) or a patch the gate merged (`release`).
@@ -203,7 +204,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-please.result == 'success' && (needs.release-please.outputs.release_created == 'true' || needs.release.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, macos-15-intel]
+        os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -269,13 +270,15 @@ jobs:
           path: |
             dist/*.exe
             dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
       - name: Attach installer to the release
         if: ${{ env.TAG != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" dist/*.exe dist/*.dmg --clobber
+          gh release upload "$TAG" dist/*.exe dist/*.dmg dist/*.AppImage dist/*.deb --clobber
 
   # Public downloads and the app's update check (#37). This repo is private,
   # so its release assets aren't downloadable by users: each release's
@@ -312,10 +315,11 @@ jobs:
           exe=$(ls *.exe)
           arm=$(ls *-arm64.dmg)
           x64=$(ls *-x64.dmg)
+          linux=$(ls *.AppImage) # the .deb is published too, but the banner links the AppImage
           base="https://github.com/$PUBLIC_REPO/releases/download/$TAG"
           jq -n --arg version "${TAG##*-v}" --arg notes "https://github.com/$PUBLIC_REPO/releases/tag/$TAG" \
-            --arg win "$base/$exe" --arg arm "$base/$arm" --arg x64 "$base/$x64" \
-            '{version: $version, notes: $notes, downloads: {"win32-x64": $win, "darwin-arm64": $arm, "darwin-x64": $x64}}' > latest.json
+            --arg win "$base/$exe" --arg arm "$base/$arm" --arg x64 "$base/$x64" --arg linux "$base/$linux" \
+            '{version: $version, notes: $notes, downloads: {"win32-x64": $win, "darwin-arm64": $arm, "darwin-x64": $x64, "linux-x64": $linux}}' > latest.json
           cat latest.json
           # The changelog section for this version, from the private release.
           gh release view "$TAG" --json body -q .body > ../notes.md
