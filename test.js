@@ -151,6 +151,19 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // Editable import skips WordPress-only pages and only swaps enquiry forms for ours (#56).
+  {
+    const { classifyPage } = require("./lib/wordpress");
+    const c = (title, html, link = "https://x.test/page/") => classifyPage({ title, html, link });
+    assert.deepStrictEqual(c("Register your interest", `<form class="wpcf7-form" method="post" action="/register-your-interest/#wpcf7-f1"><input name="your-email"></form>`), { wpOnly: false, enquiry: true });
+    assert.deepStrictEqual(c("Find us", `<form role="search" method="get"><input name="s"></form>`), { wpOnly: false, enquiry: false });
+    assert.deepStrictEqual(c("Get in touch", `<form class="woocommerce-form-login" method="post"><input name="username"><input type="password" name="password"></form><form class="wpforms-form" method="post"><input name="wpforms[fields][1]"></form>`), { wpOnly: false, enquiry: true });
+    assert.strictEqual(c("Your stuff", "<p>[woocommerce_my_account]</p>").wpOnly, true);
+    assert.strictEqual(c("Sign&nbsp;In", "<p>Welcome back</p>").wpOnly, true);
+    assert.strictEqual(c("Welcome", "<p>Hi</p>", "https://x.test/lost-password/").wpOnly, true);
+    assert.strictEqual(c("Join", `<form method="post"><input name="user_login"><input type="password" name="pass1"></form>`).wpOnly, true);
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {
@@ -165,6 +178,8 @@ const site = {
           const r = await fetchWordPress(wp.url.replace("http:", "https:"), "admin", "abcd efgh");
           const welcome = r.pages.find((p) => p.id === 3).html;
           assert(r.pages.length === 3 && r.name === "Bob&#8217;s Bikes", `hidden=${hidden}: pages fetched`);
+          assert.deepStrictEqual(r.skipped, ["Members", "Cart"], `hidden=${hidden}: WordPress-only pages skipped`);
+          assert.deepStrictEqual(r.pages.map((p) => p.form), [false, true, false], `hidden=${hidden}: only the contact page gets our form`);
           assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
           assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
         } finally { await wp.close(); }
@@ -244,6 +259,28 @@ const site = {
   assert(!r.writes.length && !r.logs, "republish is a no-op");
   r = await runRedirect({ records: [], rules: [] });
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
+
+  // Unpublish (#71): best-effort, only removes what publishing made, keeps failures for a retry.
+  const writes = [];
+  globalThis.fetch = async (url, { method }) => {
+    url = url.replace(/^https:\/\/api\.(cloudflare\.com\/client\/v4|resend\.com)/, "");
+    const reply = (status, result) => ({ status, ok: status < 300, json: async () => (status < 300 ? { success: true, result } : { success: false, errors: [{ message: "boom" }], message: "gone" }) });
+    if (method !== "GET") writes.push(`${method} ${url}`);
+    if (url.includes("/challenges/widgets/")) return reply(500);
+    if (url.startsWith("/api-keys/")) return reply(404);
+    if (method !== "GET") return reply(200, {});
+    if (url.includes("/workers/domains")) return reply(200, [{ id: "d1" }]);
+    if (url.includes("dns_records")) return reply(200, [{ id: "r1", comment: "PhaseN Site Builder: redirects to the apex" }, { id: "r2", comment: "theirs" }]);
+    return reply(200, { id: "rs1", rules: [{ id: "x2", ref: "theirs" }, { id: "x1", ref: "sitebuilder_www_to_apex" }] });
+  };
+  const logs = [];
+  const { unpublish } = require("./lib/publish");
+  const res = await unpublish("t", "k", { accountId: "a1", worker: "bob-1a2b", url: "https://bob.com", publishedAt: "x", www: { id: "z1", name: "bob.com" },
+    turnstile: { sitekey: "s1" }, sendingKey: "sealed", sendingKeyId: "k1", sendingKeyDomain: "dom" }, (l) => logs.push(l));
+  assert.deepStrictEqual(writes, ["DELETE /accounts/a1/workers/domains/d1", "DELETE /accounts/a1/workers/scripts/bob-1a2b?force=true",
+    "DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/challenges/widgets/s1", "DELETE /api-keys/k1"]);
+  assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
+  assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
   const { bump } = require("./scripts/release-bump");
@@ -259,6 +296,15 @@ const site = {
     [{ containsMain: "false" }, "isn't based on main"], [{ startMain: "" }, "missing"], [{ tested: undefined }, "missing"]]) {
     assert(staleReason({ ...ok, ...change }).includes(want), `stale: ${JSON.stringify(change)}`);
   }
+  // #111: a PR the gate refused as stale is re-gated without a new push.
+  const { gateReason } = require("./scripts/release-bump");
+  const main = "refs/heads/main";
+  assert(gateReason({ event: "push", ref: main, prsCreated: "true" }));
+  assert.strictEqual(gateReason({ event: "push", ref: main, prsCreated: "false", labels: ["regression-failed"] }), "");
+  assert(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: ["autorelease: pending", "regate"] }));
+  assert.strictEqual(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: [""] }), "");
+  assert(gateReason({ event: "workflow_dispatch", ref: main, prsCreated: "false", labels: ["needs-approval"] }));
+  assert.strictEqual(gateReason({ event: "workflow_dispatch", ref: "refs/heads/fix/x", prsCreated: "false" }), "");
 
   // Theme packages: the bundled ones are valid, bad ones are caught, and a
   // font stack instead of a font id still loads.

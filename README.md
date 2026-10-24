@@ -50,16 +50,18 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
-- Release gate: whenever release-please opens or updates the release PR,
-  the same run calls `regression.yml` on the PR's head. A **patch** release
+- Release gate: whenever release-please opens or updates the release PR
+  (or on a manual dispatch, or for a PR labelled `regate`), the same run
+  calls `regression.yml` on the PR's head (read from the branch ref, #111). A **patch** release
   (`scripts/release-bump.js`: same major.minor) that passes is merged by the
   workflow and released and built in that same run. A **minor/major**
   release that passes gets the `needs-approval` label and a comment, and is
   released when the maintainer merges it. A failure gets the
   `regression-failed` label and a comment, and is never merged. The gate
   only merges if `main` is still exactly what the regression run tested
-  against (#97); if anything landed on `main` meanwhile it comments and
-  leaves the PR to the next run, which re-gates it with the new commits. This all
+  against (#97); if anything landed on `main` meanwhile it comments, labels
+  the PR `regate` and leaves it to the next run (a push, the daily schedule,
+  or `gh workflow run release-please.yml`), which re-gates it. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -281,8 +283,8 @@ live DOM, which page scripts have modified), and the build strips the tags.
 Clicking a tagged text element that is (or is inside, or holds exactly one)
 link also shows a Link panel for changing where it points, applied like any
 other edit (site-wide for `s-` keys, undoable). Targets must be an http(s)
-address, `mailto:`, `tel:` or a copied page's path. Links on images (e.g. a
-logo) can't be changed yet.
+address, `mailto:`, `tel:` or a copied page's path. Clicking an image inside
+a link (e.g. a logo) shows the same Link panel under the Image panel.
 Before a page's file is first edited, its HTML is kept in
 `sites/<id>/mirror-original/`, for "Revert this page to the original" (which
 also drops that page's share of site-wide edits; they stay on other pages).
@@ -316,8 +318,15 @@ already signed in"). They're only sent over https and aren't stored.
   be kept (the home page, which is always `/`; a non-ASCII or reserved slug
   such as `/api/`), the page gets a title-based address and the old one a
   301 in `_redirects`. Pages added in the app use title-based addresses.
-- Pages that contained a WordPress form (Contact Form 7 etc.) get the
-  built-in contact form instead.
+- Pages that contained a WordPress enquiry form (Contact Form 7 etc.) get
+  the built-in contact form instead. Log-in, cart, checkout and search forms
+  are never swapped for it.
+- Pages that only work on WordPress (WooCommerce cart, checkout and my
+  account; log-in, register and lost-password; membership account pages)
+  are skipped and listed in the import log. They're recognised by slug or
+  title, WooCommerce/membership-plugin shortcodes and markup, or a log-in or
+  shop form with no enquiry form beside it (`classifyPage` in
+  `lib/wordpress.js`, using the same form rules as the exact copy).
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
   colours and font style are copied, from the home page's global styles
   (block themes; WordPress's own default button colour is ignored), or
@@ -354,8 +363,29 @@ Account › Turnstile › Edit, Zone › DNS › Edit and Zone › Single Redire
 Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
 in the Publish tab.
 
+## Taking a site offline
+
+"Take website offline" in the Publish tab, or ticking "Also take it offline"
+when deleting a site, undoes publishing (`unpublish` in `lib/publish.js`),
+using what `sites/<id>/publish.json` recorded at publish time:
+
+1. Deletes the Worker and its Custom Domains.
+2. Deletes the `www` record and redirect rule, but only ones publishing made
+   (matched by the record's comment and the rule's `ref`).
+3. Deletes the Turnstile widget and the site's Resend sending key.
+
+Each step is logged and best-effort: one failing doesn't stop the rest, and
+anything already gone (404) counts as removed. Whatever failed stays in
+`publish.json` so trying again only retries that, and a delete keeps the
+site's local files until taking it offline has fully worked.
+
 ## Known gaps
 
+- Taking a site offline (#71) leaves the domain registered with Resend and
+  Resend's DNS records in the zone, since they may predate the app or be
+  shared. Sites published before 0.5 didn't record their Resend key's id, so
+  that key has to be deleted at resend.com by hand (the log says so). Only
+  tested against a fake Cloudflare/Resend API so far, not the real ones.
 - Release gate: GitHub's merge API can't require an unchanged base, so a
   push to `main` in the second between the gate's last check and its merge
   still lands under the squash. The gate catches it and doesn't release from

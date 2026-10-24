@@ -153,6 +153,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/"), contact = await get(s.base, "/contact/");
       check("worker (editable import): pages keep their WordPress addresses", about.status === 200 && about.text.includes("We <strong>fix</strong> bikes.")
         && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
+      const cart = await get(s.base, "/cart/");
+      check("worker (editable import): WordPress-only pages skipped", cart.status === 404 && !s.site.pages.some((p) => ["Members", "Cart"].includes(p.title)), cart.status);
     } finally { await s.child.stop(); }
   }
   if (sites.mirror) {
@@ -169,6 +171,7 @@ async function workerChecks(sites) {
       check("worker (exact copy): original sitemap, copied pages only (#74, #115)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>") && !copySitemap.includes("old-post"), copySitemap);
       check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
+      check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);

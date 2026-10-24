@@ -19,9 +19,10 @@
     event.stopPropagation();
     const el = event.target.closest("[data-sb-edit]");
     if (!el || el.isContentEditable) return;
-    if (el.tagName === "IMG") return send({ type: "image", key: el.dataset.sbEdit, alt: el.alt, src: el.currentSrc || el.src });
     const links = el.closest("a") ? [el.closest("a")] : el.querySelectorAll("a");
-    send({ type: "link", key: el.dataset.sbEdit, href: links.length === 1 ? links[0].getAttribute("href") || "" : null });
+    const href = links.length === 1 ? links[0].getAttribute("href") || "" : null;
+    if (el.tagName === "IMG") return send({ type: "image", key: el.dataset.sbEdit, alt: el.alt, src: el.currentSrc || el.src, href });
+    send({ type: "link", key: el.dataset.sbEdit, href });
     const before = el.innerHTML;
     el.contentEditable = "true";
     el.focus();
