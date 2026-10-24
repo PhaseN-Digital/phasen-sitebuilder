@@ -395,10 +395,17 @@ already signed in"). They're only sent over https and aren't stored.
 
 ## What publishing does
 
-1. Uses the workers.dev subdomain, or the chosen Cloudflare zone as a Custom
-   Domain.
+1. Uses the workers.dev subdomain, or the chosen Cloudflare zone (plus an
+   optional subdomain such as `shop`, giving `shop.<zone>`, #135) as a Custom
+   Domain. The site stores this as `domain: { zoneId, zoneName, label }`
+   (`label` empty for the apex); sites saved as `{ id, name }` are migrated
+   when read. Labels must be DNS-safe (lowercase letters, digits and hyphens,
+   dots between parts, each at most 63 characters). Before publishing, the
+   Publish tab and the log warn, without blocking, if the hostname already
+   has DNS records or is attached to a different Worker.
 2. Creates/updates a Turnstile widget for that hostname.
-3. With a custom domain: registers it with Resend and writes Resend's DNS
+3. With a custom domain: registers the zone apex with Resend (a subdomain
+   site still sends from `website@<zone>`) and writes Resend's DNS
    records into the zone (scoped to `send.<domain>`, so existing mailboxes are
    untouched). Without one, forms send from `onboarding@resend.dev`, which
    Resend only delivers to the Resend account owner's email.
@@ -409,7 +416,7 @@ already signed in"). They're only sent over https and aren't stored.
    (forms only email) and the log says so.
 6. `wrangler deploy`, then `wrangler secret bulk` for the Turnstile secret and
    Resend key.
-7. With a custom domain: a proxied `www` CNAME and a 301 Single Redirect rule
+7. With a custom domain on the zone apex (not for a subdomain): a proxied `www` CNAME and a 301 Single Redirect rule
    (`http_request_dynamic_redirect` phase) sending `www.<domain>` to the apex,
    as phasen.digital's Terraform does. An existing `www` record or existing
    redirect rules are left alone (logged, not overwritten). If this step fails,
@@ -475,6 +482,11 @@ site's local files until taking it offline has fully worked.
   players without an http(s) referrer); they play on the published site.
   Vimeo's player was only checked to load in Electron, not played in a real
   browser.
+- Subdomains (#135): moving a published site from the apex to a subdomain
+  (or between hostnames) doesn't remove its old www redirect or old Custom
+  Domain until it's taken offline (#139). The hostname warnings and the
+  Custom Domain on a subdomain are only tested against a stubbed Cloudflare
+  API, not the real one.
 - Taking a site offline (#71) leaves the domain registered with Resend and
   Resend's DNS records in the zone, since they may predate the app or be
   shared. Sites published before 0.5 didn't record their Resend key's id, so

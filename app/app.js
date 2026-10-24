@@ -737,13 +737,25 @@ function publishTab() {
   let zones = [];
   const domainSelect = h("select", { disabled: !cfDone, onchange: (e) => {
     const zone = zones.find((z) => z.id === e.target.value);
-    site.domain = zone || null; save(); renderTab();
+    site.domain = zone ? { zoneId: zone.id, zoneName: zone.name, label: site.domain?.label || "" } : null; save(); renderTab();
   } }, h("option", { value: "" }, "Free address (…workers.dev)"),
-    site.domain && h("option", { value: site.domain.id, selected: true }, site.domain.name));
+    site.domain && h("option", { value: site.domain.zoneId, selected: true }, site.domain.zoneName));
   if (cfDone) call("zones").then((z) => {
     zones = z;
-    domainSelect.append(...z.filter((zone) => zone.id !== site.domain?.id).map((zone) => h("option", { value: zone.id }, zone.name)));
+    domainSelect.append(...z.filter((zone) => zone.id !== site.domain?.zoneId).map((zone) => h("option", { value: zone.id }, zone.name)));
   }).catch(() => {});
+  // Optional subdomain (#135): "shop" publishes to shop.<zone>. Checked as typed; saved only when valid.
+  const hostname = site.domain && (site.domain.label ? `${site.domain.label}.${site.domain.zoneName}` : site.domain.zoneName);
+  const labelErr = h("p", { className: "error" }), domainWarn = h("div", {});
+  const labelInput = site.domain && h("input", { value: site.domain.label, placeholder: "leave blank for the domain itself", oninput: (e) => {
+    const label = e.target.value.trim().toLowerCase().replace(/\.$/, "");
+    const err = label && !/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/.test(label)
+      ? "Use lowercase letters, numbers and hyphens (not at the start or end), with dots between parts, each part at most 63 characters." : "";
+    labelErr.textContent = err;
+    if (!err) { site.domain.label = label; save(); }
+  }, onchange: () => { if (!labelErr.textContent) renderTab(); } });
+  if (cfDone && site.domain) call("domain:check", site.id, site.domain).then((w) =>
+    domainWarn.replaceChildren(...w.map((x) => h("div", { className: "warn" }, x)))).catch(() => {});
 
   const log = h("pre", { className: "log", hidden: !publishLog }, publishLog);
   const status = h("p", { className: "error" });
@@ -827,8 +839,10 @@ function publishTab() {
     step("4. Web address", false,
       labelled("Domain", domainSelect,
         site.domain
-          ? `Your site will be at https://${site.domain.name}. Email records are added for you automatically.`
-          : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."])),
+          ? `Your site will be at https://${hostname}. Email records are added for you automatically${site.domain.label ? `, and form emails come from website@${site.domain.zoneName}` : ""}.`
+          : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."]),
+      site.domain && labelled("Subdomain (optional)", labelInput, `e.g. "shop" for shop.${site.domain.zoneName}. Only the domain itself gets a www redirect.`),
+      labelErr, domainWarn),
     paths.privacy && step("5. Privacy page", Boolean(site.privacy?.owner),
       h("p", {}, "Because your site has a form or analytics, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
         site.mirror ? "Copied pages keep their own footer, so add a link to it there if you can." : "It's linked from the footer of every page.",
