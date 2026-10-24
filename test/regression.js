@@ -10,7 +10,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor, startPlainSite, startUpdates, startGitHub } = require("./fakes");
+const { startWordPress, startElementor, startPlainSite, startUpdates, startGitHub, startResend } = require("./fakes");
 const themeSources = require("../lib/theme-sources");
 
 const ROOT = path.join(__dirname, "..");
@@ -132,8 +132,8 @@ function wranglerEnv() {
 }
 
 // Runs SQL against the built site's local D1 (the form inbox, #75), the same database `wrangler dev` uses.
-async function d1(dir, sql) {
-  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "d1", "execute", "regression-inbox", "--local", "--json", "--command", sql], { cwd: dir, env: wranglerEnv() });
+async function d1(dir, sql, db = "regression-inbox") {
+  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "d1", "execute", db, "--local", "--json", "--command", sql], { cwd: dir, env: wranglerEnv() });
   await child.done;
   try { return JSON.parse(child.output.slice(child.output.indexOf("["))).flatMap((r) => r.results); } catch { return { error: child.output.slice(-1500) }; }
 }
@@ -323,6 +323,47 @@ async function workerChecks(sites) {
   }
 }
 
+// Upgrading from v0.7.0 (#218): the app migrates test/fixtures/legacy-0.7.0 and
+// republishes (test/legacy.js), then the Worker it built sends a form message
+// with the uploaded key to a fake Resend that rejects anything but a real key.
+async function legacyChecks() {
+  const out = path.join(OUT, "legacy"), userData = path.join(out, "userdata"), result = path.join(out, "result.json");
+  fs.cpSync(path.join(__dirname, "fixtures", "legacy-0.7.0"), userData, { recursive: true });
+  const args = ["--no-sandbox", "-r", path.join(__dirname, "legacy.js"), "."];
+  const env = { ...process.env, SB_USERDATA: userData, SB_DOCS: path.join(out, "docs"), SB_RESULT: result, SB_LEGACY_OUT: out };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const headless = process.platform === "linux" && !process.env.DISPLAY;
+  const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
+  const timer = setTimeout(() => app.stop(), 120000);
+  await app.done;
+  clearTimeout(timer);
+  if (!fs.existsSync(result)) return check("legacy upgrade: app run produced results", false, app.output.slice(-1500));
+  const { checks: appChecks, publishDir, key, sealed } = JSON.parse(fs.readFileSync(result, "utf8"));
+  checks.push(...appChecks);
+  if (!publishDir) return;
+  const resend = await startResend();
+  try {
+    // The built Worker, pointed at the fake Resend, with each key in turn.
+    const worker = path.join(publishDir, "worker", "index.js");
+    fs.writeFileSync(worker, fs.readFileSync(worker, "utf8").replace("https://api.resend.com/emails", `${resend.url}/emails`));
+    for (const [label, apiKey, status] of [["uploaded key", key, "sent"], ["old sealed key", sealed, "failed (401): API key is invalid"]]) {
+      fs.writeFileSync(path.join(publishDir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\nRESEND_API_KEY=${apiKey}\n`);
+      const port = await freePort(), base = `http://127.0.0.1:${port}`;
+      const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", String(port), "--ip", "127.0.0.1"], { cwd: publishDir, env: wranglerEnv(), log: path.join(OUT, `wrangler-legacy-${status.slice(0, 4)}.log`) });
+      try {
+        let up = false;
+        for (const end = Date.now() + 60000; !up && Date.now() < end && child.exitCode === null; await sleep(300)) up = await fetch(base + "/").then(() => true, () => false);
+        const before = resend.sent.length;
+        const r = await post(base, "/api/forms/contact", { name: "Legacy Visitor", email: "visitor@example.com", message: "After the upgrade", "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
+        const mail = resend.sent[before];
+        const [row] = (await d1(publishDir, "SELECT email_status FROM messages ORDER BY id DESC LIMIT 1", "fixture-site-2e10-inbox")) || [];
+        if (status === "sent") check(`legacy Worker (${label}): email sent to the recipient from the apex`, r.json?.ok && mail?.ok && mail.to?.[0] === "owner@example.com" && /<website@example\.com>$/.test(mail.from), { r, mail });
+        check(`legacy Worker (${label}): Inbox status "${status}"`, row?.email_status === status, row);
+      } finally { await child.stop(); }
+    }
+  } finally { await resend.close(); }
+}
+
 (async () => {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
@@ -330,6 +371,7 @@ async function workerChecks(sites) {
   const plain = { semantic: await startPlainSite("semantic"), soup: await startPlainSite("soup"), sidebar: await startPlainSite("sidebar") };
   try {
     await singleInstanceChecks();
+    await legacyChecks();
     const sites = await driveApp(wp, el, updates, gh, plain);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
