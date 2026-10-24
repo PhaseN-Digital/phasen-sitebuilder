@@ -13,7 +13,10 @@ const site = {
   pages: [
     { id: "h", title: "Home", sections: [{ type: "hero", heading: "<script>x</script>", text: "Hi\n\nThere", buttonText: "Go", buttonPage: "c" }] },
     { id: "c", title: "Contact Us!", sections: [{ type: "form", formId: "contact", heading: "Ask", buttonText: "Send" }] },
-    { id: "d", title: "404", sections: [{ type: "richtext", html: '<p><a href="#page:c">Contact</a> <img src="assets/abc123.webp" alt=""></p>' }] },
+    { id: "d", title: "404", sections: [{ type: "richtext", html: '<p><a href="#page:c">Contact</a> <img src="assets/abc123.webp" alt=""></p>'
+      + '<p class="align-center"><a href="#page:c" class="button">Book</a></p><figure class="align-right"><img src="assets/abc123.webp" alt="Bike"><figcaption>Ours</figcaption></figure>'
+      + '<div class="video-embed" data-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></div><div class="video-embed" data-src="https://player.vimeo.com/video/76979871"></div>'
+      + '<div class="video-embed" data-src="https://evil.example/embed/x"></div>' }] },
   ],
   forms: [{ id: "contact", name: "Contact", to: "", success: "Thanks", fields: [
     { id: "name", label: "Name", type: "text", required: true },
@@ -44,6 +47,12 @@ const site = {
   assert.strictEqual(JSON.parse(read("worker/forms.json")).contact.to, "owner@example.com");
   assert(read("wrangler.toml").includes("workers_dev = true") && !read("wrangler.toml").includes("custom_domain"));
   assert(read("public/404-2.html").includes('<a href="/contact-us">Contact</a> <img src="/assets/abc123.webp"'), "richtext page links + image paths resolved");
+  const rich = read("public/404-2.html");
+  assert(rich.includes('<p class="align-center"><a href="/contact-us" class="button">Book</a></p><figure class="align-right"><img src="/assets/abc123.webp" alt="Bike">'), "rich text: button links, alignment, figures");
+  const players = [...rich.matchAll(/<div class="video-embed"><iframe title="Video from (\w+)" srcdoc="([^"]*)"/g)];
+  assert.deepStrictEqual(players.map((m) => m[1]), ["YouTube", "Vimeo"], "videos become click-to-load players");
+  assert(players[0][2].includes("&lt;a href=&quot;https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&quot;&gt;") && players[1][2].includes("https://player.vimeo.com/video/76979871?autoplay=1"));
+  assert(!/<iframe[^>]* src=|evil\.example\/embed\/x"><\/iframe/.test(rich), "nothing loads from a video host before a click, unapproved hosts never become players");
   // Sites with a form get a noindex privacy page, linked from every footer.
   const privacy = read("public/privacy.html");
   assert(privacy.includes('<meta name="robots" content="noindex">') && privacy.includes("Bob&#39;s &lt;Bikes&gt;, who is responsible"));
