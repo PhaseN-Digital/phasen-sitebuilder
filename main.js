@@ -471,6 +471,7 @@ app.whenReady().then(() => {
     minWidth: 1000,
     minHeight: 640,
     title: "PhaseN Site Builder",
+    icon: path.join(__dirname, "build", "icon.png"), // Linux/dev window icon; packaged mac/win use build.icon
     webPreferences: { preload: path.join(__dirname, "preload.js") },
   });
   win.removeMenu();

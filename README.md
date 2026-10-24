@@ -129,7 +129,17 @@ published always-pass test secret, so that one step needs internet access.
   (`safeStorage`).
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the WordPress import screen and HTML sanitizer; `app/copied.js` and
-  `app/copy-edit-frame.js` edit exact-copy pages.
+  `app/copy-edit-frame.js` edit exact-copy pages. Colours are the PhaseN
+  Digital palette (tokens at the top of `app/app.css`; `--primary` is the
+  darker brand green so white text on it passes WCAG AA), and
+  `app/logo-wide.png` is phasen.digital's wide logo, resized with its white
+  background made transparent.
+- `build/icon.png`: the app/installer icon (1024x1024, just the cloud from
+  phasen.digital's `logo-mark.png`, since the wordmark is illegible at icon
+  sizes). electron-builder derives the `.ico`/`.icns` from it, and
+  `main.js` sets it as the window icon on Linux and in dev. Brand artwork
+  only ever comes from phasendigital's `public/assets/`, never its
+  `website/` folder.
 - Rich text sections (`richTextEditor` in `app/app.js`) use
   [Quill 2](https://quilljs.com) (BSD-3-Clause licence), an npm dependency
   loaded from `node_modules/quill/dist` (prebuilt `quill.js` and the snow
