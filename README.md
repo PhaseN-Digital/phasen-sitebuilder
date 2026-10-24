@@ -610,7 +610,12 @@ already signed in"). They're only sent over https and aren't stored.
   themes and other page builders mostly don't expose these, so they get a
   built-in theme's defaults.
 - Some plugins print HTML before the REST API's JSON; that's skipped.
-- Not imported: blog posts, menus (page order follows WordPress's page
+- Posts (#180, `/wp/v2/posts`) become Blog post pages (keeping their
+  address, date, author, excerpt and featured image), listed by one Blog
+  page: the home page when WordPress shows posts there, else an empty page
+  at `/blog`, `/news`, `/articles` or `/posts`, else a new one at `/blog/`.
+  Categories, tags and comments aren't imported.
+- Not imported: menus (page order follows WordPress's page
   order), page layouts, plugins.
 
 ### Editable import of any other website (#161)

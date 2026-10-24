@@ -249,13 +249,21 @@ async function importWordPress(wp, log) {
     s.pages = [];
     for (const [i, p] of wp.pages.entries()) {
       log(`Importing page ${i + 1} of ${wp.pages.length}: ${plainText(p.title)}`);
-      const sections = [{ id: rid(), type: "richtext", html: await rewriteContent(cleanFragment(p.html, wp.base + "/"), byLink, images) }];
+      // The Blog page lib/wordpress.js adds (#180) lists the posts and has nothing of its own.
+      const sections = p.layout === "blog-index" && !p.html.trim() ? [] : [{ id: rid(), type: "richtext", html: await rewriteContent(cleanFragment(p.html, wp.base + "/"), byLink, images) }];
       // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours. Never for log-in/shop forms (lib/wordpress.js).
       if (p.form) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
       // The old address, so lib/build.js can keep it (or 301 it) and renaming the page doesn't move it.
       let oldPath = null;
       try { oldPath = decodeURIComponent(new URL(p.link, wp.base + "/").pathname); } catch {}
-      s.pages.push({ id: ids.get(p.id), title: plainText(p.title) || "Untitled", ...(oldPath && { path: oldPath }), sections });
+      const page = { id: ids.get(p.id), title: plainText(p.title) || "Untitled", ...(oldPath && { path: oldPath }), sections };
+      if (p.layout) page.layout = p.layout;
+      if (p.layout === "blog-post") {
+        Object.assign(page, { date: p.date, author: plainText(p.author), excerpt: plainText(p.excerpt) });
+        const src = p.featuredImage && (await images.get(p.featuredImage.src, 1600));
+        if (src) page.featuredImage = { src, alt: plainText(p.featuredImage.alt) };
+      }
+      s.pages.push(page);
     }
   }
 

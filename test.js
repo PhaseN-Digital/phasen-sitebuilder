@@ -263,6 +263,60 @@ const site = {
     } finally { globalThis.fetch = realFetch; }
   }
 
+  // Editable import brings in posts as blog-post pages plus a Blog page (#180).
+  {
+    const { fetchWordPress, withBlog } = require("./lib/wordpress");
+    const http = require("node:http");
+    const post = (n) => ({ id: 100 + n, title: { rendered: `Post ${n}` }, content: { rendered: `<p>Body ${n}</p>` }, link: `BASE/2026/${String(n).padStart(2, "0")}/post-${n}/`,
+      date: `2026-${String(n).padStart(2, "0")}-01T09:30:00`, excerpt: { rendered: `<p>Summary ${n} [&hellip;]</p>\n` },
+      _embedded: { author: [{ name: "Bob" }], ...(n === 12 && { "wp:featuredmedia": [{ source_url: "BASE/wp-content/uploads/cover.jpg", alt_text: "Cover" }] }) } });
+    let homeClass = "page-template-default", requested = [];
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://x"), base = `http://127.0.0.1:${server.address().port}`;
+      requested.push(u.pathname + u.search);
+      const send = (body, headers = {}) => { res.writeHead(200, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(body).replaceAll("BASE", base)); };
+      if (u.pathname === "/wp-json/") return send({ name: "Blog", namespaces: ["wp/v2"] });
+      if (u.pathname === "/wp-json/wp/v2/pages") return send([{ id: 1, title: { rendered: "About" }, content: { rendered: "<p>Hi</p>" }, link: "BASE/about/" }, { id: 2, title: { rendered: "News" }, content: { rendered: "" }, link: "BASE/news/" }]);
+      // Twelve posts, newest first, six to an API page.
+      const page = Number(u.searchParams.get("page"));
+      if (u.pathname === "/wp-json/wp/v2/posts") return send([12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].slice((page - 1) * 6, page * 6).map(post), { "x-wp-totalpages": "2" });
+      res.writeHead(200, { "content-type": "text/html" }); res.end(`<body class="${homeClass}"></body>`);
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const r = await fetchWordPress(url);
+      assert(requested.some((q) => q.startsWith("/wp-json/wp/v2/posts") && q.includes("page=2") && q.includes("_embed=author")), "posts paginated with author and featured image embedded");
+      const posts = r.pages.filter((p) => p.layout === "blog-post");
+      assert.deepStrictEqual(posts.map((p) => p.title), [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => `Post ${n}`), "every post, newest first");
+      assert.deepStrictEqual((({ date, author, excerpt, featuredImage }) => ({ date, author, excerpt, featuredImage }))(posts[0]),
+        { date: "2026-12-01", author: "Bob", excerpt: "<p>Summary 12…</p>", featuredImage: { src: `${url}/wp-content/uploads/cover.jpg`, alt: "Cover" } });
+      assert(!("featuredImage" in posts[1]));
+      assert.deepStrictEqual(r.pages.filter((p) => p.layout === "blog-index").map((p) => p.link), [`${url}/news/`], "the empty News page becomes the blog");
+      assert.strictEqual(r.pages.length, 14);
+      homeClass = "home blog";
+      const home = (await fetchWordPress(url)).pages;
+      assert.deepStrictEqual([home[0].layout, home[0].link], ["blog-index", `${url}/`], "posts on the home page: the blog is Home");
+      assert.strictEqual(home.filter((p) => p.layout === "blog-index").length, 1);
+    } finally { server.close(); }
+    // Without a usable page, a new Blog at /blog/ (or /posts/ when that's taken); no posts, no Blog.
+    const one = [{ id: 9, title: "P", html: "", link: "https://x.test/2026/p/", layout: "blog-post" }];
+    const add = (pages) => withBlog("https://x.test", "", pages, one).find((p) => p.layout === "blog-index")?.link;
+    assert.strictEqual(add([{ id: 1, title: "Blog", html: "<p>Our story</p>", link: "https://x.test/about/" }]), "https://x.test/blog/");
+    assert.strictEqual(add([{ id: 1, title: "Blog", html: "<p>Our story</p>", link: "https://x.test/blog/" }]), "https://x.test/posts/");
+    assert.deepStrictEqual(withBlog("https://x.test", "", [], []), []);
+
+    // Built: posts keep their addresses, the Blog lists them ten to a page.
+    const blogSite = { ...site, pages: [{ id: "h", title: "Home", path: "/", sections: [] }, { id: "b", title: "News", path: "/news/", layout: "blog-index", sections: [] },
+      ...Array.from({ length: 12 }, (_, i) => ({ id: `p${i}`, title: `Post ${i}`, path: `/2026/${i}/post-${i}/`, layout: "blog-post", date: `2026-01-${String(i + 1).padStart(2, "0")}`, sections: [] }))] };
+    const built = await build(blogSite, siteDir, out, {});
+    assert.strictEqual(built.p3, "/2026/3/post-3/");
+    assert.strictEqual(built.b, "/news/");
+    const page2 = read("public/news/page/2/index.html");
+    assert(page2.includes("Post 1<") && page2.includes("Post 0<") && !page2.includes("Post 11<"), "older posts on page 2");
+    assert(!fs.existsSync(path.join(out, "public/_redirects")), "no address moved");
+  }
+
   // Import provenance (#141): ownership verification paths, against the fakes.
   {
     const { startWordPress, cloudflareZones } = require("./test/fakes");
