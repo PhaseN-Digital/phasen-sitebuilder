@@ -124,7 +124,8 @@ are not, so add them yourself.
   `--no-verify`.
 - `ci.yml` runs `npm test` on PRs and pushes to `main`.
 - `regression.yml` runs `npm run test:regression` on release-please PRs
-  (`release-please--` branches), on "Run workflow" and via `workflow_call`.
+  (`release-please--` branches), on PRs that touch `test/` (so a broken suite
+  can't merge green, #228), on "Run workflow" and via `workflow_call`.
 - `release-please.yml` keeps a release PR open. Merging it creates the GitHub
   release, and its `build` job builds and attaches the Windows/macOS
   installers. Builds deliberately live in that workflow, not an

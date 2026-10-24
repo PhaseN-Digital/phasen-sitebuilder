@@ -113,13 +113,17 @@ async function serve(name, siteId, extra = {}) {
   const dir = path.join(OUT, "built", name);
   await build(site, siteDir, dir, { workerName: site.workerName, hostname: "regression.workers.dev", sitekey: "REAL_SITEKEY", defaultTo: "owner@example.com", d1: { id: "00000000-0000-0000-0000-000000000000", name: "regression-inbox" } });
   fs.writeFileSync(path.join(dir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\n`);
-  // Port 0 lets workerd bind any free port itself and wrangler prints the one it got, so nothing
-  // can take it between choosing and binding (#201); picking one ourselves first raced other processes.
-  const env = wranglerEnv();
-  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", "0", "--inspector-port", "0", "--ip", "127.0.0.1"], { cwd: dir, env, log: path.join(OUT, `wrangler-${name}.log`) });
+  return { site, dir, ...await wranglerDev(dir, name) };
+}
+
+// Runs `wrangler dev` in dir and resolves once it answers. Port 0 lets workerd bind any free port
+// itself and wrangler prints the one it got, so nothing can take it between choosing and binding
+// (#201); picking one ourselves first raced other processes.
+async function wranglerDev(dir, name) {
+  const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", "0", "--inspector-port", "0", "--ip", "127.0.0.1"], { cwd: dir, env: wranglerEnv(), log: path.join(OUT, `wrangler-${name}.log`) });
   for (const end = Date.now() + 60000; Date.now() < end && child.exitCode === null; await sleep(300)) {
     const base = child.output.match(/Ready on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
-    if (base && await fetch(base + "/", { redirect: "manual" }).then(() => true, () => false)) return { site, dir, base, child };
+    if (base && await fetch(base + "/", { redirect: "manual" }).then(() => true, () => false)) return { base, child };
   }
   await child.stop();
   throw new Error(`wrangler dev didn't start for ${name}:\n${child.output.slice(-2000)}`);
@@ -348,11 +352,8 @@ async function legacyChecks() {
     fs.writeFileSync(worker, fs.readFileSync(worker, "utf8").replace("https://api.resend.com/emails", `${resend.url}/emails`));
     for (const [label, apiKey, status] of [["uploaded key", key, "sent"], ["old sealed key", sealed, "failed (401): API key is invalid"]]) {
       fs.writeFileSync(path.join(publishDir, ".dev.vars"), `TURNSTILE_SECRET_KEY=${TURNSTILE_TEST_SECRET}\nRESEND_API_KEY=${apiKey}\n`);
-      const port = await freePort(), base = `http://127.0.0.1:${port}`;
-      const child = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "dev", "--port", String(port), "--ip", "127.0.0.1"], { cwd: publishDir, env: wranglerEnv(), log: path.join(OUT, `wrangler-legacy-${status.slice(0, 4)}.log`) });
+      const { base, child } = await wranglerDev(publishDir, `legacy-${status.slice(0, 4)}`);
       try {
-        let up = false;
-        for (const end = Date.now() + 60000; !up && Date.now() < end && child.exitCode === null; await sleep(300)) up = await fetch(base + "/").then(() => true, () => false);
         const before = resend.sent.length;
         const r = await post(base, "/api/forms/contact", { name: "Legacy Visitor", email: "visitor@example.com", message: "After the upgrade", "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" });
         const mail = resend.sent[before];
