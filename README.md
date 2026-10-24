@@ -250,7 +250,9 @@ published always-pass test secret, so that one step needs internet access.
   that on their background. `lib/theme-validate.js` checks a package (`node lib/theme-validate.js
   themes`); an identical copy is vendored into the public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
-  repo for its CI, so **keep the two copies in sync**: change both together.
+  repo for its CI, so **keep the two copies in sync**: change both together
+  (`cp lib/theme-validate.js ../phasen-sitebuilder-themes/scripts/theme-validate.js`,
+  then a PR there; it inlines `LAYOUT_IDS`, so it needs no other file).
 - Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
   (Cloudflare, Resend, GitHub), defaults for every website
   (form-message email, business name, message retention days and wording,
@@ -424,6 +426,9 @@ skipping any whose HTML has a `noindex` meta tag. Copied pages keep their own
 another host keeps just its path) and `build()`'s `absolutise()` puts the
 published hostname back in front, in those tags and in the copied
 robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
+The import log warns that search engines are blocked only when robots.txt
+disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
+groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
 
 ## Importing a website
 
