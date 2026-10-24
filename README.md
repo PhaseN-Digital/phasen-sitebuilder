@@ -116,7 +116,11 @@ checks the whole app end to end with no accounts, against fake sites in
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
-  Elementor site (kit colours/font, header logo); the ownership declaration
+  Elementor site (kit colours/font, header logo); content detection on three
+  fake non-WordPress sites (landmarks, div soup, sidebar and cookie banner)
+  and an editable import of the div-soup one (review in menu order, cancel,
+  one page's block re-chosen in the frame, one page left out, built pages
+  checked for content and no copied chrome); the ownership declaration
   (modal, main-process refusal, provenance recorded, verification file, a
   pre-#141 import asked to declare before publishing); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
@@ -194,7 +198,9 @@ published always-pass test secret, so that one step needs internet access.
   interrupted move is finished by the next start; a one-time notice says
   where they went.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
-  is the WordPress import screen and HTML sanitizer; `app/copied.js` and
+  is the import screen and HTML sanitizer; `app/content-detect.js` and
+  `app/content-pick-frame.js` find and review the content of non-WordPress
+  sites for the editable import; `app/copied.js` and
   `app/copy-edit-frame.js` edit exact-copy pages. Colours are the PhaseN
   Digital palette (tokens at the top of `app/app.css`; `--primary` is the
   darker brand green so white text on it passes WCAG AA), and
@@ -374,13 +380,14 @@ robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 
 ## Importing a website
 
-"Import a website…" takes any address. WordPress sites can come in editable
-or as an exact copy; any other site is copied exactly. "Decide for me" picks an
-exact copy when the address isn't a WordPress site, when the home page shows a page builder (Elementor, Divi, Beaver
-Builder, WPBakery, Bricks, Oxygen, Avada; detected from the builder's own
-markup) or there's no REST API (including one hidden from visitors when no
-username and application password were given), and the editable import
-otherwise.
+"Import a website…" takes any address, and any site can come in editable or
+as an exact copy. "Decide for me" picks an exact copy when the home page shows
+a page builder (Elementor, Divi, Beaver Builder, WPBakery, Bricks, Oxygen,
+Avada; detected from the builder's own markup), when a WordPress site's REST
+API can't be read (including one hidden from visitors when no username and
+application password were given), or when the address isn't a WordPress site
+and the content of most pages can't be told apart from their design; the
+editable import otherwise.
 
 ### Ownership declaration and provenance (#141)
 
@@ -539,6 +546,41 @@ already signed in"). They're only sent over https and aren't stored.
 - Some plugins print HTML before the REST API's JSON; that's skipped.
 - Not imported: blog posts, menus (page order follows WordPress's page
   order), page layouts, plugins.
+
+### Editable import of any other website (#161)
+
+When the address isn't a WordPress site, the site is first copied exactly
+(`lib/mirror.js`, with the same declaration and provenance), then
+`app/content-detect.js` works on the copied pages:
+
+- Shared chrome (`sharedChrome`): container blocks near the top of the page
+  (header, nav, footer, aside, div, section, list, dialog, form) whose tag,
+  classes, text and images are identical on at least 60% of pages. That's the
+  header, menu, footer, sidebar and cookie banner; the theme has its own.
+- Content (`mainContent`): a `<main>`/`[role=main]` (or a lone `<article>`)
+  outside the chrome, with high confidence; otherwise Mozilla Readability
+  (`@mozilla/readability`, Apache-2.0, loaded by `app/index.html` from
+  `node_modules` like Quill) run on a copy without the chrome, mapped back to
+  the tightest block around the text it kept. Medium confidence with real text,
+  low otherwise. The result is a CSS path (`body > div:nth-child(2) > …`).
+- Review step: each page in menu order (home first, then the menu's order,
+  then the rest), with its preview (`?sb-pick`: main.js injects
+  `app/content-pick-frame.js` and blocks the page's own scripts with a nonce
+  CSP, so the frame shows exactly the HTML being imported) and the detected
+  content outlined. Clicking another block (or "Choose the block around it")
+  picks it; unticking a page leaves it out. "Keep an exact copy" stops there.
+  Cancel deletes the copy.
+- Import (`toSections`, `rebuildEditable`): each page's content, minus any
+  chrome, menus and pop-ups inside it, becomes a "Rich text" section (one per
+  `<section>` if that's all it holds) through the same sanitizer, image
+  download and link rewriting as WordPress; pages keep their old address
+  (`page.path`, `.html` addresses get a 301). An enquiry form in the content
+  becomes a form section with the copied fields (checkbox groups become text
+  answers); forms in the chrome are dropped. The logo is a "logo"-named (else
+  the first) image in the chrome; colours and font are the home page's
+  computed styles (body background and text, link colour, button colour),
+  mapped to the closest built-in theme as for WordPress. The copied files are
+  then deleted (`mirror:discard`).
 
 ## What publishing does
 
@@ -702,6 +744,14 @@ site's local files until taking it offline has fully worked.
   file also end to end against the fake WordPress. The application-password
   result is remembered per origin in memory only, so it's lost if the app
   restarts between connecting and the exact-copy fallback.
+- Editable import of other sites (#161): tested only against fake sites, not
+  yet real ones. Chrome detection needs blocks to match exactly, so a menu
+  that marks the current page in its text, or a single-page site, keeps it
+  inside the content unless it's a `<nav>`. Only content in the HTML is seen
+  (nothing a script adds), headings made of styled `<div>`s come in as plain
+  text, and lazy-loaded images with no `src` are dropped. Links to an address
+  the crawl saw redirect keep pointing at the old site. The review frame's
+  colours come from the home page only.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an

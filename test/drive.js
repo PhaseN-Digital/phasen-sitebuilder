@@ -6,7 +6,9 @@ const { app } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { SB_USERDATA: UD, SB_DOCS, SB_PHASE, SB_RESULT, SB_SHOTS, SB_WP, SB_EL } = process.env;
+const { SB_USERDATA: UD, SB_DOCS, SB_PHASE, SB_RESULT, SB_SHOTS, SB_WP, SB_EL, SB_PLAIN } = process.env;
+const PLAIN = JSON.parse(SB_PLAIN || "{}");
+const { CHROME_MARKER } = require("./fakes");
 app.setPath("userData", UD);
 app.setPath("documents", SB_DOCS); // the sites folder is <Documents>/PhaseN Sites (#136)
 const SITES = path.join(SB_DOCS, "PhaseN Sites");
@@ -65,7 +67,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, wordpressImport, elementorEditable, contentDetection, anyEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -565,6 +567,88 @@ app.on("browser-window-created", (_e, win) => {
       const s = JSON.parse(read(path.join(S(id), "site.json")));
       check("elementor editable: kit styles mapped", s.theme === "elegant" && s.font === "serif" && JSON.stringify(s.colors) === JSON.stringify({ background: "#fff6ee", text: "#241b2f", primary: "#ee5c44", accent: "#7c6bff" }), { theme: s.theme, font: s.font, colors: s.colors });
       check("elementor editable: header logo copied", /^assets\/[a-f0-9]+\.webp$/.test(s.logo?.src || ""), s.logo);
+    }
+
+    // ---------- editable import of any website (#161): detection unit checks ----------
+    async function contentDetection() {
+      const fetchSite = async (base, paths) => Promise.all(paths.map((p) => fetch(base + p).then((r) => r.text())));
+      const detect = (htmls) => run(`(() => {
+        const docs = ${JSON.stringify(htmls)}.map((h) => new DOMParser().parseFromString(h, "text/html"));
+        const chrome = sharedChrome(docs);
+        return { chrome: chrome.size, menu: menuLinks(docs[0], chrome), logo: logoSrc(docs[0], chrome), single: sharedChrome(docs.slice(0, 1)).size,
+          pages: docs.map((d) => { const m = mainContent(d, chrome); return { ...m, html: toSections(d.querySelector(m.selector), chrome, "https://x.example/").map((s) => s.html).join("") }; }),
+          wholeBody: toSections(docs[0].body, chrome).map((s) => s.html).join("") };
+      })()`);
+      const sem = await detect(await fetchSite(PLAIN.semantic, ["/", "/services/", "/about/"]));
+      check("detect (semantic): <main> found with high confidence", sem.pages.every((p) => p.method === "landmark" && p.confidence === "high" && p.selector.endsWith("main:nth-child(2)")), sem.pages);
+      check("detect (semantic): content kept, chrome left out", sem.pages[0].html.startsWith("<h1>Welcome to Landmark Ltd</h1>") && sem.pages.every((p) => !p.html.includes(CHROME_MARKER)), sem.pages[0].html);
+      check("detect (semantic): menu order and logo", JSON.stringify(sem.menu) === JSON.stringify(["/", "/services/", "/about/"]) && sem.logo === "/img/logo.png", [sem.menu, sem.logo]);
+      check("detect: no shared chrome from a single page", sem.chrome > 0 && sem.single === 0, [sem.chrome, sem.single]);
+      const soup = await detect(await fetchSite(PLAIN.soup, ["/", "/menu.html", "/visit.html"]));
+      check("detect (div soup): Readability finds the content", soup.pages.every((p) => p.method === "readability" && p.confidence === "medium"), soup.pages);
+      check("detect (div soup): content kept, chrome left out", soup.pages[0].html.includes("Soup Co kitchen") && soup.pages[1].html.includes("<b>Leek</b> and <i>potato</i>") && soup.pages.every((p) => !p.html.includes(CHROME_MARKER) && !p.html.includes("Visit us</a>")), soup.pages.map((p) => p.html));
+      check("detect (div soup): only what Readability kept, not its wrapper", !soup.pages[2].html.includes("Opening hours") && soup.pages[2].html.includes("Find us"), soup.pages[2]);
+      check("detect (div soup): links resolved against the page", soup.pages[0].html.includes('href="https://x.example/menu.html"'), soup.pages[0].html);
+      check("detect (div soup): menu order", JSON.stringify(soup.menu) === JSON.stringify(["/", "/visit.html", "/menu.html"]) && soup.logo === "/img/logo.png", [soup.menu, soup.logo]);
+      const side = await detect(await fetchSite(PLAIN.sidebar, ["/", "/work/"]));
+      check("detect (sidebar, cookie banner): both left out", side.pages[0].html.includes("Side Street news") && side.pages[1].html.includes("Our work") && side.pages.every((p) => !p.html.includes(CHROME_MARKER) && !/cookies|Recent posts/.test(p.html)), side.pages);
+      check("detect (sidebar, cookie banner): left out even from a block chosen around them", side.wholeBody.includes("Side Street news") && !side.wholeBody.includes(CHROME_MARKER) && !side.wholeBody.includes("Accept"), side.wholeBody);
+    }
+
+    // ---------- editable import of any website (#161): review, adjust one page, import ----------
+    async function anyEditable() {
+      const start = async (url, mode) => {
+        await run(`document.querySelector("#import-wp").click()`);
+        await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
+        await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(url)}; f.querySelector('[value="${mode}"]').checked = true; f.requestSubmit() }`);
+        await declare();
+        return waitFor(() => run(`document.querySelectorAll(".review-pages li").length`), 60000);
+      };
+      const titles = () => run(`[...document.querySelectorAll(".review-pages li b")].map((b) => b.textContent)`);
+      // "Decide for me" on a site with landmarks reviews it too; Cancel deletes the copy.
+      const before = siteDirs().length;
+      check("any site (auto): confident detection goes to the review", (await start(PLAIN.semantic, "auto")) === 3, await run(`document.querySelector(".log")?.textContent`).catch(() => ""));
+      await clickButton("Cancel");
+      await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
+      check("any site: cancelling the review deletes the copy", siteDirs().length === before);
+
+      check("any site (editable): review lists every page", (await start(PLAIN.soup, "editable")) === 4, await run(`document.querySelector(".log")?.textContent`).catch(() => ""));
+      check("any site: review in menu order, others last", JSON.stringify(await titles()) === JSON.stringify(["Home", "Visit us", "Our menu", "Old news"]), await titles());
+      const id = await run(`new URL(document.querySelector("#review-frame").src).host`);
+      const picked = () => waitFor(() => inFrame(`document.querySelector("[data-sb-picked]")?.className`));
+      check("any site: home page shown with its content outlined", await picked() === "txt", await picked());
+      await shot("review");
+      const res = await require("electron").net.fetch(`preview://${id}/visit.html?sb-pick=body`);
+      check("any site: review frame blocks the page's own scripts", /^script-src 'nonce-[a-f0-9]{32}'/.test(res.headers.get("content-security-policy") || "") && (await res.text()).includes("/__sb-pick.js"));
+      // Visit us: Readability leaves out the opening hours, so pick the block around both.
+      await run(`document.querySelectorAll(".review-pages li")[1].click()`);
+      await waitFor(() => inFrame(`location.pathname === "/visit.html" && Boolean(document.querySelector("[data-sb-picked]"))`));
+      await inFrame(`document.querySelector(".col-a").click()`);
+      check("any site: clicking a block chooses it", await waitFor(() => run(`document.querySelectorAll(".review-pages .badge")[1].textContent === "Your choice"`)));
+      await shot("review-picked");
+      await run(`{ const box = document.querySelectorAll(".review-pages input")[3]; box.click(); } 0`); // leave Old news out
+      await clickButton("Import");
+      const opened = await waitFor(() => run(`site?.id === ${JSON.stringify(id)} && !site.mirror`), 60000);
+      check("any site: import opens the editable site", opened, await run(`document.querySelector(".review-side .error")?.textContent`).catch(() => ""));
+      if (!opened) return;
+      await saved();
+      const s = JSON.parse(read(path.join(S(id), "site.json")));
+      const [home, visit, menu] = s.pages;
+      check("any site: pages, menu order, old addresses, excluded page left out", JSON.stringify(s.pages.map((p) => [p.title, p.path])) === JSON.stringify([["Home", "/"], ["Visit us", "/visit.html"], ["Our menu", "/menu.html"]]), s.pages.map((p) => [p.title, p.path]));
+      const html = (p) => p.sections.filter((x) => x.type === "richtext").map((x) => x.html).join("");
+      check("any site: rich text with formatting", html(home).includes("Soup Co kitchen") && html(menu).includes("<b>Leek</b> and <i>potato</i>"), html(home));
+      check("any site: adjusted page has the block chosen", html(visit).includes("Find us") && html(visit).includes("Opening hours: 9 to 5"), html(visit));
+      check("any site: internal links rewired, others kept", html(home).includes(`href="#page:${menu.id}"`) && html(home).includes('href="https://elsewhere.example/x"') && html(home).includes(`href="${PLAIN.soup}/old-news.html"`), html(home));
+      check("any site: images through the upload pipeline", /<img src="assets\/[a-f0-9]+\.webp" alt="Bowl">/.test(html(home)) && /^assets\/[a-f0-9]+\.webp$/.test(s.logo?.src || ""), [html(home), s.logo]);
+      check("any site: no chrome copied, newsletter form dropped", !JSON.stringify(s.pages).includes(CHROME_MARKER) && !s.forms.length, s.forms);
+      check("any site: style mapped to the closest theme", s.theme === "elegant" && s.font === "serif" && JSON.stringify(s.colors) === JSON.stringify({ background: "#fdf6e3", text: "#222222", primary: "#cc3300", accent: "#0a7d4b" }), { theme: s.theme, font: s.font, colors: s.colors });
+      check("any site: provenance kept, copied files removed", s.importProvenance?.source === new URL(PLAIN.soup).origin && !s.mirror && !fs.existsSync(path.join(S(id), "mirror")), s.importProvenance);
+      const pub = path.join(UD, "preview", id, "public");
+      const built = ["index.html", "visit-us.html", "our-menu.html"].map((f) => (fs.existsSync(path.join(pub, f)) ? read(path.join(pub, f)) : ""));
+      check("any site: built site has the content and none of the copied chrome", built[0].includes("Soup Co kitchen") && built[1].includes("Opening hours") && built[2].includes("Leek") && built.every((b) => !b.includes(CHROME_MARKER)), fs.readdirSync(pub));
+      check("any site: built menu in the original order", /Home<\/a>.*Visit us<\/a>.*Our menu<\/a>/s.test(built[0]), built[0].slice(0, 2000));
+      const redirects = fs.existsSync(path.join(pub, "_redirects")) ? read(path.join(pub, "_redirects")) : "";
+      check("any site: .html addresses redirect to the new ones", redirects.includes("/visit.html /visit-us 301") && redirects.includes("/menu.html /our-menu 301"), redirects);
     }
 
     // ---------- 3. exact copy of an Elementor site ----------

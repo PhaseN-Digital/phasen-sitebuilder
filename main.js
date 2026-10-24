@@ -764,6 +764,11 @@ const handlers = {
     await fs.copyFile(mirrorFile(id, file), original, fs.constants.COPYFILE_EXCL).catch((e) => { if (e.code !== "EEXIST") throw e; });
   },
   "mirror:original": (id, file) => fs.readFile(mirrorFile(id, file, "mirror-original"), "utf8"),
+  // An exact copy turned editable (#161): its copied pages would otherwise still be served and published.
+  "mirror:discard": async (id) => {
+    if ((await readSite(id))?.mirror) throw new Error("This website is still an exact copy.");
+    for (const dir of ["mirror", "mirror-original"]) await fs.rm(path.join(siteDir(id), dir), { recursive: true, force: true });
+  },
   // Exact-copy import: see lib/mirror.js.
   "wp:mirror": async (url, declaration, event) => {
     requireDeclaration(declaration);
@@ -850,8 +855,9 @@ app.whenReady().then(() => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
     const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
-    if (p === "/__sb-edit.js") {
-      return new Response(await fs.readFile(path.join(__dirname, "app", "copy-edit-frame.js")), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
+    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js" }[p];
+    if (frameScript) {
+      return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
     }
     // Uploaded images come straight from the site folder so a fresh upload
     // shows before the next preview build finishes; exact-copy pages are
@@ -874,8 +880,12 @@ app.whenReady().then(() => {
     // and writes the file itself (mirror:read/write), so neither ends up in it.
     if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
       let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
-      if (found && new URL(request.url).searchParams.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
-      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+      const params = new URL(request.url).searchParams;
+      if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+      // The editable import's review step (#161): only our script runs, so the page shows exactly the HTML being imported.
+      const nonce = found && params.has("sb-pick") && hex(16);
+      if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
+      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
     }
     const res = await net.fetch(pathToFileURL(file).href);
     // Every save rewrites these files, so the preview must never cache them.

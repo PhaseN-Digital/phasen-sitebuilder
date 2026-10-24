@@ -11,7 +11,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { build } = require("../lib/build");
-const { startWordPress, startElementor, startUpdates, startGitHub } = require("./fakes");
+const { startWordPress, startElementor, startPlainSite, startUpdates, startGitHub } = require("./fakes");
 const themeSources = require("../lib/theme-sources");
 
 const ROOT = path.join(__dirname, "..");
@@ -47,13 +47,13 @@ const siteDirOf = (id) => fs.readdirSync(SITES).map((n) => path.join(SITES, n)).
 });
 
 // phase "reinstall" (#136) starts the app again with a fresh userData on the same sites folder.
-async function driveApp(wp, el, updates, gh, phase = "main") {
+async function driveApp(wp, el, updates, gh, plain, phase = "main") {
   const userData = path.join(OUT, phase === "main" ? "userdata" : `userdata-${phase}`);
   const result = path.join(OUT, `drive-${phase}.json`), shots = path.join(OUT, "screenshots");
   fs.mkdirSync(shots, { recursive: true });
   const args = ["--no-sandbox", "-r", path.join(__dirname, "drive.js"), "."];
   const headless = process.platform === "linux" && !process.env.DISPLAY;
-  const env = { ...process.env, SB_USERDATA: userData, SB_DOCS: path.join(OUT, "docs"), SB_PHASE: phase, SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url, SITEBUILDER_GITHUB_CLIENT_ID: gh.clientId };
+  const env = { ...process.env, SB_USERDATA: userData, SB_DOCS: path.join(OUT, "docs"), SB_PHASE: phase, SB_RESULT: result, SB_SHOTS: shots, SB_WP: wp.url, SB_EL: el.url, SB_PLAIN: JSON.stringify(Object.fromEntries(Object.entries(plain).map(([k, v]) => [k, v.url]))), SITEBUILDER_UPDATE_URL: updates.latestUrl, SITEBUILDER_GITHUB_API: gh.url, SITEBUILDER_GITHUB_CLIENT_ID: gh.clientId };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = headless ? start("xvfb-run", ["-a", ELECTRON, ...args], { env, echo: true }) : start(ELECTRON, args, { env, echo: true });
   const timer = setTimeout(() => { console.log("App run timed out after 3 minutes"); app.stop(); }, 180000);
@@ -328,17 +328,19 @@ async function workerChecks(sites) {
   const started = Date.now();
   console.log(`Regression run, output in ${OUT}`);
   const wp = await startWordPress({ verifyToken: "any" }), el = await startElementor(), updates = await startUpdates(), gh = await startGitHub();
+  const plain = { semantic: await startPlainSite("semantic"), soup: await startPlainSite("soup"), sidebar: await startPlainSite("sidebar") };
   try {
     await singleInstanceChecks();
-    const sites = await driveApp(wp, el, updates, gh);
+    const sites = await driveApp(wp, el, updates, gh, plain);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
     if (sites.created) await subdomainChecks(sites.created);
-    await driveApp(wp, el, updates, gh, "reinstall");
+    await driveApp(wp, el, updates, gh, plain, "reinstall");
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {
     await wp.close(); await el.close(); await updates.close(); await gh.close();
+    for (const site of Object.values(plain)) await site.close();
   }
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed in ${Math.round((Date.now() - started) / 1000)}s.`);
