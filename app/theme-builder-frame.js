@@ -6,7 +6,9 @@
 // Selectors use only the classes and landmarks lib/build.js's renderPage and
 // renderSection generate, never ids or nth-child, so a rule works on any
 // site. test.js checks STABLE against that output; this is the one list.
-const STABLE = ["site-header", "brand", "nav-toggle", "site-footer", "hero", "has-image", "text", "image-left", "wrap", "split",
+// The body's layout-<id> classes (#184) are known too but deliberately not
+// suggested: a "this layout only" scope is #171.
+const STABLE = ["site-header", "title-band", "brand", "nav-toggle", "site-footer", "hero", "has-image", "text", "image-left", "wrap", "split",
   "richtext", "gallery", "gallery-grid", "form", "hp", "cf-turnstile", "form-status", "button", "video-embed", "notfound",
   "cookie-banner", "cookie-banner-actions"];
 const LANDMARKS = ["header", "nav", "main", "footer"];

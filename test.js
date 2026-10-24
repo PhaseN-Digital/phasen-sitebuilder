@@ -584,7 +584,9 @@ const site = {
     await build(every, fdir, fout, { sitekey: "SITEKEY" });
     const builtClasses = new Set(fs.readdirSync(path.join(fout, "public")).filter((f) => f.endsWith(".html"))
       .flatMap((f) => [...fs.readFileSync(path.join(fout, "public", f), "utf8").matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/))));
-    assert.deepStrictEqual([...builtClasses].sort(), [...frameLib.STABLE].sort(), "STABLE matches renderPage/renderSection's classes");
+    // layout-<id> body classes (#184) are known but not suggested until #171; any other new class must be added to STABLE.
+    const layoutClasses = new Set(require("./lib/layouts").LAYOUTS.map((l) => `layout-${l.id}`));
+    assert.deepStrictEqual([...builtClasses].sort(), [...frameLib.STABLE, ...[...builtClasses].filter((c) => layoutClasses.has(c))].sort(), "STABLE matches renderPage/renderSection's classes");
     const el = (tag, ...classes) => ({ tag, classes });
     assert.deepStrictEqual(frameLib.candidates([el("h1"), el("div", "wrap"), el("section", "hero", "has-image"), el("main")]), [".hero h1", "main h1", "h1"]);
     assert.deepStrictEqual(frameLib.candidates([el("a", "button", "wp-x"), el("p"), el("div", "wrap"), el("section", "richtext"), el("main")]), [".richtext .button", "main .button", ".button"]);
