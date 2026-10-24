@@ -14,6 +14,9 @@ const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
 const json = require("./lib/json-store");
 const github = require("./lib/github");
+const secrets = require("./lib/secrets");
+const repo = require("./lib/site-repo");
+const folder = require("./lib/sites-folder");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -28,9 +31,17 @@ protocol.registerSchemesAsPrivileged([{ scheme: "preview", privileges: { standar
 
 const ID_RE = /^[a-f0-9-]{36}$/;
 const data = (...p) => path.join(app.getPath("userData"), ...p);
+// Sites live in the user's sites folder (#136, lib/sites-folder.js), found by
+// scanning it: id -> folder. userData keeps only machine-local things (location.json,
+// preview/publish builds, caches).
+let SITES = null;
+const sites = new Map();
 const siteDir = (id) => {
   if (!ID_RE.test(id)) throw new Error("Bad site id");
-  return data("sites", id);
+  if (id === SAMPLE_ID) return data("sites", id); // the Theme Builder's pseudo-site, never in the sites folder
+  const dir = sites.get(id);
+  if (!dir) throw new Error("That website isn't in your sites folder any more. Use Find sites in Settings › Data.");
+  return dir;
 };
 const previewDir = (id) => data("preview", id);
 // A copied page's HTML file (exact-copy import), for app/copied.js to edit.
@@ -43,12 +54,16 @@ const mirrorFile = (id, file, dir = "mirror") => {
 };
 const publishDir = (id) => data("publish", id);
 
-const seal = (v) => safeStorage.encryptString(v).toString("base64");
-const unseal = (v) => (v ? safeStorage.decryptString(Buffer.from(v, "base64")) : "");
+// Secrets are plain values in memory; config.store() splits them out into an
+// encrypted secrets.enc on every write (lib/secrets.js, #136). seal/unseal only
+// mark which values are secrets.
+const seal = (v) => v;
+const unseal = (v) => v || "";
 const hex = (n) => crypto.randomBytes(n).toString("hex");
 
 // App-wide settings. Site operations go through settingsFor() instead (#134).
-const settingsStore = config.store(app.getPath("userData"));
+// Both are set up by openSitesFolder(), before any handler runs.
+let keyring, settingsStore;
 const loadSettings = () => settingsStore.load();
 const updateSettings = (change) => settingsStore.update(change); // read-modify-write under one queue (#147)
 const readSite = (id) => json.read(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
@@ -63,8 +78,92 @@ const buildSite = (site, outDir, options = {}) => settingsFor(site.id, site).the
 const previewBuild = (site) => queueBuild(() => buildSite(site, previewDir(site.id), { preview: true }));
 // Per-site deploy state (Turnstile keys, Resend sending key). Kept apart from
 // site.json so secrets never end up in a build or export.
-const readState = (id) => json.read(path.join(siteDir(id), "publish.json"), {});
-const writeState = (id, s) => json.write(path.join(siteDir(id), "publish.json"), s);
+const readState = (id) => settingsStore.loadState(siteDir(id));
+const writeState = (id, s) => settingsStore.updateState(siteDir(id), () => s);
+
+// The sites folder (#136): location.json in userData says where it is
+// (default <Documents>/PhaseN Sites) and remembers the portable-secrets key on
+// this machine. Opening it migrates pre-#136 data out of userData, then scans it.
+const location = () => json.read(data("location.json"), {});
+const portableFile = () => path.join(SITES, ".phasen", "portable.json");
+const safe = { encrypt: (t) => safeStorage.encryptString(t), decrypt: (b) => safeStorage.decryptString(b) };
+let notice = null; // shown once by the renderer (notice:get)
+async function openSitesFolder() {
+  const loc = await location();
+  SITES = path.resolve(loc.sitesFolder || path.join(app.getPath("documents"), "PhaseN Sites"));
+  await fs.mkdir(path.join(SITES, ".phasen"), { recursive: true });
+  const portable = await json.read(portableFile(), null);
+  let key = null;
+  if (portable && loc.portableKey?.salt === portable.salt) {
+    try { key = Buffer.from(safeStorage.decryptString(Buffer.from(loc.portableKey.sealed, "base64")), "base64"); } catch {}
+  }
+  keyring = { safe, portable: Boolean(portable), key, config: portable };
+  settingsStore = config.store(path.join(SITES, ".phasen"), keyring);
+  try {
+    // Before #136, every secret was sealed on its own with safeStorage (base64).
+    let lost = false;
+    const unsealLegacy = (v) => { try { return safeStorage.decryptString(Buffer.from(v, "base64")); } catch { lost = true; return null; } };
+    await folder.migrateLegacySettings({ legacyFile: data("settings.json"), newFile: path.join(SITES, ".phasen", "settings.json"), store: settingsStore, unsealLegacy });
+    const moved = await folder.migrateLegacy({ legacyRoot: data("sites"), root: SITES, store: settingsStore, unsealLegacy, author: await author(), skip: (id) => id === SAMPLE_ID });
+    if (moved) notice = `${moved === 1 ? "Your website has" : `Your ${moved} websites have`} moved to ${SITES}. Each one now keeps a history of its changes (History tab). You can choose another folder in Settings › Data.`;
+    if (lost) notice = `${notice || ""} Some saved passwords or keys couldn't be read on this computer: reconnect your accounts in Settings (and any a website uses on its own), then publish your websites again.`.trim();
+  } catch (e) {
+    console.error("Couldn't move websites into the sites folder:", e);
+    notice = `Some websites couldn't be moved into ${SITES} (${e.message}). They're still in ${data("sites")}; the move is tried again next time the app starts.`;
+  }
+  return findSites();
+}
+async function findSites() {
+  const found = await folder.scan(SITES);
+  sites.clear();
+  for (const [id, dir] of found) sites.set(id, dir);
+  return sites.size;
+}
+// Only the running copy (#149) migrates or opens the folder; a second launch just quits.
+const ready = app.whenReady().then(() => firstInstance && openSitesFolder());
+
+// Site history (#136, lib/site-repo.js): edits are committed after a pause in
+// editing, when another site opens, before publishing and on quit; every publish
+// is tagged. The author is the app's user (Settings defaults).
+const HISTORY_PAUSE = 15000;
+const pendingCommits = new Map();
+async function author() {
+  const s = await loadSettings().catch(() => ({}));
+  return { name: s.name || s.defaults?.owner || "PhaseN Site Builder", email: s.defaults?.email || "sitebuilder@localhost" };
+}
+function autosave(id) {
+  clearTimeout(pendingCommits.get(id));
+  pendingCommits.set(id, setTimeout(() => saveHistory(id), HISTORY_PAUSE));
+}
+async function saveHistory(id, message) {
+  clearTimeout(pendingCommits.get(id));
+  pendingCommits.delete(id);
+  try {
+    return await repo.commit(siteDir(id), message, await author());
+  } catch (e) {
+    console.error(`Couldn't save the history of ${id}:`, e);
+    return null;
+  }
+}
+const saveAllHistory = () => Promise.all([...pendingCommits.keys()].map((id) => saveHistory(id)));
+const pad = (n) => String(n).padStart(2, "0");
+const liveTag = (d = new Date()) => `live-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+// Channels that change files in a site folder (their first argument is the site, or its id).
+const EDITS = new Set(["sites:save", "images:save", "mirror:write", "mirror:keep-original", "themes:use", "themes:update", "import:declare", "settings:cloudflare", "settings:account", "settings:resend", "settings:disconnect"]);
+
+// Portable secrets (#136): turning them on or off re-encrypts every secrets.enc.
+// The config (salt + check) is written before the files and removed after them,
+// so a crash in between never leaves a file nothing can open.
+const secretFiles = () => settingsStore.secretFiles([...sites.values()]);
+// Reads every secrets file, so secrets.problems() is current, and returns what the renderer may see.
+async function checkSecrets() {
+  await Promise.all([...sites.values()].flatMap((d) => [settingsStore.loadSite(d), settingsStore.loadState(d)]));
+  return publicSettings(await loadSettings());
+}
+const rememberKey = (key) => json.update(data("location.json"), (l) => {
+  if (key) l.portableKey = { salt: keyring.config.salt, sealed: safeStorage.encryptString(key.toString("base64")).toString("base64") };
+  else delete l.portableKey;
+});
 
 // ponytail: one global build queue, per-site queues if builds ever get slow.
 let buildQueue = Promise.resolve();
@@ -291,13 +390,14 @@ async function useTheme(id, spec, themeId) {
 
 // What the renderer may see of a set of accounts (the app's or a site's own): never the secrets.
 const publicAccounts = (a) => ({
-  cloudflare: a.cloudflare ? { accountId: a.cloudflare.accountId, accounts: a.cloudflare.accounts, warnings: a.cloudflare.warnings } : null,
+  cloudflare: a.cloudflare?.token ? { accountId: a.cloudflare.accountId, accounts: a.cloudflare.accounts, warnings: a.cloudflare.warnings } : null,
   resend: Boolean(a.resendKey),
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github ? { login: s.github.login, privateRepos: s.github.privateRepos } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
+  sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
 // Account changes apply to the app's accounts, or to one site's own when siteId is given (#134).
 async function editAccounts(siteId, change) {
@@ -408,18 +508,21 @@ const handlers = {
   },
 
   "sites:list": async () => {
-    const ids = await fs.readdir(data("sites")).catch(() => []);
-    const sites = await Promise.all(ids.filter((i) => ID_RE.test(i)).map(readSite));
-    return sites.filter(Boolean).map(({ id, name }) => ({ id, name }));
+    const list = await Promise.all([...sites.keys()].map(readSite));
+    return list.filter(Boolean).map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   },
   "sites:create": async (name, theme) => {
     const site = newSite(String(name).trim() || "My website", theme);
-    await fs.mkdir(path.join(siteDir(site.id), "assets"), { recursive: true });
-    await json.write(path.join(siteDir(site.id), "site.json"), site);
+    const dir = await folder.freeDir(SITES, site.name);
+    await fs.mkdir(path.join(dir, "assets"), { recursive: true });
+    sites.set(site.id, dir);
+    await json.write(path.join(dir, "site.json"), site);
+    await repo.ensure(dir, await author(), "Created the website");
     await previewBuild(site);
     return site;
   },
   "sites:get": async (id) => {
+    await saveAllHistory(); // switching sites ends a batch of edits
     const state = await readState(id);
     return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state), accounts: publicAccounts(await settingsStore.loadSite(siteDir(id))) };
   },
@@ -429,7 +532,10 @@ const handlers = {
   },
   "sites:delete": async (id, offline, event) => {
     if (offline) await unpublish(id, (line) => event.sender.send("publish-log", line)); // throws before anything local is deleted
+    clearTimeout(pendingCommits.get(id));
+    pendingCommits.delete(id);
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });
+    sites.delete(id);
   },
   "sites:export": async (id) => {
     const site = await readSite(id);
@@ -443,8 +549,102 @@ const handlers = {
     shell.showItemInFolder(out);
     return out;
   },
-  "sites:publish": (id, event) => publish(id, (line) => event.sender.send("publish-log", line)),
-  "sites:unpublish": (id, event) => unpublish(id, (line) => event.sender.send("publish-log", line)),
+  "sites:publish": async (id, event) => {
+    await saveHistory(id);
+    const url = await publish(id, (line) => event.sender.send("publish-log", line));
+    await saveHistory(id, "Published the website");
+    await repo.tag(siteDir(id), liveTag()).catch((e) => console.error("Couldn't tag the published version:", e));
+    return url;
+  },
+  "sites:unpublish": async (id, event) => {
+    await saveHistory(id);
+    await unpublish(id, (line) => event.sender.send("publish-log", line));
+    await saveHistory(id, "Took the website offline");
+  },
+
+  // History (#136): the site's versions, what each changed, and going back to one (as a new version).
+  "history:list": async (id) => {
+    await saveHistory(id);
+    return { versions: await repo.log(siteDir(id)), large: await repo.largeFiles(siteDir(id)) };
+  },
+  "history:changes": (id, oid) => {
+    if (!/^[0-9a-f]{40}$/.test(oid)) throw new Error("Bad version");
+    return repo.changes(siteDir(id), oid);
+  },
+  "history:revert": async (id, oid) => {
+    if (!/^[0-9a-f]{40}$/.test(oid)) throw new Error("Bad version");
+    clearTimeout(pendingCommits.get(id));
+    pendingCommits.delete(id);
+    await repo.revert(siteDir(id), oid, await author());
+    await previewBuild(await readSite(id));
+  },
+
+  // Settings › Data (#136): the sites folder and portable secrets.
+  "data:open-sites": () => shell.openPath(SITES),
+  "data:find-sites": async () => {
+    await saveAllHistory();
+    return findSites();
+  },
+  "data:choose-folder": async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({ title: "Choose your sites folder", defaultPath: SITES, properties: ["openDirectory", "createDirectory"] });
+    if (canceled) return null;
+    return { path: filePaths[0], sites: (await folder.scan(filePaths[0])).size, current: sites.size };
+  },
+  // Points the app at a folder; with move, takes the current sites (and settings) there first.
+  "data:set-folder": async (to, move) => {
+    to = path.resolve(String(to));
+    if (to !== SITES) {
+      if (to.startsWith(SITES + path.sep)) throw new Error("Choose a folder that isn't inside your current sites folder.");
+      await saveAllHistory();
+      const record = () => json.update(data("location.json"), (l) => { l.sitesFolder = to; });
+      if (move) await folder.moveAll(SITES, to, record);
+      else await record();
+      await openSitesFolder();
+    }
+    return checkSecrets();
+  },
+  "secrets:portable-on": async (passphrase) => {
+    passphrase = String(passphrase || "");
+    if (keyring.portable) throw new Error("Portable secrets are already on.");
+    if (passphrase.length < 10) throw new Error("Use a passphrase of at least 10 characters.");
+    const { key, config: cfg } = await secrets.makePortable(passphrase);
+    const before = { ...keyring };
+    await json.write(portableFile(), cfg);
+    Object.assign(keyring, { portable: true, key, config: cfg });
+    await rememberKey(key);
+    await secrets.reencrypt(secretFiles(), before, keyring);
+    return checkSecrets();
+  },
+  "secrets:portable-off": async () => {
+    if (!keyring.portable) return checkSecrets();
+    if (!keyring.key) throw new Error("Unlock your secrets with the passphrase first, or choose Forget saved secrets.");
+    await secrets.reencrypt(secretFiles(), keyring, { safe, portable: false, key: null });
+    await fs.rm(portableFile(), { force: true });
+    await rememberKey(null);
+    Object.assign(keyring, { portable: false, key: null, config: null });
+    return checkSecrets();
+  },
+  "secrets:unlock": async (passphrase) => {
+    keyring.key = await secrets.unlock(keyring.config, String(passphrase || ""));
+    await rememberKey(keyring.key);
+    return checkSecrets();
+  },
+  // Passphrase forgotten: the secrets files are kept aside (never deleted) and everything starts again.
+  "secrets:forget": async () => {
+    const stamp = Date.now();
+    for (const f of secretFiles()) await fs.rename(f, `${f}.unreadable-${stamp}`).catch(() => {});
+    await fs.rm(portableFile(), { force: true });
+    await rememberKey(null);
+    Object.assign(keyring, { portable: false, key: null, config: null });
+    return checkSecrets();
+  },
+  // One-time notices for the renderer: websites moved, secrets that need re-entering or unlocking.
+  "notice:get": async () => {
+    await checkSecrets();
+    const moved = notice;
+    notice = null;
+    return { moved, secrets: secrets.problems()[0] || null, locked: keyring.portable && !keyring.key };
+  },
 
   "inbox:list": listMessages,
   "inbox:delete": async (id, messageId) => {
@@ -573,8 +773,9 @@ const handlers = {
   "wp:mirror": async (url, declaration, event) => {
     requireDeclaration(declaration);
     const site = newSite("Imported website", "clean");
-    const dir = siteDir(site.id);
+    const dir = await folder.freeDir(SITES, String(url).replace(/^https?:\/\//i, "").replace(/^www\./i, ""));
     await fs.mkdir(path.join(dir, "assets"), { recursive: true });
+    sites.set(site.id, dir);
     try {
       const result = await mirrorSite(url, path.join(dir, "mirror"), (line) => event.sender.send("import-log", line));
       site.name = result.name || new URL(/^https?:/i.test(url) ? url : `https://${url}`).host;
@@ -584,9 +785,11 @@ const handlers = {
       site.mirror = { formFiles: result.formFiles };
       site.importProvenance = await importProvenance(url, declaration);
       await json.write(path.join(dir, "site.json"), site);
+      await repo.ensure(dir, await author(), `Imported from ${site.importProvenance.source} (exact copy)`);
       await previewBuild(site);
       return site.id;
     } catch (e) {
+      sites.delete(site.id);
       await fs.rm(dir, { recursive: true, force: true });
       throw e;
     }
@@ -618,7 +821,15 @@ const handlers = {
 };
 
 for (const [channel, fn] of Object.entries(handlers)) {
-  ipcMain.handle(channel, (event, ...args) => fn(...args, event));
+  ipcMain.handle(channel, async (event, ...args) => {
+    await ready;
+    const result = await fn(...args, event);
+    if (EDITS.has(channel)) {
+      const id = channel === "sites:save" ? args[0]?.id : channel.startsWith("settings:") ? args.at(-1) : args[0];
+      if (typeof id === "string" && sites.has(id)) autosave(id);
+    }
+    return result;
+  });
 }
 
 // One running copy per userData (#149): lib/json-store.js queues writes per
@@ -637,12 +848,13 @@ app.on("second-instance", () => {
 app.whenReady().then(() => {
   if (!firstInstance) return;
   // Replaced/removed images (#14); see pruneAssets for why only at startup.
-  handlers["sites:list"]().then((sites) => Promise.all(sites.map(async ({ id }) => pruneAssets(await readSite(id), siteDir(id)))))
+  ready.then(() => handlers["sites:list"]()).then((sites) => Promise.all(sites.map(async ({ id }) => pruneAssets(await readSite(id), siteDir(id)))))
     .catch((e) => console.error("Couldn't remove unused images:", e));
   protocol.handle("preview", async (request) => {
+    await ready;
     const { host, pathname } = new URL(request.url);
-    if (!ID_RE.test(host)) return new Response("Not found", { status: 404 });
-    const p = decodeURIComponent(pathname);
+    if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
+    const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
     const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js" }[p];
     if (frameScript) {
       return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
@@ -650,7 +862,9 @@ app.whenReady().then(() => {
     // Uploaded images come straight from the site folder so a fresh upload
     // shows before the next preview build finishes; exact-copy pages are
     // served from the site folder too rather than copied on every save.
-    const roots = p.startsWith("/assets/") ? [siteDir(host)] : [path.join(siteDir(host), "mirror"), path.join(previewDir(host), "public")];
+    // A copied site's own /assets/ files sit in mirror/ (#163).
+    const mirror = path.join(siteDir(host), "mirror");
+    const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
     const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
     const find = async (candidates) => {
       for (const name of candidates) for (const root of roots) {
@@ -664,7 +878,7 @@ app.whenReady().then(() => {
     // Copied pages get the provenance marker the published copy will have (#145),
     // and open in edit mode on the Pages tab (app/copied.js). The editor reads
     // and writes the file itself (mirror:read/write), so neither ends up in it.
-    if (file.endsWith(".html") && file.startsWith(path.join(siteDir(host), "mirror") + path.sep)) {
+    if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
       let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
       const params = new URL(request.url).searchParams;
       if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
@@ -709,4 +923,4 @@ app.whenReady().then(() => {
   win.loadFile(path.join(__dirname, "app", "index.html"));
 });
 
-app.on("window-all-closed", () => app.quit());
+app.on("window-all-closed", () => saveAllHistory().finally(() => app.quit())); // the last batch of edits goes into the history
