@@ -100,8 +100,10 @@ are not, so add them yourself.
   `issue-worker` per issue (it implements, tests and opens a PR, but never
   merges) and hand ready PRs to the `release-manager`. The release manager
   is the only thing that merges, one PR at a time and in dependency order,
-  each brought up to date with `main` and green in CI first, and it says which
-  issues are safe to start next. Workers declare `Depends on #n` and
+  each brought up to date with `main` and green in CI first. The
+  `project-manager` agent owns issue intake, the project board, labels,
+  milestones, the roadmap, and deciding which issues are safe to start next.
+  Workers declare `Depends on #n` and
   `Files:` in their PR bodies. GitHub can't enforce any of this yet
   (branch protection needs a paid plan for this private repo, see #5).
 - Commit messages and PR titles must be Conventional Commits (`feat:`,
