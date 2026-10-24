@@ -2,7 +2,7 @@
 // (so typing never loses focus), structural changes call renderTab().
 const { call, onPublishLog, onImportLog } = window.cms;
 
-let THEMES, site, publishedUrl, canUnpublish, paths = {}, settings;
+let THEMES, site, publishedUrl, canUnpublish, paths = {}, settings, siteAccounts = {};
 let tab = "design", pageId = null, formId = null, previewMobile = false, publishing = false, publishLog = "";
 const $ = (sel) => document.querySelector(sel);
 const rid = () => Math.random().toString(16).slice(2, 10);
@@ -31,6 +31,26 @@ const select = (label, obj, key, options, onchange) =>
 const check = (label, obj, key) =>
   h("label", { className: "field", style: "display:flex;gap:8px;align-items:center" },
     h("input", { type: "checkbox", checked: Boolean(obj[key]), onchange: (e) => { obj[key] = e.target.checked; save(); } }), label);
+// Per-site overrides of the app's defaults (#134, lib/settings.js). Blank
+// defaults fall back to these, which is what build() does.
+const FALLBACK = { email: "not set", owner: "the website name", retention: "the standard wording", inboxDays: 90, analyticsId: "none" };
+const effective = (key) => (key in (site.overrides ||= {}) ? site.overrides[key] : settings.defaults?.[key]);
+const shown = (v, key) => (v == null || v === "" ? FALLBACK[key] : String(v).length > 60 ? `${String(v).slice(0, 57)}…` : v);
+// "Using app default (…)" with "Override for this site", or the site's own value with "Reset to default".
+// A div, not a label: a label would pass clicks on its text to the button.
+function overridable(label, key, hint, props = {}, tag = "input") {
+  const o = (site.overrides ||= {});
+  const edit = (change) => { change(); save(); renderTab(); };
+  return h("div", { className: "field overridable", "data-key": key }, h("span", {}, label),
+    key in o
+      ? h("div", { className: "inline" },
+          h(tag, { value: o[key], style: "flex:1", oninput: (e) => { o[key] = e.target.value; save(); }, ...props }),
+          h("button", { onclick: () => edit(() => delete o[key]) }, "Reset to default"))
+      : h("div", { className: "inline", style: "align-items:center" },
+          h("span", { className: "default-value", style: "flex:1" }, `Using app default (${shown(settings.defaults?.[key], key)})`),
+          h("button", { onclick: () => edit(() => { o[key] = settings.defaults?.[key] ?? (key === "inboxDays" ? FALLBACK.inboxDays : ""); }) }, "Override for this site")),
+    hint && h("p", { className: "hint" }, hint));
+}
 const move = (list, i, d) => { const j = i + d; if (j < 0 || j >= list.length) return; [list[i], list[j]] = [list[j], list[i]]; save(); renderTab(); };
 const thumbUrl = (src) => `preview://${site.id}/${src}`;
 
@@ -117,7 +137,8 @@ async function loadSites(activeId) {
 async function openSite(id) {
   clearTimeout(saveTimer);
   publishLog = "";
-  ({ site, url: publishedUrl, canUnpublish } = await call("sites:get", id));
+  overriding = {};
+  ({ site, url: publishedUrl, canUnpublish, accounts: siteAccounts } = await call("sites:get", id));
   pageId = site.pages[0].id;
   formId = site.forms[0]?.id;
   paths = await call("sites:save", site);
@@ -157,6 +178,7 @@ function renderEditor() {
 }
 
 function renderTab() {
+  if (!site) return $("#settings-page") && renderSettings(); // theme sources and accounts on the Settings page
   const body = $("#tab");
   const scroll = body.scrollTop;
   const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab }[tab]();
@@ -171,7 +193,7 @@ function designTab() {
     site.mirror && h("div", { className: "warn" }, "Pages copied from WordPress keep their original design. These settings only apply to pages you add here."),
     text("Website name", site, "name"),
     area("Short description", site, "description", "Shown under your site's name in Google search results."),
-    text("Google Analytics measurement ID (optional)", site, "analyticsId", "Looks like G-XXXXXXXXXX, from Admin › Data streams in Google Analytics. Visitors are asked to accept analytics cookies first, and your privacy page explains them." +
+    overridable("Google Analytics measurement ID (optional)", "analyticsId", "Looks like G-XXXXXXXXXX, from Admin › Data streams in Google Analytics. Visitors are asked to accept analytics cookies first, and your privacy page explains them." +
       (site.mirror ? " Pages copied from WordPress aren't covered." : ""), { placeholder: "G-XXXXXXXXXX" }),
     h("h3", { className: "section-title" }, "Theme"),
     h("div", { className: "themes" }, Object.entries(themes).map(([id, t]) => themeButton(t, !site.themeSource && site.theme === id, () => {
@@ -186,7 +208,7 @@ function designTab() {
     colourHint(h("p", { className: "hint", id: "colour-hint", role: "status", style: "margin-top:8px" })),
     select("Font", site, "font", Object.entries(fonts).map(([id, f]) => [id, f.label])),
     imageField("Logo", site, "logo", 600, "Shown at the top of every page instead of your website name. A wide image with a transparent background works best."),
-    themeSourcesSettings(),
+    h("p", { className: "hint" }, "More themes can come from GitHub repositories: add them under Theme sources in ", h("a", { onclick: openSettings }, "Settings"), "."),
   ];
 }
 
@@ -227,7 +249,7 @@ function themeButton(t, active, choose) {
 
 // Themes from theme sources (#58, main.js listSources). Choosing one copies it
 // into the site folder; "Update theme" fetches the source again.
-let SOURCES = [], sourcesOpen = false, themeNote = "";
+let SOURCES = [], sourcesOpen = true, themeNote = "";
 const loadSources = (p = call("themes:sources")) => p.then((s) => { SOURCES = s; if (site && tab === "design" && $("#tab")) renderTab(); });
 const sourceThemeList = (src) => Object.entries(src.themes || {}).filter(([id, t]) => !t.errors.length && !(src.public && THEMES.themes[id]));
 
@@ -654,7 +676,7 @@ function formsTab() {
     chips,
     h("p", { className: "hint" }, used.length ? `Shown on: ${used.join(", ")}` : "Not on any page yet. Add a Form section in the Pages tab to show it."),
     text("Form name", form, "name", "Used in the email subject so you know which form was filled in."),
-    text("Send messages to", form, "to", "Leave blank to use the address in Publish › Form messages.", { type: "email", placeholder: settings.email || "you@example.com" }),
+    text("Send messages to", form, "to", "Leave blank to use the address in Publish › Form messages.", { type: "email", placeholder: effective("email") || "you@example.com" }),
     text("Thank-you message", form, "success"),
     h("h3", { className: "section-title" }, "Questions"),
     form.mirrored ? [
@@ -706,9 +728,7 @@ function inboxTab() {
   }).catch((e) => { list.replaceChildren(); status.textContent = errorText(e); });
   return [
     h("p", { className: "hint" }, "Messages people send through your forms. Ones marked \u26a0 weren't emailed to you, so reply to them from here."),
-    labelled("Delete messages after (days)", h("input", { type: "number", min: 1, value: site.inboxDays ?? 90,
-      onchange: (e) => { site.inboxDays = Math.max(1, Math.round(Number(e.target.value)) || 90); e.target.value = site.inboxDays; save(); } }),
-      "Your privacy page says this too. The website starts using a new value when you next publish."),
+    overridable("Delete messages after (days)", "inboxDays", "Your privacy page says this too. The website starts using a new value when you next publish.", { type: "number", min: 1 }),
     h("div", { className: "inline" }, exportBtn, h("button", { onclick: renderTab }, "Refresh")),
     status,
     list,
@@ -720,31 +740,100 @@ function step(title, done, ...content) {
   return h("div", { className: `step${done ? " done" : ""}` }, h("h3", {}, title), content);
 }
 
-function secretInput(placeholder, channel, button) {
+// Account changes: the app's (Settings) or, with siteId, that site's own accounts (#134).
+async function accountCall(siteId, ...args) {
+  const r = await call(...args, siteId || null);
+  if (siteId) siteAccounts = r; else settings = r;
+  renderTab();
+}
+
+function secretInput(placeholder, channel, button, siteId) {
   const input = h("input", { type: "password", placeholder });
   const error = h("p", { className: "error" });
   const btn = h("button", { className: "primary", onclick: async () => {
     btn.disabled = true; error.textContent = "";
-    try { settings = await call(channel, input.value); renderTab(); }
+    try { await accountCall(siteId, channel, input.value); }
     catch (e) { error.textContent = errorText(e); btn.disabled = false; }
   } }, button);
   return [h("div", { className: "inline" }, input, btn), error];
 }
 
+const accountName = (c) => c.accounts.find((a) => a.id === c.accountId)?.name || c.accountId;
+function cloudflareAccount(siteId) {
+  const c = (siteId ? siteAccounts : settings).cloudflare;
+  return c
+    ? [
+        c.accounts.length === 1 && h("p", {}, `Account: ${accountName(c)}`),
+        c.accounts.length > 1 && labelled("Account", h("select", { onchange: (e) => accountCall(siteId, "settings:account", e.target.value) },
+          c.accounts.map((a) => h("option", { value: a.id, selected: a.id === c.accountId }, a.name)))),
+        c.warnings?.map((w) => h("div", { className: "warn" }, w)),
+        h("button", { onclick: () => accountCall(siteId, "settings:disconnect", "cloudflare") }, siteId ? "Reset to the app's account" : "Disconnect"),
+      ]
+    : [
+        h("ol", {},
+          h("li", {}, "Create a free account at ", link("cloudflare.com", "https://dash.cloudflare.com/sign-up"), " (skip if you have one)."),
+          h("li", {}, "Open ", link("API Tokens", "https://dash.cloudflare.com/profile/api-tokens"), " and click ", h("b", {}, "Create Token"), "."),
+          h("li", {}, "Next to ", h("b", {}, "Edit Cloudflare Workers"), " click ", h("b", {}, "Use template"), "."),
+          h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", ", h("b", {}, "Account · D1 · Edit"), ", ", h("b", {}, "Zone · DNS · Edit"), " and ", h("b", {}, "Zone · Single Redirect · Edit"), " (called Dynamic Redirect on some accounts)."),
+          h("li", {}, "Set Account Resources and Zone Resources to ", h("b", {}, "All"), ", then ", h("b", {}, "Continue to summary › Create Token"), "."),
+          h("li", {}, "Copy the token and paste it here.")),
+        secretInput("Paste your Cloudflare API token", "settings:cloudflare", "Connect", siteId),
+      ];
+}
+function resendAccount(siteId) {
+  return (siteId ? siteAccounts : settings).resend
+    ? h("button", { onclick: () => accountCall(siteId, "settings:disconnect", "resend") }, siteId ? "Reset to the app's account" : "Disconnect")
+    : [
+        h("ol", {},
+          h("li", {}, "Create a free account at ", link("resend.com", "https://resend.com/signup"), "."),
+          h("li", {}, "Open ", link("API Keys", "https://resend.com/api-keys"), ", click ", h("b", {}, "Create API Key"), " and choose ", h("b", {}, "Full access"), "."),
+          h("li", {}, "Copy the key and paste it here.")),
+        secretInput("Paste your Resend API key", "settings:resend", "Connect", siteId),
+      ];
+}
+// The Publish tab's account status: the app's account (set up in Settings), or this site's own (#134).
+let overriding = {};
+function siteAccount(which) {
+  const own = siteAccounts[which], app = settings[which];
+  const block = which === "cloudflare" ? cloudflareAccount : resendAccount;
+  if (own) overriding[which] = false;
+  if (own) return [h("p", { className: "account-status" }, "This website uses its own account."), block(site.id)];
+  if (overriding[which]) return [h("p", { className: "hint" }, "Connect the account this website should use instead of the app's."), block(site.id),
+    h("button", { onclick: () => { overriding[which] = false; renderTab(); } }, "Cancel")];
+  return [
+    h("p", { className: "account-status" }, app ? `Using app account (${which === "cloudflare" ? accountName(app) : "connected"}).` : "No account connected yet. Connect one in Settings, or just for this website."),
+    h("div", { className: "inline" },
+      h("button", { onclick: openSettings }, "Settings"),
+      h("button", { onclick: () => { overriding[which] = true; renderTab(); } }, "Override for this site")),
+  ];
+}
+
 const link = (label, url) => h("a", { onclick: () => call("open", url) }, label);
 
 function publishTab() {
-  const cfDone = Boolean(settings.cloudflare);
+  const cfDone = Boolean(siteAccounts.cloudflare || settings.cloudflare);
   let zones = [];
   const domainSelect = h("select", { disabled: !cfDone, onchange: (e) => {
     const zone = zones.find((z) => z.id === e.target.value);
-    site.domain = zone || null; save(); renderTab();
+    site.domain = zone ? { zoneId: zone.id, zoneName: zone.name, label: site.domain?.label || "" } : null; save(); renderTab();
   } }, h("option", { value: "" }, "Free address (…workers.dev)"),
-    site.domain && h("option", { value: site.domain.id, selected: true }, site.domain.name));
-  if (cfDone) call("zones").then((z) => {
+    site.domain && h("option", { value: site.domain.zoneId, selected: true }, site.domain.zoneName));
+  if (cfDone) call("zones", site.id).then((z) => {
     zones = z;
-    domainSelect.append(...z.filter((zone) => zone.id !== site.domain?.id).map((zone) => h("option", { value: zone.id }, zone.name)));
+    domainSelect.append(...z.filter((zone) => zone.id !== site.domain?.zoneId).map((zone) => h("option", { value: zone.id }, zone.name)));
   }).catch(() => {});
+  // Optional subdomain (#135): "shop" publishes to shop.<zone>. Checked as typed; saved only when valid.
+  const hostname = site.domain && (site.domain.label ? `${site.domain.label}.${site.domain.zoneName}` : site.domain.zoneName);
+  const labelErr = h("p", { className: "error" }), domainWarn = h("div", {});
+  const labelInput = site.domain && h("input", { value: site.domain.label, placeholder: "leave blank for the domain itself", oninput: (e) => {
+    const label = e.target.value.trim().toLowerCase().replace(/\.$/, "");
+    const err = label && !/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/.test(label)
+      ? "Use lowercase letters, numbers and hyphens (not at the start or end), with dots between parts, each part at most 63 characters." : "";
+    labelErr.textContent = err;
+    if (!err) { site.domain.label = label; save(); }
+  }, onchange: () => { if (!labelErr.textContent) renderTab(); } });
+  if (cfDone && site.domain) call("domain:check", site.id, site.domain).then((w) =>
+    domainWarn.replaceChildren(...w.map((x) => h("div", { className: "warn" }, x)))).catch(() => {});
 
   const log = h("pre", { className: "log", hidden: !publishLog }, publishLog);
   const status = h("p", { className: "error" });
@@ -766,7 +855,7 @@ function publishTab() {
     ? [`Imported from ${provenance.source}${provenance.verification?.status === "verified" ? " (ownership verified)" : ""}. Every published page says it was made with PhaseN Site Builder and imported from that address on ${(provenance.importedAt || provenance.declaredAt).slice(0, 10)}, and /.well-known/phasen-provenance.json lists the address, date, app version and verification result. Your name and email aren't published.`]
     : ["This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it, or have permission to copy it, before you publish it again. ",
        h("button", { onclick: () => askDeclaration(true) }, "Confirm ownership…")]);
-  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !settings.resend || undeclared, onclick: () => run(publishBtn, async () => {
+  const publishBtn = h("button", { className: "primary big", disabled: publishing || !cfDone || !(siteAccounts.resend || settings.resend) || undeclared, onclick: () => run(publishBtn, async () => {
     clearTimeout(saveTimer);
     paths = await call("sites:save", site);
     await call("sites:publish", site.id);
@@ -801,51 +890,25 @@ function publishTab() {
   return [
     publishedUrl && h("div", { className: "live" }, "Your website is live at ", link(publishedUrl, publishedUrl)),
     imported,
-    step("1. Cloudflare (hosting)", cfDone,
-      cfDone
-        ? [
-            settings.cloudflare.accounts.length > 1 && labelled("Account", h("select", { onchange: async (e) => { settings = await call("settings:account", e.target.value); renderTab(); } },
-              settings.cloudflare.accounts.map((a) => h("option", { value: a.id, selected: a.id === settings.cloudflare.accountId }, a.name)))),
-            settings.cloudflare.warnings?.map((w) => h("div", { className: "warn" }, w)),
-            h("button", { onclick: async () => { settings = await call("settings:disconnect", "cloudflare"); renderTab(); } }, "Disconnect"),
-          ]
-        : [
-            h("ol", {},
-              h("li", {}, "Create a free account at ", link("cloudflare.com", "https://dash.cloudflare.com/sign-up"), " (skip if you have one)."),
-              h("li", {}, "Open ", link("API Tokens", "https://dash.cloudflare.com/profile/api-tokens"), " and click ", h("b", {}, "Create Token"), "."),
-              h("li", {}, "Next to ", h("b", {}, "Edit Cloudflare Workers"), " click ", h("b", {}, "Use template"), "."),
-              h("li", {}, "Click ", h("b", {}, "+ Add more"), " and add ", h("b", {}, "Account · Turnstile · Edit"), ", ", h("b", {}, "Account · D1 · Edit"), ", ", h("b", {}, "Zone · DNS · Edit"), " and ", h("b", {}, "Zone · Single Redirect · Edit"), " (called Dynamic Redirect on some accounts)."),
-              h("li", {}, "Set Account Resources and Zone Resources to ", h("b", {}, "All"), ", then ", h("b", {}, "Continue to summary › Create Token"), "."),
-              h("li", {}, "Copy the token and paste it here.")),
-            secretInput("Paste your Cloudflare API token", "settings:cloudflare", "Connect"),
-          ]),
-    step("2. Resend (sends your form emails)", settings.resend,
-      settings.resend
-        ? h("button", { onclick: async () => { settings = await call("settings:disconnect", "resend"); renderTab(); } }, "Disconnect")
-        : [
-            h("ol", {},
-              h("li", {}, "Create a free account at ", link("resend.com", "https://resend.com/signup"), "."),
-              h("li", {}, "Open ", link("API Keys", "https://resend.com/api-keys"), ", click ", h("b", {}, "Create API Key"), " and choose ", h("b", {}, "Full access"), "."),
-              h("li", {}, "Copy the key and paste it here.")),
-            secretInput("Paste your Resend API key", "settings:resend", "Connect"),
-          ]),
-    step("3. Form messages", Boolean(settings.email),
-      labelled("Send form messages to", h("input", { type: "email", value: settings.email, placeholder: "you@example.com",
-        onchange: async (e) => { settings = await call("settings:email", e.target.value); renderTab(); } }),
-        site.domain ? "" : "Until you use your own domain, this must be the same email you signed up to Resend with.")),
+    step("1. Cloudflare (hosting)", cfDone, siteAccount("cloudflare")),
+    step("2. Resend (sends your form emails)", Boolean(siteAccounts.resend || settings.resend), siteAccount("resend")),
+    step("3. Form messages", Boolean(effective("email")),
+      overridable("Send form messages to", "email", site.domain ? "" : "Until you use your own domain, this must be the same email you signed up to Resend with.", { type: "email", placeholder: "you@example.com" })),
     step("4. Web address", false,
       labelled("Domain", domainSelect,
         site.domain
-          ? `Your site will be at https://${site.domain.name}. Email records are added for you automatically.`
-          : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."])),
-    paths.privacy && step("5. Privacy page", Boolean(site.privacy?.owner),
+          ? `Your site will be at https://${hostname}. Email records are added for you automatically${site.domain.label ? `, and form emails come from website@${site.domain.zoneName}` : ""}.`
+          : ["To use your own domain, first ", link("add it to Cloudflare", "https://dash.cloudflare.com/?to=/:account/add-site"), ", then come back here."]),
+      site.domain && labelled("Subdomain (optional)", labelInput, `e.g. "shop" for shop.${site.domain.zoneName}. Only the domain itself gets a www redirect.`),
+      labelErr, domainWarn),
+    paths.privacy && step("5. Privacy page", Boolean(effective("owner")),
       h("p", {}, "Because your site has a form or analytics, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
         site.mirror ? "Copied pages keep their own footer, so add a link to it there if you can." : "It's linked from the footer of every page.",
         " It uses the email address form messages are sent to."),
       h("div", { className: "warn" }, "This is a starting point, not legal advice. Read it and check it matches how you handle people's information.",
         site.mirror ? " Copied pages may also load other services (analytics, maps, videos) that it doesn't mention." : ""),
-      text("Business or legal name", site.privacy ||= {}, "owner", "Who's responsible for the information people send, e.g. \"Smith Plumbing Ltd\" or \"Jane Smith, trading as Smith Plumbing\". Leave blank to use the website name.", { placeholder: site.name }),
-      area("How long you keep messages", site.privacy, "retention", "Leave blank to say you keep them only as long as you need to deal with the enquiry."),
+      overridable("Business or legal name", "owner", "Who's responsible for the information people send, e.g. \"Smith Plumbing Ltd\" or \"Jane Smith, trading as Smith Plumbing\". Leave blank to use the website name.", { placeholder: site.name }),
+      overridable("How long you keep messages", "retention", "Leave blank to say you keep them only as long as you need to deal with the enquiry.", {}, "textarea"),
       h("button", { onclick: () => { $("#preview").src = `preview://${site.id}${paths.privacy}?t=${Date.now()}`; } }, "Show it in the preview")),
     h("div", { className: "inline", style: "align-items:center;margin-top:8px" }, publishBtn,
       h("button", { onclick: async () => { try { await call("sites:export", site.id); } catch (e) { status.textContent = errorText(e); } } }, "Save as package…"),
@@ -866,8 +929,10 @@ onPublishLog((line) => logSink(line));
 // Dismissing hides that version until the app restarts.
 let dismissedUpdate;
 async function checkForUpdate() {
-  const u = await call("update:check").catch(() => null);
-  if (!u || u.version === dismissedUpdate) return;
+  showUpdate(await call("update:check").catch(() => null)); // null when auto-check is off (Settings)
+}
+function showUpdate(u) {
+  if (!u?.newer || u.version === dismissedUpdate) return;
   $("#update-banner")?.remove();
   $(".sidebar").append(h("div", { id: "update-banner", className: "update-banner", role: "status" },
     h("span", {}, `Version ${u.version} is available`),

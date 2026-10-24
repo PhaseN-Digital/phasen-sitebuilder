@@ -11,6 +11,7 @@ const update = require("./lib/update");
 const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
 const builder = require("./lib/theme-builder");
+const config = require("./lib/settings");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -44,9 +45,20 @@ const seal = (v) => safeStorage.encryptString(v).toString("base64");
 const unseal = (v) => (v ? safeStorage.decryptString(Buffer.from(v, "base64")) : "");
 const hex = (n) => crypto.randomBytes(n).toString("hex");
 
-const loadSettings = () => readJson(data("settings.json"), {});
-const saveSettings = (s) => writeJson(data("settings.json"), s);
-const readSite = (id) => readJson(path.join(siteDir(id), "site.json"), null);
+// App-wide settings. Site operations go through settingsFor() instead (#134).
+const settingsStore = config.store(app.getPath("userData"));
+const loadSettings = () => settingsStore.load();
+const saveSettings = (s) => settingsStore.save(s);
+const readSite = (id) => readJson(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
+// Everything a site operation needs: the site's overrides, else the app's settings.
+// `published` is the accounts the site was last published with (lib/settings.js publishedWith).
+async function settingsFor(id, site) {
+  const [s, accounts, state] = await Promise.all([loadSettings(), settingsStore.loadSite(siteDir(id)), readState(id)]);
+  return { ...config.resolve(s, site || (await readSite(id)), accounts), published: config.publishedWith(s, accounts, state, unseal), accounts, state };
+}
+// Every build (preview, import, export, publish) goes through here so it sees the resolved settings.
+const buildSite = (site, outDir, options = {}) => settingsFor(site.id, site).then((r) => build(r.site, siteDir(site.id), outDir, { defaultTo: r.email, ...options }));
+const previewBuild = (site) => queueBuild(() => buildSite(site, previewDir(site.id), { preview: true }));
 // Per-site deploy state (Turnstile keys, Resend sending key). Kept apart from
 // site.json so secrets never end up in a build or export.
 const readState = (id) => readJson(path.join(siteDir(id), "publish.json"), {});
@@ -115,33 +127,41 @@ async function importProvenance(url, declaration, { wpAuthenticated = false, imp
     ...(imported && { importedAt: now }),
     declaredAt: now,
     appVersion: app.getVersion(),
-    declaredBy: { name: settings.name || "", email: settings.email || "" },
+    declaredBy: { name: settings.name || "", email: settings.defaults?.email || "" }, // the app default form email (#134)
     statement: String(declaration.statement || "").slice(0, 500),
     verification: await verifyOwnership(source, { zones, wpAuthenticated, token: String(declaration.token || "") }),
   };
 }
 
 async function publish(id, log) {
-  const declared = await readSite(id);
-  if (declared && isImported(declared) && !declared.importProvenance) {
+  const site = await readSite(id);
+  if (site && isImported(site) && !site.importProvenance) {
     throw new Error("This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it on the Publish tab before publishing it again.");
   }
-  const settings = await loadSettings();
-  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first.");
-  if (!settings.resendKey) throw new Error("Connect your Resend account first (it sends your form emails).");
-  const site = await readSite(id);
+  const settings = await settingsFor(id, site);
+  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first (Settings).");
+  if (!settings.resendKey) throw new Error("Connect your Resend account first (Settings). It sends your form emails.");
   const missingTo = site.forms.find((f) => !f.to && !settings.email);
-  if (missingTo) throw new Error(`Set where "${missingTo.name}" form messages should go (Forms tab or account settings).`);
+  if (missingTo) throw new Error(`Set where "${missingTo.name}" form messages should go (Forms tab, Publish tab or Settings).`);
 
   const token = unseal(settings.cloudflare.token);
   const { accountId } = settings.cloudflare;
   const resendKey = unseal(settings.resendKey);
-  const state = await readState(id);
+  const { state } = settings;
+  // Turnstile, D1 and the Worker all belong to the account it's live on, so moving needs a take-offline first.
+  if (state.accountId && state.accountId !== accountId && canUnpublish(state)) {
+    throw new Error("This website is live on a different Cloudflare account. Take it offline first (or switch back to that account), then publish again.");
+  }
+  state.resendKeyHash = config.keyHash(resendKey);
   // Recorded up front so "Take offline" (#71) can undo even a half-finished publish.
-  Object.assign(state, { accountId, worker: site.workerName }, site.domain && { www: { id: site.domain.id, name: site.domain.name } });
+  const labelError = site.domain && cf.labelError(site.domain.label, site.domain.zoneName);
+  if (labelError) throw new Error(`Web address: ${labelError}`);
+  const www = site.domain && !site.domain.label && { id: site.domain.zoneId, name: site.domain.zoneName }; // the www redirect is apex-only (#135)
+  Object.assign(state, { accountId, worker: site.workerName }, www && { www });
 
   log("Preparing…\n");
-  const hostname = site.domain ? site.domain.name : await cf.workersDevHostname(token, accountId, site.workerName);
+  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
+  const hostname = site.domain ? cf.domainHostname(site.domain) : await cf.workersDevHostname(token, accountId, site.workerName);
   const turnstile = await cf.ensureTurnstile(token, accountId, site.name, hostname, state.turnstile && { ...state.turnstile, secret: unseal(state.turnstile.secret) });
   state.turnstile = { ...turnstile, secret: seal(turnstile.secret) };
   await writeState(id, state);
@@ -167,11 +187,10 @@ async function publish(id, log) {
     workerName: site.workerName,
     hostname,
     sitekey: turnstile.sitekey,
-    fromAddress: site.domain ? `website@${site.domain.name}` : "onboarding@resend.dev",
-    defaultTo: settings.email,
+    fromAddress: site.domain ? `website@${site.domain.zoneName}` : "onboarding@resend.dev",
     d1: state.d1,
   };
-  await build(site, siteDir(id), publishDir(id), options);
+  await buildSite(site, publishDir(id), options);
   log("Uploading website…\n");
   await cf.deployWorker(publishDir(id), { token, accountId }, { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) }, log);
 
@@ -189,17 +208,18 @@ async function publish(id, log) {
 // Undoes publish() (#71). Throws if anything couldn't be removed; publish.json
 // keeps just those parts, so trying again only retries them.
 async function unpublish(id, log) {
-  const settings = await loadSettings();
-  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first, so the website can be removed from it.");
   const site = await readSite(id);
-  const state = await readState(id);
+  const { published, state } = await settingsFor(id, site);
+  if (!published.cloudflare) throw new Error(state.accountId
+    ? "This website is on a Cloudflare account that isn't connected any more. Connect it again (Settings, or this site's Publish tab) so the website can be removed from it."
+    : "Connect your Cloudflare account first (Settings), so the website can be removed from it.");
   if (state.url) { // published before publish.json recorded these
     state.worker ??= site.workerName;
-    if (site.domain) state.www ??= { id: site.domain.id, name: site.domain.name };
+    if (site.domain && !site.domain.label) state.www ??= { id: site.domain.zoneId, name: site.domain.zoneName };
   }
-  state.accountId ??= settings.cloudflare.accountId;
+  state.accountId ??= published.cloudflare.accountId;
   log("Taking the website offline…\n");
-  const { state: left, failed } = await cf.unpublish(unseal(settings.cloudflare.token), unseal(settings.resendKey), state, log);
+  const { state: left, failed } = await cf.unpublish(unseal(published.cloudflare.token), unseal(published.resendKey), state, log);
   await writeState(id, left);
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
   log("\nDone. The website is offline.\n");
@@ -211,10 +231,10 @@ const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile ||
 // site has no inbox yet. Listing also applies the retention period, so old
 // messages go even if nobody sends a new one.
 async function inbox(id) {
-  const [settings, state, site] = await Promise.all([loadSettings(), readState(id), readSite(id)]);
+  const { published, state, site } = await settingsFor(id);
   if (!state.d1) return null;
-  if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first (Publish tab).");
-  const token = unseal(settings.cloudflare.token), accountId = state.accountId || settings.cloudflare.accountId;
+  if (!published.cloudflare) throw new Error("This website's Cloudflare account isn't connected. Connect it in Settings (or this site's Publish tab).");
+  const token = unseal(published.cloudflare.token), { accountId } = published.cloudflare;
   return { site, query: (sql, params) => cf.d1Query(token, accountId, state.d1.id, sql, params) };
 }
 // ponytail: loads every message at once; page it if an inbox ever holds thousands.
@@ -256,12 +276,27 @@ async function useTheme(id, spec, themeId) {
   return { theme: loadTheme(path.join(siteDir(id), "theme"), themeId), fonts };
 }
 
-function publicSettings(s) {
-  return {
-    cloudflare: s.cloudflare && { accountId: s.cloudflare.accountId, accounts: s.cloudflare.accounts, warnings: s.cloudflare.warnings },
-    resend: Boolean(s.resendKey),
-    email: s.email || "",
-  };
+// What the renderer may see of a set of accounts (the app's or a site's own): never the secrets.
+const publicAccounts = (a) => ({
+  cloudflare: a.cloudflare ? { accountId: a.cloudflare.accountId, accounts: a.cloudflare.accounts, warnings: a.cloudflare.warnings } : null,
+  resend: Boolean(a.resendKey),
+});
+const publicSettings = (s) => ({
+  ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
+  version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
+});
+// Account changes apply to the app's accounts, or to one site's own when siteId is given (#134).
+async function editAccounts(siteId, change) {
+  if (typeof siteId === "string") {
+    const dir = siteDir(siteId), accounts = await settingsStore.loadSite(dir);
+    change(accounts);
+    await settingsStore.saveSite(dir, accounts);
+    return publicAccounts(accounts);
+  }
+  const s = await loadSettings();
+  change(s);
+  await saveSettings(s);
+  return publicSettings(s);
 }
 
 // Theme Builder (#130): local themes in userData/themes-local, listed in the
@@ -366,17 +401,16 @@ const handlers = {
     const site = newSite(String(name).trim() || "My website", theme);
     await fs.mkdir(path.join(siteDir(site.id), "assets"), { recursive: true });
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
-    await queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true }));
+    await previewBuild(site);
     return site;
   },
   "sites:get": async (id) => {
     const state = await readState(id);
-    return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state) };
+    return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state), accounts: publicAccounts(await settingsStore.loadSite(siteDir(id))) };
   },
   "sites:save": async (site) => {
     await writeJson(path.join(siteDir(site.id), "site.json"), site);
-    const defaultTo = (await loadSettings()).email; // the privacy page's contact address
-    return queueBuild(() => build(site, siteDir(site.id), previewDir(site.id), { preview: true, defaultTo })); // page id -> preview path
+    return previewBuild(site); // page id -> preview path
   },
   "sites:delete": async (id, offline, event) => {
     if (offline) await unpublish(id, (line) => event.sender.send("publish-log", line)); // throws before anything local is deleted
@@ -389,7 +423,7 @@ const handlers = {
     const out = path.join(filePaths[0], site.workerName);
     await fs.mkdir(out); // throws if it exists, so we never overwrite a user's folder
     const state = await readState(id);
-    await build(site, siteDir(id), out, { workerName: site.workerName, hostname: site.domain?.name, sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.name}` : undefined, defaultTo: (await loadSettings()).email, d1: state.d1 });
+    await buildSite(site, out, { workerName: site.workerName, hostname: cf.domainHostname(site.domain), sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.zoneName}` : undefined, d1: state.d1 });
     shell.showItemInFolder(out);
     return out;
   },
@@ -420,44 +454,44 @@ const handlers = {
   },
 
   "settings:get": async () => publicSettings(await loadSettings()),
-  "settings:cloudflare": async (token) => {
+  // These take an optional site id last: given one, they change that site's own accounts.
+  "settings:cloudflare": async (token, siteId) => {
     token = String(token).trim();
     const { accounts, warnings } = await cf.checkCloudflareToken(token);
-    const s = await loadSettings();
-    s.cloudflare = { token: seal(token), accountId: accounts[0].id, accounts, warnings };
-    await saveSettings(s);
-    return publicSettings(s);
+    return editAccounts(siteId, (a) => { a.cloudflare = { token: seal(token), accountId: accounts[0].id, accounts, warnings }; });
   },
-  "settings:account": async (accountId) => {
-    const s = await loadSettings();
-    if (!s.cloudflare?.accounts.some((a) => a.id === accountId)) throw new Error("Unknown account.");
-    s.cloudflare.accountId = accountId;
-    await saveSettings(s);
-    return publicSettings(s);
-  },
-  "settings:resend": async (key) => {
+  "settings:account": (accountId, siteId) => editAccounts(siteId, (a) => {
+    if (!a.cloudflare?.accounts.some((x) => x.id === accountId)) throw new Error("Unknown account.");
+    a.cloudflare.accountId = accountId;
+  }),
+  "settings:resend": async (key, siteId) => {
     key = String(key).trim();
     await cf.checkResendKey(key);
+    return editAccounts(siteId, (a) => { a.resendKey = seal(key); });
+  },
+  "settings:disconnect": (which, siteId) => editAccounts(siteId, (a) => { delete a[which === "cloudflare" ? "cloudflare" : "resendKey"]; }),
+  "settings:default": async (key, value) => {
+    if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
     const s = await loadSettings();
-    s.resendKey = seal(key);
+    s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim();
     await saveSettings(s);
     return publicSettings(s);
   },
-  "settings:email": async (email) => {
+  "settings:auto-update": async (on) => {
     const s = await loadSettings();
-    s.email = String(email).trim();
+    s.autoUpdate = Boolean(on);
     await saveSettings(s);
     return publicSettings(s);
   },
-  "settings:disconnect": async (which) => {
-    const s = await loadSettings();
-    delete s[which === "cloudflare" ? "cloudflare" : "resendKey"];
-    await saveSettings(s);
-    return publicSettings(s);
-  },
-  zones: async () => {
-    const { cloudflare } = await loadSettings();
+  "settings:open-data": () => shell.openPath(data()),
+  zones: async (siteId) => {
+    const { cloudflare } = await settingsFor(siteId);
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];
+  },
+  "domain:check": async (id, domain) => {
+    const site = await readSite(id);
+    const { cloudflare } = site ? await settingsFor(id, site) : {}; // the site's resolved account (#134)
+    return cloudflare && site ? cf.hostnameWarnings(unseal(cloudflare.token), cloudflare.accountId, cf.siteDomain(domain), site.workerName) : [];
   },
   "wp:fetch": async (url, username, password, declaration) => {
     requireDeclaration(declaration);
@@ -498,7 +532,7 @@ const handlers = {
       site.mirror = { formFiles: result.formFiles };
       site.importProvenance = await importProvenance(url, declaration);
       await writeJson(path.join(dir, "site.json"), site);
-      await queueBuild(() => build(site, dir, previewDir(site.id), { preview: true }));
+      await previewBuild(site);
       return site.id;
     } catch (e) {
       await fs.rm(dir, { recursive: true, force: true });
@@ -506,24 +540,29 @@ const handlers = {
     }
   },
   // Fetches latest.json at most once a day; the result is kept in settings so
-  // a restart the same day still shows the banner. Offline or any error: no
-  // banner, and the next call tries again.
-  "update:check": async () => {
-    let { updateCheck } = await loadSettings();
-    if (!updateCheck || Date.now() - updateCheck.at > 24 * 3600e3) {
+  // a restart the same day still shows the banner. Offline or any error: null
+  // (no banner), and the next call tries again. Settings › Updates passes
+  // force (Check now): always fetches, and throws instead of returning null.
+  // With auto-check off, only forced checks run.
+  "update:check": async (force) => {
+    force = force === true;
+    let { updateCheck, autoUpdate } = await loadSettings();
+    if (!force && autoUpdate === false) return null;
+    if (force || !updateCheck || Date.now() - updateCheck.at > 24 * 3600e3) {
       try {
         const res = await net.fetch(UPDATE_URL, { signal: AbortSignal.timeout(15000) });
-        if (!res.ok) return null;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const latest = await res.json();
         updateCheck = { at: Date.now(), version: String(latest.version), url: update.pickDownload(latest.downloads, process.platform, process.arch) };
-      } catch {
+      } catch (e) {
+        if (force) throw new Error(`Couldn't check for updates (${e.message}). Check your internet connection and try again.`);
         return null;
       }
       const s = await loadSettings(); // re-read: settings may have changed during the fetch
       s.updateCheck = updateCheck;
       await saveSettings(s);
     }
-    return updateCheck.url && update.isNewer(updateCheck.version, app.getVersion()) ? { version: updateCheck.version, url: updateCheck.url } : null;
+    return { version: updateCheck.version, url: updateCheck.url, newer: Boolean(updateCheck.url && update.isNewer(updateCheck.version, app.getVersion())) };
   },
   open: (url) => /^https:\/\//.test(url) && shell.openExternal(url),
 };

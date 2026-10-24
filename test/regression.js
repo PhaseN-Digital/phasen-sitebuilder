@@ -158,6 +158,43 @@ async function sourceTheme(siteId) {
   return { theme: "retro", themeSource: themeSources.PUBLIC_SOURCE, font: "theme-retro" };
 }
 
+// Publishing to a subdomain (#135) against a stubbed Cloudflare/Resend API:
+// the publish steps main.js runs, then the build checked with wrangler's own dry run.
+async function subdomainChecks(siteId) {
+  const pub = require("../lib/publish");
+  const siteDir = path.join(OUT, "userdata", "sites", siteId), dir = path.join(OUT, "built", "subdomain");
+  const site = { ...JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), domain: { id: "zone1", name: "example.com" } };
+  const domain = pub.siteDomain(site.domain);
+  domain.label = "shop";
+  const hostname = pub.domainHostname(domain), calls = [], realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { method, body }) => {
+    url = url.replace(/^https:\/\/api\.(cloudflare\.com\/client\/v4|resend\.com)/, "");
+    calls.push({ method, url, body: body && JSON.parse(body) });
+    const result = url.includes("/workers/domains") ? [] : url.includes("/dns_records") ? [{ type: "CNAME" }] : url.includes("/challenges/widgets") ? { sitekey: "sk", secret: "sec" } : {};
+    const json = url === "/domains" && method === "GET" ? { data: [] } : url === "/domains" ? { id: "rd1", name: "example.com", records: [], status: "verified" } : { success: true, result };
+    return { status: 200, ok: true, json: async () => json };
+  };
+  let warnings;
+  try {
+    warnings = await pub.hostnameWarnings("t", "acct", domain, site.workerName);
+    await pub.ensureTurnstile("t", "acct", site.name, hostname);
+    await pub.ensureResendDomain("t", domain, "rk", () => {});
+    await pub.ensureWwwRedirect("t", domain, () => {});
+  } finally { globalThis.fetch = realFetch; }
+  check("subdomain publish: hostname and validation", hostname === "shop.example.com" && !pub.labelError(domain.label, domain.zoneName) && pub.labelError("Shop!", "example.com"));
+  check("subdomain publish: warned about existing DNS records", warnings.length === 1 && warnings[0].includes("shop.example.com already has DNS records"), warnings);
+  check("subdomain publish: Turnstile widget on the full hostname", calls.some((c) => c.url === "/accounts/acct/challenges/widgets" && c.body.domains[0] === "shop.example.com"), calls);
+  check("subdomain publish: Resend sends from the zone apex", calls.some((c) => c.url === "/domains" && c.method === "POST" && c.body.name === "example.com"), calls);
+  check("subdomain publish: no www redirect", !calls.some((c) => /rulesets|www\./.test(c.url)), calls);
+  await build(site, siteDir, dir, { workerName: site.workerName, hostname, sitekey: "sk", fromAddress: `website@${domain.zoneName}`, defaultTo: "owner@example.com" });
+  const toml = fs.readFileSync(path.join(dir, "wrangler.toml"), "utf8"), read = (f) => fs.readFileSync(path.join(dir, "public", f), "utf8");
+  check("subdomain publish: wrangler.toml Custom Domain on the full hostname", toml.includes('pattern = "shop.example.com"\ncustom_domain = true') && toml.includes("workers_dev = false"), toml);
+  check("subdomain publish: canonical, sitemap and robots on the full hostname", read("index.html").includes('<link rel="canonical" href="https://shop.example.com/">')
+    && read("sitemap.xml").includes("<loc>https://shop.example.com/</loc>") && read("robots.txt").includes("Sitemap: https://shop.example.com/sitemap.xml"));
+  const dry = start(ELECTRON, ["--require", path.join(ROOT, "lib", "wrangler-argv-fix.js"), WRANGLER, "deploy", "--dry-run", "--outdir", path.join(OUT, "subdomain-dry-run")], { cwd: dir, env: wranglerEnv() });
+  check("subdomain publish: wrangler accepts the config (deploy --dry-run)", (await dry.done) === 0, dry.output.slice(-1500));
+}
+
 async function workerChecks(sites) {
   if (sites.created) {
     // Built with the Theme Builder's theme the app chose for it (#130), before serve() swaps in a source theme.
@@ -242,6 +279,7 @@ async function workerChecks(sites) {
     const sites = await driveApp(wp, el, updates, gh);
     check("exact copy: never fetched feeds or admin pages", !el.forbidden.length, el.forbidden);
     await workerChecks(sites);
+    if (sites.created) await subdomainChecks(sites.created);
   } catch (e) {
     check("suite finished without errors", false, e.stack || String(e));
   } finally {

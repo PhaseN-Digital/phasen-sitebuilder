@@ -8,6 +8,8 @@ const path = require("node:path");
 
 const { SB_USERDATA: UD, SB_RESULT, SB_SHOTS, SB_WP, SB_EL } = process.env;
 app.setPath("userData", UD);
+// Linux CI has no keyring: an in-memory key keeps safeStorage working so accounts can be connected (#134).
+app.whenReady().then(() => require("electron").safeStorage.setUsePlainTextEncryption(true));
 const elHost = new URL(SB_EL).host;
 
 const checks = [];
@@ -19,7 +21,10 @@ const check = (name, ok, detail) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const read = (f) => fs.readFileSync(f, "utf8");
 
+let driven = false;
 app.on("browser-window-created", (_e, win) => {
+  if (driven) return; // only the main window: the Theme Builder's hidden capture window must not run the steps too
+  driven = true;
   win.webContents.on("console-message", (e) => { if (e.level === "error" && !/Content Security|OTS|font/.test(e.message)) console.log("[renderer]", e.message); });
   win.webContents.once("did-finish-load", async () => {
     const run = (js) => win.webContents.executeJavaScript(js);
@@ -51,7 +56,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, themeBuilder };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, themeBuilder, settingsPage };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -60,6 +65,82 @@ app.on("browser-window-created", (_e, win) => {
     } finally {
       fs.writeFileSync(SB_RESULT, JSON.stringify(result, null, 2));
       app.quit();
+    }
+
+    // ---------- Settings (#134): app defaults and accounts, one site's overrides, publish with a stubbed Cloudflare/Resend ----------
+    async function settingsPage() {
+      const id = result.sites.created;
+      // main.js calls these through the module object, so patching it here stubs every Cloudflare/Resend request.
+      const cf = require("../lib/publish");
+      const calls = { deploy: [], unpublish: [] };
+      Object.assign(cf, {
+        checkCloudflareToken: async (token) => ({ accounts: [{ id: `acct-${token}`, name: `Account ${token}` }], warnings: [] }),
+        checkResendKey: async () => [],
+        listZones: async () => [],
+        workersDevHostname: async () => "regression.workers.dev",
+        ensureTurnstile: async (token, accountId, name, hostname) => ({ sitekey: "1x00000000000000000000AA", secret: "1x0000000000000000000000000000000AA", hostname }),
+        createSendingKey: async () => ({ id: "key-1", token: "re_sending" }),
+        ensureD1: async (token, accountId, workerName) => ({ id: "db-1", name: `${workerName}-inbox` }),
+        deployWorker: async (out, creds) => calls.deploy.push({ ...creds, forms: JSON.parse(read(path.join(out, "worker", "forms.json"))), privacy: read(path.join(out, "public", "privacy.html")) }),
+        unpublish: async (token, resendKey, state) => (calls.unpublish.push({ token, resendKey }), { state: {}, failed: [] }),
+      });
+      const connect = (scope, placeholder, value) => run(`{ const i = document.querySelector(${JSON.stringify(`${scope} input[placeholder="${placeholder}"]`)}); i.value = ${JSON.stringify(value)}; i.nextSibling.click(); } 0`);
+      const setField = (label, value, tag = "input") => run(`{ const i = ${fieldInput(label, tag)}; i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("change")); } 0`);
+
+      await run(`document.querySelector("#open-settings").click()`);
+      check("settings: page opens", await waitFor(() => run(`Boolean(document.querySelector("#settings-page h1"))`)));
+      await setField("Send form messages to", "app@example.com");
+      await setField("Business or legal name", "App Default Ltd");
+      await connect("#settings-page", "Paste your Cloudflare API token", "app");
+      await waitFor(() => run(`settings.cloudflare?.accountId === "acct-app"`));
+      await connect("#settings-page", "Paste your Resend API key", "re_app");
+      await waitFor(() => run(`settings.resend`));
+      await shot("settings");
+      await run(`document.querySelector(".licences").scrollIntoView(); 0`);
+      await sleep(300); await shot("settings-bottom");
+      const saved1 = JSON.parse(read(path.join(UD, "settings.json")));
+      check("settings: defaults and accounts saved, secrets sealed", saved1.defaults?.email === "app@example.com" && saved1.defaults.owner === "App Default Ltd" && saved1.cloudflare?.accountId === "acct-app" && saved1.cloudflare.token !== "app" && saved1.resendKey && saved1.resendKey !== "re_app", saved1.defaults);
+      check("settings: theme sources, updates, data and about sections", await run(`["Theme sources", "Check now", "Open data folder", "Sites folder (coming, #136)", "Wrangler"].every((t) => document.querySelector("#settings-page").textContent.includes(t))`));
+
+      await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
+      await waitFor(() => run(`site?.id === ${JSON.stringify(id)} && Boolean(document.querySelector("#tab"))`));
+      await run(`tab = "publish"; renderEditor(); 0`);
+      const owner = `.overridable[data-key="owner"]`;
+      const status = await waitFor(() => run(`document.querySelector('${owner} .default-value')?.textContent`));
+      check("site: uses the app default", status === "Using app default (App Default Ltd)" && read(path.join(UD, "preview", id, "public", "privacy.html")).includes("run by App Default Ltd"), status);
+      await run(`document.querySelector('${owner} button').click()`);
+      await run(`{ const i = document.querySelector('${owner} input'); i.value = "Site Override Ltd"; i.dispatchEvent(new Event("input")); } 0`);
+      await saved();
+      check("site: override saved and previewed", JSON.parse(read(path.join(UD, "sites", id, "site.json"))).overrides?.owner === "Site Override Ltd" && read(path.join(UD, "preview", id, "public", "privacy.html")).includes("run by Site Override Ltd"));
+      check("site: app account shown", (await run(`document.querySelector(".account-status").textContent`)) === "Using app account (Account app).");
+      await run(`[...document.querySelectorAll(".step")][0].querySelector("button:nth-child(2)").click()`);
+      await connect(".step", "Paste your Cloudflare API token", "site");
+      await waitFor(() => run(`siteAccounts.cloudflare?.accountId === "acct-site"`));
+      check("site: own Cloudflare account stored sealed, apart from site.json", !read(path.join(UD, "sites", id, "accounts.json")).includes('"site"') && !read(path.join(UD, "sites", id, "site.json")).includes("acct-site"));
+      await shot("publish-overrides");
+      await run(`document.querySelector('.overridable[data-key=\"retention\"]').scrollIntoView(); 0`);
+      await sleep(300); await shot("publish-privacy");
+
+      await clickButton("Publish website");
+      const log = await waitFor(() => run(`document.querySelector("pre.log").textContent.includes("Done!") || [...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`), 30000);
+      const d = calls.deploy[0];
+      check("publish: uses the site's account and the resolved defaults", d?.token === "site" && d.accountId === "acct-site" && d.forms.contact.to === "app@example.com" && d.privacy.includes("run by Site Override Ltd") && d.privacy.includes("mailto:app@example.com"), d ? { token: d.token, accountId: d.accountId, to: d.forms.contact.to } : log);
+      const state = JSON.parse(read(path.join(UD, "sites", id, "publish.json")));
+      check("publish: account recorded", state.accountId === "acct-site" && state.resendKeyHash);
+
+      // Back to the app's account: offline must still go through the account the site is live on, never the app's.
+      await clickButton("Reset to the app's account");
+      await waitFor(() => run(`!siteAccounts.cloudflare`));
+      await run(`window.confirm = () => true; 0`);
+      await clickButton("Take website offline");
+      const err = await waitFor(() => run(`[...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`));
+      check("unpublish: refuses another account than the one that published", /isn't connected any more/.test(err || "") && !calls.unpublish.length, err);
+      await run(`[...document.querySelectorAll(".step")][0].querySelector("button:nth-child(2)").click()`);
+      await connect(".step", "Paste your Cloudflare API token", "site");
+      await waitFor(() => run(`siteAccounts.cloudflare?.accountId === "acct-site"`));
+      await clickButton("Take website offline");
+      await waitFor(() => calls.unpublish.length);
+      check("unpublish: uses the account that published", calls.unpublish[0]?.token === "site" && calls.unpublish[0].resendKey === "re_app", calls.unpublish[0]);
     }
 
     // ---------- Theme Builder (#130): a theme from the created site's design, saved, then used by that site ----------

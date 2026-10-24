@@ -198,6 +198,16 @@ are not, so add them yourself.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
+- Settings (#134, README "How it fits together"): site operations (build,
+  publish, unpublish, inbox, import) get settings only through
+  `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
+  never `loadSettings()` directly, and all settings storage stays in
+  `lib/settings.js` `store()` so #136 can move it. Unpublish and the inbox
+  must use the account recorded in `publish.json`, not the current one.
+  Per-site secrets go in `sites/<id>/accounts.json` (sealed), never
+  `site.json`. Account IPC handlers take an optional site id last; the
+  renderer must always pass it (or null), since the IPC wrapper appends the
+  event.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
