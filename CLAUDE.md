@@ -195,6 +195,9 @@ are not, so add them yourself.
   this). `SITEBUILDER_GITHUB_API` (the fake in the regression suite) must stay
   ignored when `app.isPackaged`. A site using a source theme builds from its
   own copy in `sites/<id>/theme/` (`site.themeSource`), never from the cache.
+  Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
+  `userData/themes-local/`; their `theme.css` must keep passing
+  `lib/theme-validate.js` (test.js checks every control combination).
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.

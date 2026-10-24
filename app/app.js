@@ -241,7 +241,7 @@ function sourceThemes() {
   const current = site.themeSource && SOURCES.find((s) => s.spec === site.themeSource)?.themes?.[site.theme];
   return [
     SOURCES.filter((src) => !src.hidden && sourceThemeList(src).length).map((src) => [
-      h("p", { className: "hint", style: "margin:12px 0 6px" }, `From ${src.spec}`),
+      h("p", { className: "hint", style: "margin:12px 0 6px" }, src.local ? "Your themes (Theme Builder)" : `From ${src.spec}`),
       h("div", { className: "themes" }, sourceThemeList(src).map(([id, t]) => themeButton(t, site.themeSource === src.spec && site.theme === id, async () => {
         const theme = await useTheme("themes:use", src.spec, id);
         Object.assign(site, { theme: id, themeSource: src.spec, colors: { ...theme.colors }, font: theme.font });
@@ -257,7 +257,7 @@ function sourceThemes() {
         } catch (err) { status.textContent = errorText(err); }
         e.target.disabled = false;
       } }, "Update theme"),
-      h("span", { className: "hint" }, `"${current?.label || site.theme}" from ${site.themeSource}${current?.version ? `, version ${current.version}` : ""}. A copy is kept with your website.`)),
+      h("span", { className: "hint" }, `"${current?.label || site.theme}" from ${site.themeSource === "local" ? "your themes" : site.themeSource}${current?.version ? `, version ${current.version}` : ""}. A copy is kept with your website.`)),
     status,
   ];
 }
@@ -275,7 +275,7 @@ function themeSourcesSettings() {
   return h("details", { className: "sources", open: sourcesOpen, ontoggle: (e) => { sourcesOpen = e.target.open; } },
     h("summary", {}, "Theme sources"),
     h("p", { className: "hint" }, "Extra themes come from GitHub repositories. Choosing one keeps a copy with your website, so it keeps working even if the repository changes or disappears."),
-    SOURCES.map((src) => {
+    SOURCES.filter((src) => !src.local).map((src) => {
       const error = h("p", { className: "error" }, src.error || "");
       const bad = Object.entries(src.themes || {}).filter(([, t]) => t.errors.length);
       const row = h("div", { className: "source" },

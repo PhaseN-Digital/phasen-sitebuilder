@@ -421,6 +421,48 @@ const site = {
     await fakeGh.close();
   }
 
+  // Theme Builder (#130): every control combination makes a valid package whose
+  // controls read back, the defaults pass contrast, and a saved theme builds.
+  {
+    const tb = require("./lib/theme-builder");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-local-themes-"));
+    const combos = Object.entries(tb.CHOICES).flatMap(([k, opts]) => Object.keys(opts).map((v) => ({ [k]: v })));
+    for (const [i, extra] of [{ radius: 0 }, { radius: 99, font: "serif" }, { font: '"Courier New", monospace' }, ...combos].entries()) {
+      const controls = tb.clean({ ...extra, colors: themes.clean.colors, css: ".hero { letter-spacing: .01em; }" });
+      assert.deepStrictEqual(await tb.writeTheme(path.join(root, `c${i}`), controls), [], JSON.stringify(extra));
+      const back = tb.parse(JSON.parse(fs.readFileSync(path.join(root, `c${i}`, "theme.json"), "utf8")), fs.readFileSync(path.join(root, `c${i}`, "theme.css"), "utf8"));
+      assert.deepStrictEqual(back, { ...controls, id: undefined, css: ".hero { letter-spacing: .01em; }\n" }, JSON.stringify(extra));
+    }
+    assert.strictEqual(tb.clean({ radius: 99 }).radius, 32, "radius clamped");
+    assert.deepStrictEqual(tb.clean({ header: "evil", colors: { text: "red" }, font: "x;}body{" }), tb.clean({}), "bad controls fall back to defaults");
+    assert.deepStrictEqual(tb.warnings({}), [], "default colours pass WCAG AA");
+    assert.match(tb.warnings({ colors: { background: "#ffffff", text: "#bbbbbb" } }).join(), /Text may be hard to read/);
+    assert.match(tb.warnings({ button: "outline", colors: { background: "#ffffff", accent: "#ffee00" } }).join(), /Buttons may be hard to read/);
+    assert(!tb.parse({ label: "x" }, ":root { --radius: 8px; }"), "a hand-written theme isn't editable as controls");
+    assert.match((await tb.writeTheme(path.join(root, "bad"), { css: "@import url(x.css);" })).join(), /@import/);
+    const lroot = path.join(root, "local");
+    const a = await tb.saveLocal(lroot, { label: "Sunny Days!", header: "bar" }, null);
+    assert.deepStrictEqual(a, { id: "sunny-days", errors: [] });
+    assert.strictEqual((await tb.saveLocal(lroot, { label: "Sunny Days!" })).id, "sunny-days-2", "new themes never overwrite");
+    assert.strictEqual((await tb.saveLocal(lroot, { id: "sunny-days", label: "Sunny" })).id, "sunny-days");
+    assert.deepStrictEqual((await tb.saveLocal(lroot, { id: "sunny-days", css: "</style>" })).errors, ["theme.css: '<' is not allowed (no HTML in theme.css)"]);
+    const list = await tb.listLocal(lroot);
+    assert.deepStrictEqual(Object.keys(list), ["sunny-days", "sunny-days-2"], "failed save left nothing behind");
+    assert.strictEqual(list["sunny-days"].version, "1.0.1", "saving again bumps the version");
+    assert.strictEqual(list["sunny-days"].controls.header, "left");
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-local-site-"));
+    await tb.installLocal(lroot, "sunny-days-2", sdir);
+    await assert.rejects(tb.installLocal(lroot, "../x", sdir), /isn't in your themes/);
+    const out3 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-local-built-"));
+    await build({ ...site, theme: "sunny-days-2", themeSource: "local", font: "sans", colors: list["sunny-days-2"].colors }, sdir, out3);
+    assert(fs.readFileSync(path.join(out3, "public/styles.css"), "utf8").includes("/* theme-builder "), "site built with a local theme");
+    const started = await tb.fromSite({ ...site, theme: "elegant" }, siteDir, themes);
+    assert(started.css.includes("flex-direction: column") && started.font === "serif" && started.colors.primary === "#ffee00" && started.radius === 2 && !started.css.includes("--radius"), "from a website: its CSS, font and colours");
+    assert.strictEqual((await tb.fromSite({ ...site, mirror: {} }, siteDir, themes)).css, "", "exact copies: colours and font only");
+    const sample = tb.sampleSite({});
+    assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
+  }
+
   // Update check (#37): version compare and installer pick.
   const { isNewer, pickDownload } = require("./lib/update");
   for (const [a, b] of [["0.4.0", "0.3.9"], ["v1.0.0", "0.10.0"], ["0.10.0", "0.9.0"], ["1.2.10", "1.2.9"]]) assert(isNewer(a, b), `${a} > ${b}`);

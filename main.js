@@ -10,6 +10,7 @@ const { mirrorSite } = require("./lib/mirror");
 const update = require("./lib/update");
 const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
+const builder = require("./lib/theme-builder");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -206,6 +207,7 @@ const findSource = async (spec) => {
 const fetchSource = (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token), api: GITHUB_API });
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
+  const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };
   return Promise.all(sourcesOf(await loadSettings()).map(async (source) => {
     const info = { spec: source.spec, public: Boolean(source.public), hidden: Boolean(source.hidden), hasToken: Boolean(source.token) };
     if (source.hidden) return info;
@@ -214,11 +216,12 @@ async function listSources() {
     } catch (e) {
       return { ...info, error: e.message };
     }
-  }));
+  })).then((list) => [...list, local]);
 }
 // Copies a theme into the site folder; returns the theme (font registered) and the font list.
 async function useTheme(id, spec, themeId) {
-  await themeSources.installTheme(spec, themeId, themeCache(), siteDir(id));
+  if (spec === LOCAL) await builder.installLocal(localThemes(), themeId, siteDir(id));
+  else await themeSources.installTheme(spec, themeId, themeCache(), siteDir(id));
   return { theme: loadTheme(path.join(siteDir(id), "theme"), themeId), fonts };
 }
 
@@ -230,8 +233,63 @@ function publicSettings(s) {
   };
 }
 
+// Theme Builder (#130): local themes in userData/themes-local, listed in the
+// Design tab as the "local" source. The live preview builds sample content (or
+// one of the user's sites) as a pseudo-site whose folder is never listed (no site.json).
+const LOCAL = "local";
+const localThemes = () => data("themes-local");
+const SAMPLE_ID = "00000000-0000-4000-8000-000000000000";
+let sampleAssetsFrom;
+async function previewTheme(controls, siteId) {
+  const dir = siteDir(SAMPLE_ID);
+  const real = siteId && (await readSite(siteId));
+  const sample = builder.sampleSite(controls);
+  const onSite = real?.pages.some((p) => !p.mirror);
+  const { theme, themeSource, colors, font } = sample;
+  const site = onSite ? { ...real, theme, themeSource, colors, font, pages: real.pages.filter((p) => !p.mirror) } : sample;
+  return queueBuild(async () => {
+    const errors = await builder.writeTheme(path.join(dir, "theme"), controls);
+    const from = onSite ? siteId : "sample";
+    if (sampleAssetsFrom !== from) {
+      await fs.rm(path.join(dir, "assets"), { recursive: true, force: true });
+      if (onSite) await fs.cp(path.join(siteDir(siteId), "assets"), path.join(dir, "assets"), { recursive: true }).catch(() => {});
+      else await builder.sampleAssets(path.join(dir, "assets"));
+      sampleAssetsFrom = from;
+    }
+    if (!errors.length) await build(site, dir, previewDir(SAMPLE_ID), { preview: true });
+    return { id: SAMPLE_ID, errors, warnings: builder.warnings(controls) };
+  });
+}
+// preview.png: the sample preview at 1280x800 in a hidden window, downscaled to 640x400.
+async function capturePreview() {
+  const win = new BrowserWindow({ show: false, width: 1280, height: 800, webPreferences: { offscreen: true } });
+  try {
+    await win.loadURL(`preview://${SAMPLE_ID}/`);
+    await win.webContents.insertCSS("::-webkit-scrollbar { display: none; }");
+    await new Promise((r) => setTimeout(r, 500)); // images and fonts
+    return (await win.webContents.capturePage()).resize({ width: 640, height: 400, quality: "best" }).toPNG();
+  } finally {
+    win.destroy();
+  }
+}
+
 const handlers = {
   themes: () => ({ themes, fonts }),
+  "builder:list": () => builder.listLocal(localThemes()),
+  "builder:new": () => builder.clean({}),
+  "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
+  "builder:save": async (controls) => {
+    const { errors } = await previewTheme(controls);
+    if (errors.length) return { errors };
+    const png = await capturePreview().catch((e) => (console.error("Couldn't capture the theme preview:", e), null));
+    await fs.mkdir(localThemes(), { recursive: true });
+    return builder.saveLocal(localThemes(), controls, png);
+  },
+  "builder:delete": (id) => {
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");
+    return fs.rm(path.join(localThemes(), id), { recursive: true, force: true });
+  },
+  "builder:from-site": async (id) => builder.fromSite(await readSite(id), siteDir(id), themes),
   "themes:sources": listSources,
   "themes:add": async (spec, token) => {
     spec = themeSources.parseSource(spec).spec;
@@ -264,7 +322,7 @@ const handlers = {
   "themes:use": (id, spec, themeId) => useTheme(id, spec, themeId),
   // Fetches the source again and replaces the site's copy; colours and font are left alone.
   "themes:update": async (id, spec, themeId) => {
-    await fetchSource(await findSource(spec));
+    if (spec !== LOCAL) await fetchSource(await findSource(spec));
     return useTheme(id, spec, themeId);
   },
 
