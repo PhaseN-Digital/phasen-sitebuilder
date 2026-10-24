@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.4...phasen-sitebuilder-v0.5.0) (2026-10-24)
+
+
+### Features
+
+* **copied:** edit link targets of linked images ([#62](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/62)) ([#107](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/107)) ([85e8797](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/85e8797300deb0fda15ba7de415224f4eeedcdb7))
+* **publish:** take a site offline, and offer it when deleting ([#71](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/71)) ([#100](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/100)) ([2a68fa5](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/2a68fa504c24ada705621e8cc6543d091bec9835))
+* **seo:** page titles, descriptions, share images, canonical, sitemap and robots.txt ([#74](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/74)) ([#114](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/114)) ([9bcf5c4](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/9bcf5c41c5b438d82ecd29087bdff0d45547e6dc))
+
+
+### Bug Fixes
+
+* **import:** skip WordPress-only shop and account pages ([#116](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/116)) ([fe9664c](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/fe9664c34d68da7eaf1476d39178e4cb913d3173))
+* **mirror:** canonical/og tags on the published host, keep original robots.txt/sitemap.xml ([#115](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/115)) ([#117](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/117)) ([1d62615](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/1d62615577ef98ee0b826100266b07eadedb8c9b))
+
 ## [0.4.4](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.3...phasen-sitebuilder-v0.4.4) (2026-10-24)
 
 
