@@ -11,6 +11,9 @@ app.setPath("userData", UD);
 // Linux CI has no keyring: an in-memory key keeps safeStorage working so accounts can be connected (#134).
 app.whenReady().then(() => require("electron").safeStorage.setUsePlainTextEncryption(true));
 const elHost = new URL(SB_EL).host;
+// Never open a real browser: record what main.js's "open" handler would have opened.
+const opened = [];
+require("electron").shell.openExternal = async (url) => { opened.push(url); };
 
 const checks = [];
 const result = { checks, sites: {} };
@@ -100,6 +103,9 @@ app.on("browser-window-created", (_e, win) => {
       await sleep(300); await shot("settings-bottom");
       const saved1 = JSON.parse(read(path.join(UD, "settings.json")));
       check("settings: defaults and accounts saved, secrets sealed", saved1.defaults?.email === "app@example.com" && saved1.defaults.owner === "App Default Ltd" && saved1.cloudflare?.accountId === "acct-app" && saved1.cloudflare.token !== "app" && saved1.resendKey && saved1.resendKey !== "re_app", saved1.defaults);
+      const DOCS = "https://sitebuilder.phasen.digital/docs";
+      await run(`document.querySelector("#open-docs").click(); [...document.querySelectorAll("#settings-page a")].find((a) => a.textContent === "Documentation").click(); 0`);
+      check("docs: sidebar button and About link open the docs (#165)", await waitFor(() => opened.filter((u) => u === DOCS).length === 2), opened);
       check("settings: theme sources, updates, data and about sections", await run(`["Theme sources", "Check now", "Open data folder", "Sites folder (coming, #136)", "Wrangler"].every((t) => document.querySelector("#settings-page").textContent.includes(t))`));
 
       await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);

@@ -208,6 +208,10 @@ published always-pass test secret, so that one step needs internet access.
   `site.json`'s `overrides`, where a present key, even blank, is an override)
   and use its own Cloudflare/Resend accounts (Publish tab; sealed with
   `safeStorage` in `sites/<id>/accounts.json`, never in `site.json`).
+- Documentation (#165): the sidebar's Documentation button and a link in
+  Settings › About open https://sitebuilder.phasen.digital/docs in the
+  browser through the https-only `open` handler. The address is `DOCS_URL`
+  in `app/app.js`, its only copy.
   `lib/settings.js` is the one resolver (`resolve`, via `settingsFor` in
   main.js) that build, publish, unpublish, inbox and import use, and the one
   place settings are stored, so the sites folder and portable secrets (#136)
