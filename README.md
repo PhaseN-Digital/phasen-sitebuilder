@@ -79,7 +79,9 @@ use `scripts/check-commit.js`.
   button opens the installer for this platform in the browser (only https
   github.com URLs). Offline or any error, it stays silent and tries again
   next time. `SITEBUILDER_UPDATE_URL` overrides the URL in unpackaged runs
-  only (the regression suite uses it).
+  only (the regression suite uses it). Settings › Updates turns the
+  automatic check off (`autoUpdate: false`) and has "Check now", which
+  always fetches and reports errors instead of staying silent.
 - Code signing switches on per OS once that OS's certificate secret exists
   (repo Settings > Secrets and variables > Actions); without it the
   installer is built unsigned, as now. macOS: `CSC_LINK` (base64 of a
@@ -104,7 +106,10 @@ checks the whole app end to end with no accounts, against fake sites in
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
   Elementor site (kit colours/font, header logo); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
-  tagging, page edit, site-wide edit, image replace, undo, revert);
+  tagging, page edit, site-wide edit, image replace, undo, revert); the
+  Settings page (app defaults and accounts, a per-site default override and
+  Cloudflare account, then publish and take offline with Cloudflare/Resend
+  stubbed in `lib/publish.js`, checking which account and values were used);
 - the sites it made, built as publishing builds them and run under the
   bundled `wrangler dev` (on Electron's Node): pages, uploaded images, 404s,
   a theme from a theme source (downloaded from the fake GitHub API, then
@@ -180,7 +185,25 @@ published always-pass test secret, so that one step needs internet access.
   themes`); an identical copy is vendored into the public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo for its CI, so **keep the two copies in sync**: change both together.
-- Theme sources (`lib/theme-sources.js`, Design tab › Theme sources): extra
+- Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
+  (Cloudflare, Resend; GitHub sign-in is #60), defaults for every website
+  (form-message email, business name, message retention days and wording,
+  analytics ID), theme sources, updates, data and about. A website can
+  override any default where that setting appears ("Using app default (…)",
+  "Override for this site", "Reset to default"; stored in
+  `site.json`'s `overrides`, where a present key, even blank, is an override)
+  and use its own Cloudflare/Resend accounts (Publish tab; sealed with
+  `safeStorage` in `sites/<id>/accounts.json`, never in `site.json`).
+  `lib/settings.js` is the one resolver (`resolve`, via `settingsFor` in
+  main.js) that build, publish, unpublish, inbox and import use, and the one
+  place settings are stored, so the sites folder and portable secrets (#136)
+  can move them. Publishing records the account (`accountId`, and a hash of
+  the Resend key) in `publish.json`; taking offline and the inbox use that
+  account, not whatever is current, and publishing to a different account
+  while the site is live is refused. Older settings and sites migrate on read
+  (the top-level `email` becomes `defaults.email`; a site's non-blank
+  `analyticsId`, `inboxDays`, `privacy.owner`/`retention` become overrides).
+- Theme sources (`lib/theme-sources.js`, Settings › Themes): extra
   themes from GitHub repos. The public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo is always listed (it can be hidden, not removed); users add
@@ -220,18 +243,20 @@ published always-pass test secret, so that one step needs internet access.
 Sites with a form (built-in or copied) get a generated, `noindex` privacy
 notice at `/privacy` (`renderPrivacy` in `lib/build.js`), linked from the
 footer of built pages. It names the business, the contact email (the first
-used form's "Send messages to", else Publish › Form messages), what each form
+used form's "Send messages to", else the form-message email from Settings or
+the site's override), what each form
 collects, Cloudflare/Turnstile and Resend as processors, how long messages
 are kept (by default, the Inbox's "Delete messages after" days) and the
 visitor's UK GDPR rights. The business name and retention
-sentence are set in Publish › Privacy page, which says it's a starting point,
+sentence are defaults in Settings, overridable in Publish › Privacy page, which says it's a starting point,
 not legal advice. Exact-copy pages keep their own footer, so there the user
 is told the address and adds the link themselves; the notice doesn't cover
 third-party services the copied pages load.
 
 ## Analytics and cookie consent
 
-Design › Google Analytics measurement ID (optional, `site.analyticsId`, must
+Design › Google Analytics measurement ID (optional, a Settings default the
+site can override, `overrides.analyticsId`, must
 look like `G-XXXX`, anything else is ignored). When set, every page built
 from the site's own themes gets a cookie banner and `runtime/consent.js`
 (copied to `/consent.js`, ID passed in `data-ga-id`). Following UK PECR, the
@@ -419,7 +444,7 @@ already signed in"). They're only sent over https and aren't stored.
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
 Account › Turnstile › Edit, Account › D1 › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
 Edit (Dynamic Redirect on some accounts, needed for the `www` redirect). The app lists these steps
-in the Publish tab.
+in Settings and in the Publish tab's "Override for this site".
 
 ## Form inbox
 
@@ -436,7 +461,7 @@ The app's Inbox tab lists, reads, deletes and exports (CSV) messages through
 Cloudflare's D1 query API with the user's own token (`inbox:*` in main.js),
 so no public endpoint serves them. Messages that weren't emailed get a
 warning badge. Retention is the site's "Delete messages after" setting
-(`site.inboxDays`, default 90): built into the Worker as `RETENTION_DAYS`,
+(a Settings default the site can override, `overrides.inboxDays`, default 90): built into the Worker as `RETENTION_DAYS`,
 which deletes older messages on every write, applied again whenever the app
 lists the inbox, and quoted in the privacy page's default retention
 sentence. Exported packages ("Save as package…") include the D1 binding only
@@ -485,6 +510,12 @@ site's local files until taking it offline has fully worked.
   still lands under the squash. The gate catches it and doesn't release from
   that run, but the next run would (#99).
 
+- Settings (#134): per-site accounts and overrides are tested against a
+  stubbed Cloudflare/Resend in the regression suite, not real accounts, and
+  only on Linux. Moving a live site to another Cloudflare account means taking
+  it offline first. Backup/restore (#70), diagnostics (#86), GitHub sign-in
+  (#60), the sites folder and portable secrets (#136) are disabled
+  placeholders.
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
   repo. Sources are only downloaded when first listed, on "Refresh" and on

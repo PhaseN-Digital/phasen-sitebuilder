@@ -477,6 +477,36 @@ const site = {
   assert.strictEqual(pickDownload({ "darwin-x64": "https://github.com.evil.example/x" }, "darwin", "x64"), null);
   assert.strictEqual(pickDownload(undefined, "darwin", "arm64"), null);
 
+  // Settings resolver (#134): app default, site override (even blank), reset; old data migrates.
+  {
+    const cfg = require("./lib/settings");
+    const appS = cfg.migrateSettings({ email: "app@example.com", defaults: { owner: "App Ltd", inboxDays: 30 }, cloudflare: { token: "T-app", accountId: "a1", accounts: [{ id: "a1" }] }, resendKey: "R-app" });
+    assert.deepStrictEqual(appS.defaults, { owner: "App Ltd", inboxDays: 30, email: "app@example.com" });
+    assert(!("email" in appS), "old top-level email moved to defaults");
+    const s0 = { id: "x", name: "X", privacy: { owner: "Old Ltd", retention: "" }, analyticsId: "", inboxDays: 60, forms: [] };
+    const migrated = cfg.migrateSite(structuredClone(s0));
+    assert.deepStrictEqual(migrated.overrides, { owner: "Old Ltd", inboxDays: 60 }, "non-blank legacy values become overrides");
+    assert(!("analyticsId" in migrated) && !("owner" in migrated.privacy) && cfg.migrateSite(migrated) === migrated);
+    let r = cfg.resolve(appS, { ...migrated, overrides: {} });
+    assert(r.email === "app@example.com" && r.owner === "App Ltd" && r.site.inboxDays === 30 && r.site.privacy.owner === "App Ltd" && r.cloudflare.token === "T-app" && r.resendKey === "R-app", "defaults");
+    r = cfg.resolve(appS, { ...migrated, overrides: { owner: "Site Ltd", analyticsId: "" } }, { cloudflare: { token: "T-site", accountId: "s1", accounts: [{ id: "s1" }] } });
+    assert(r.owner === "Site Ltd" && r.site.privacy.owner === "Site Ltd" && r.analyticsId === "" && r.email === "app@example.com" && r.cloudflare.token === "T-site" && r.resendKey === "R-app", "overrides");
+    const reset = { ...migrated, overrides: { owner: "Site Ltd" } };
+    delete reset.overrides.owner;
+    assert.strictEqual(cfg.resolve(appS, reset).owner, "App Ltd", "reset falls back to the default");
+    appS.defaults.owner = "Renamed Ltd";
+    assert.strictEqual(cfg.resolve(appS, reset).owner, "Renamed Ltd", "default changes reach sites without an override");
+    // Unpublish/inbox use the account that published, whichever is current now.
+    const site = { cloudflare: { token: "T-site", accountId: "s1", accounts: [{ id: "s1" }] }, resendKey: "R-site" };
+    const id = (v) => v;
+    let p = cfg.publishedWith(appS, site, { accountId: "a1", resendKeyHash: cfg.keyHash("R-app") }, id);
+    assert(p.cloudflare.token === "T-app" && p.cloudflare.accountId === "a1" && p.resendKey === "R-app", "published with the app's accounts");
+    p = cfg.publishedWith(appS, site, { accountId: "s1", resendKeyHash: cfg.keyHash("R-site") }, id);
+    assert(p.cloudflare.token === "T-site" && p.resendKey === "R-site", "published with the site's accounts");
+    assert.strictEqual(cfg.publishedWith(appS, {}, { accountId: "gone" }, id).cloudflare, null, "that account isn't connected any more");
+    assert.strictEqual(cfg.publishedWith(appS, site, {}, id).cloudflare.token, "T-site", "older publishes: the current account");
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);
