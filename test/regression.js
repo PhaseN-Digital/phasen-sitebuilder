@@ -153,6 +153,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/"), contact = await get(s.base, "/contact/");
       check("worker (editable import): pages keep their WordPress addresses", about.status === 200 && about.text.includes("We <strong>fix</strong> bikes.")
         && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
+      const cart = await get(s.base, "/cart/");
+      check("worker (editable import): WordPress-only pages skipped", cart.status === 404 && !s.site.pages.some((p) => ["Members", "Cart"].includes(p.title)), cart.status);
     } finally { await s.child.stop(); }
   }
   if (sites.mirror) {

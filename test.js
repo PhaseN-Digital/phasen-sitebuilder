@@ -151,6 +151,19 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // Editable import skips WordPress-only pages and only swaps enquiry forms for ours (#56).
+  {
+    const { classifyPage } = require("./lib/wordpress");
+    const c = (title, html, link = "https://x.test/page/") => classifyPage({ title, html, link });
+    assert.deepStrictEqual(c("Register your interest", `<form class="wpcf7-form" method="post" action="/register-your-interest/#wpcf7-f1"><input name="your-email"></form>`), { wpOnly: false, enquiry: true });
+    assert.deepStrictEqual(c("Find us", `<form role="search" method="get"><input name="s"></form>`), { wpOnly: false, enquiry: false });
+    assert.deepStrictEqual(c("Get in touch", `<form class="woocommerce-form-login" method="post"><input name="username"><input type="password" name="password"></form><form class="wpforms-form" method="post"><input name="wpforms[fields][1]"></form>`), { wpOnly: false, enquiry: true });
+    assert.strictEqual(c("Your stuff", "<p>[woocommerce_my_account]</p>").wpOnly, true);
+    assert.strictEqual(c("Sign&nbsp;In", "<p>Welcome back</p>").wpOnly, true);
+    assert.strictEqual(c("Welcome", "<p>Hi</p>", "https://x.test/lost-password/").wpOnly, true);
+    assert.strictEqual(c("Join", `<form method="post"><input name="user_login"><input type="password" name="pass1"></form>`).wpOnly, true);
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {
@@ -165,6 +178,8 @@ const site = {
           const r = await fetchWordPress(wp.url.replace("http:", "https:"), "admin", "abcd efgh");
           const welcome = r.pages.find((p) => p.id === 3).html;
           assert(r.pages.length === 3 && r.name === "Bob&#8217;s Bikes", `hidden=${hidden}: pages fetched`);
+          assert.deepStrictEqual(r.skipped, ["Members", "Cart"], `hidden=${hidden}: WordPress-only pages skipped`);
+          assert.deepStrictEqual(r.pages.map((p) => p.form), [false, true, false], `hidden=${hidden}: only the contact page gets our form`);
           assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
           assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
         } finally { await wp.close(); }

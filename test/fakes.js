@@ -14,6 +14,7 @@ async function listen(handler) {
 }
 
 // Classic WordPress: REST API, global styles on the home page, hostile page HTML.
+// Members and Cart pages only work on WordPress (#56).
 // Like a membership plugin, the Welcome page renders differently for a
 // logged-in user (any Authorization header); `hidden` refuses anonymous REST
 // requests. `requests` records [path, authenticated] for each request.
@@ -36,6 +37,9 @@ async function startWordPress({ hidden = false } = {}) {
   const pages = (authed) => [
     { id: 7, title: { rendered: "About &amp; Team" }, link: `${B}/about/`, content: { rendered: `<!-- wp:paragraph --><p class="x" style="color:red" onclick="evil()">We <strong>fix</strong> bikes. See <a href="${B}/contact/">contact</a> or <a href="/blog/post-1/">a post</a> or <a href="javascript:alert(1)">bad</a>.</p><script>alert(1)</script><div class="wp-block-group"><h1>Big</h1><iframe src="https://evil"></iframe></div><figure class="wp-block-gallery"><figure><img src="${B}/wp-content/uploads/a.png" alt="Shop" onerror="evil()"></figure><figure><img src="${B}/wp-content/uploads/missing.png"></figure></figure>` } },
     { id: 9, title: { rendered: "Contact" }, link: `${B}/contact/`, content: { rendered: `<p>Write to us</p><div class="wpcf7"><form action="/x"><input name="your-name"><button>Send</button></form></div>` } },
+    // WordPress-only pages the editable import skips (#56): one known by its form, one by its title and shortcode output.
+    { id: 11, title: { rendered: "Members" }, link: `${B}/members/`, content: { rendered: `<p>Members only.</p><form name="loginform" method="post" action="${B}/wp-login.php"><input name="log"><input type="password" name="pwd"><button>Log in</button></form>` } },
+    { id: 12, title: { rendered: "Cart" }, link: `${B}/cart/`, content: { rendered: `<div class="woocommerce"><form class="woocommerce-cart-form" method="post"><input name="cart[abc][qty]" value="1"><button name="update_cart">Update</button></form></div>` } },
     { id: 3, title: { rendered: "Welcome" }, link: `${B}/`, content: { rendered: `<h2>Hello</h2><p>${authed ? "You&#8217;re already signed in." : "Sign in to your account."}</p><p>Go to <a href="/about/">about</a>.</p>` } },
   ];
   const home = `<!doctype html><html><head><style id="global-styles-inline-css">:root{--wp--preset--color--base: #fdf6e3;--wp--preset--color--contrast: #222222;--wp--preset--color--primary: #cc3300;--wp--preset--font-family--body: "Lora", Georgia, serif;}

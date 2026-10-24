@@ -311,8 +311,15 @@ already signed in"). They're only sent over https and aren't stored.
   be kept (the home page, which is always `/`; a non-ASCII or reserved slug
   such as `/api/`), the page gets a title-based address and the old one a
   301 in `_redirects`. Pages added in the app use title-based addresses.
-- Pages that contained a WordPress form (Contact Form 7 etc.) get the
-  built-in contact form instead.
+- Pages that contained a WordPress enquiry form (Contact Form 7 etc.) get
+  the built-in contact form instead. Log-in, cart, checkout and search forms
+  are never swapped for it.
+- Pages that only work on WordPress (WooCommerce cart, checkout and my
+  account; log-in, register and lost-password; membership account pages)
+  are skipped and listed in the import log. They're recognised by slug or
+  title, WooCommerce/membership-plugin shortcodes and markup, or a log-in or
+  shop form with no enquiry form beside it (`classifyPage` in
+  `lib/wordpress.js`, using the same form rules as the exact copy).
 - "Theme": WordPress themes are PHP, so only the name, tagline, logo,
   colours and font style are copied, from the home page's global styles
   (block themes; WordPress's own default button colour is ignored), or
