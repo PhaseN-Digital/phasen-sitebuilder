@@ -317,7 +317,8 @@ Settings), the statement ticked, and `verification`. Verification is
 attempted at import and recorded, never required (`verifyOwnership` in
 `lib/mirror.js`): verified if the source's domain is a zone in the connected
 Cloudflare account, if a WordPress import's application password was accepted
-(`/wp/v2/users/me`), or if the source serves `/phasen-verify-<token>.txt`
+(`/wp/v2/users/me`; kept when "Decide for me" then falls back to an exact
+copy of that site, #145), or if the source serves `/phasen-verify-<token>.txt`
 containing the random token shown in the modal.
 
 `build()` (`stampProvenance` in `lib/build.js`) adds
@@ -328,11 +329,15 @@ theme-built and copied (replacing a copied page's own generator tag), and
 writes `/.well-known/phasen-provenance.json` (source, date, app version,
 verification). Nothing personal is published: `declaredBy` stays in
 site.json. The modal and the Publish tab tell the user about the marker.
+The in-app preview shows the same meta tags on copied pages (`stampHtml`,
+applied as main.js serves them; the files on disk stay unmarked).
 
 Sites imported before this (an exact copy, or pages with a `path`) have no
 declaration: they're asked for one (with the source address) once per
 session when opened, the Publish tab explains why and offers it again, and
-`publish()` refuses until it's given.
+`publish()` and "Save as package…" (`sites:export`) refuse until it's given
+(`requireProvenance` in main.js, #145), so the package always carries the
+marker too.
 
 ### Exact copy (`lib/mirror.js`)
 
@@ -594,11 +599,9 @@ site's local files until taking it offline has fully worked.
   `settings.name`, which nothing sets until the Settings page (#134) adds it,
   so only the email is recorded for now. Verification by Cloudflare zone and
   by application password is tested against fakes only; the verification
-  file also end to end against the fake WordPress. "Decide for me" with an
-  application password on a page-builder site falls back to an exact copy
-  and doesn't keep the application-password verification. The provenance
-  marker is only on the published/exported output, not on copied pages in
-  the in-app preview. "Save as package…" doesn't require the declaration.
+  file also end to end against the fake WordPress. The application-password
+  result is remembered per origin in memory only, so it's lost if the app
+  restarts between connecting and the exact-copy fallback.
 - Imports have been tried against a handful of public WordPress sites
   (Elementor, Divi, block theme, classic theme with the REST API hidden) and
   one Elementor 4 site of the maintainer's own (both imports, with an

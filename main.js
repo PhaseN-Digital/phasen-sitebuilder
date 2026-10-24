@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { build, pruneAssets, themes, fonts, inboxDays } = require("./lib/build");
+const { build, pruneAssets, stampHtml, themes, fonts, inboxDays } = require("./lib/build");
 const cf = require("./lib/publish");
 const wp = require("./lib/wordpress");
 const { mirrorSite, verifyOwnership } = require("./lib/mirror");
@@ -111,6 +111,17 @@ function newSite(name, theme) {
 // recorded, never required. declaredBy stays in site.json: lib/build.js only
 // publishes the source, date, app version and verification result.
 const isImported = (site) => Boolean(site.importProvenance || site.mirror || site.pages.some((p) => p.path));
+// Publish and "Save as package…" both refuse a site imported before #141 until
+// it has a declaration, so the marker always goes out with it (#145).
+function requireProvenance(site) {
+  if (site && isImported(site) && !site.importProvenance) {
+    throw new Error("This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it on the Publish tab before publishing or exporting it again.");
+  }
+}
+// Origins wp:fetch logged in to with an application password this session, so
+// "Decide for me" falling back to an exact copy keeps that verification (#145).
+// ponytail: in memory only; a restart between fetch and copy loses it (it's one click apart).
+const wpAuthenticatedOrigins = new Set();
 function requireDeclaration(declaration) {
   if (declaration?.confirmed !== true) throw new Error("Confirm that you own this website, or have the owner's written permission to copy and republish it, before importing it.");
 }
@@ -119,6 +130,7 @@ async function importProvenance(url, declaration, { wpAuthenticated = false, imp
   const raw = String(url || "").trim();
   let source;
   try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
+  if (wpAuthenticated) wpAuthenticatedOrigins.add(source);
   const settings = await loadSettings();
   const zones = settings.cloudflare ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
   const now = new Date().toISOString();
@@ -129,15 +141,13 @@ async function importProvenance(url, declaration, { wpAuthenticated = false, imp
     appVersion: app.getVersion(),
     declaredBy: { name: settings.name || "", email: settings.defaults?.email || "" }, // the app default form email (#134)
     statement: String(declaration.statement || "").slice(0, 500),
-    verification: await verifyOwnership(source, { zones, wpAuthenticated, token: String(declaration.token || "") }),
+    verification: await verifyOwnership(source, { zones, wpAuthenticated: wpAuthenticatedOrigins.has(source), token: String(declaration.token || "") }),
   };
 }
 
 async function publish(id, log) {
   const site = await readSite(id);
-  if (site && isImported(site) && !site.importProvenance) {
-    throw new Error("This website was imported before Site Builder asked for an ownership declaration. Confirm that you own it on the Publish tab before publishing it again.");
-  }
+  requireProvenance(site);
   const settings = await settingsFor(id, site);
   if (!settings.cloudflare) throw new Error("Connect your Cloudflare account first (Settings).");
   if (!settings.resendKey) throw new Error("Connect your Resend account first (Settings). It sends your form emails.");
@@ -418,6 +428,7 @@ const handlers = {
   },
   "sites:export": async (id) => {
     const site = await readSite(id);
+    requireProvenance(site);
     const { canceled, filePaths } = await dialog.showOpenDialog({ title: "Choose where to save the website package", properties: ["openDirectory", "createDirectory"] });
     if (canceled) return null;
     const out = path.join(filePaths[0], site.workerName);
@@ -596,10 +607,13 @@ app.whenReady().then(() => {
     const found = await find(names);
     const file = found || (await find(["/404.html"]));
     if (!file) return new Response("Not found", { status: 404 });
-    // Copied pages open in edit mode on the Pages tab (app/copied.js).
-    if (found && new URL(request.url).searchParams.has("sb-edit") && found.endsWith(".html") && found.startsWith(path.join(siteDir(host), "mirror") + path.sep)) {
-      const html = (await fs.readFile(found, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
-      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    // Copied pages get the provenance marker the published copy will have (#145),
+    // and open in edit mode on the Pages tab (app/copied.js). The editor reads
+    // and writes the file itself (mirror:read/write), so neither ends up in it.
+    if (file.endsWith(".html") && file.startsWith(path.join(siteDir(host), "mirror") + path.sep)) {
+      let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
+      if (found && new URL(request.url).searchParams.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     }
     const res = await net.fetch(pathToFileURL(file).href);
     // Every save rewrites these files, so the preview must never cache them.

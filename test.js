@@ -4,7 +4,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { build, pruneAssets } = require("./lib/build");
+const { build, pruneAssets, stampHtml } = require("./lib/build");
 
 const site = {
   id: "test", name: "Bob's <Bikes>", description: "Bikes & repairs", theme: "bold", font: "serif",
@@ -147,6 +147,11 @@ const site = {
       const file = path.join(provOut, f);
       if (fs.statSync(file).isFile()) assert(!/Jo Declarer|jo\.declarer/i.test(fs.readFileSync(file, "utf8")), `no personal data in ${f}`);
     }
+    // The preview stamps copied pages as main.js serves them (#145): same tags, nothing personal.
+    const previewed = stampHtml('<html><head><meta name="generator" content="WordPress 6.5"><title>x</title></head><body></body></html>', importProvenance);
+    assert(previewed.includes('<meta name="phasen:imported-from" content="https://old.example">') && previewed.includes('content="2026-10-01"')
+      && (previewed.match(/name="generator"/g) || []).length === 1 && !/Jo Declarer|jo\.declarer/.test(previewed), previewed);
+    assert.strictEqual(stampHtml("<p>x</p>", undefined), "<p>x</p>");
     await build(copySite, copyDir, provOut, { hostname: "copy.example" });
     assert(!fs.existsSync(path.join(provOut, "public/.well-known")) && !fs.readFileSync(path.join(provOut, "public/index.html"), "utf8").includes("phasen:"), "no marker without provenance");
   }

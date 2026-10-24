@@ -239,8 +239,9 @@ are not, so add them yourself.
   rather than adding special cases) and self-host Google Fonts.
 - Imports need the ownership declaration (#141, README "Ownership
   declaration and provenance"): main.js's import handlers (`wp:fetch`,
-  `wp:mirror`) refuse without one, and `publish()` refuses an imported site
-  without `site.importProvenance`. A new import path must go through
+  `wp:mirror`) refuse without one, and `publish()` and `sites:export` refuse
+  an imported site without `site.importProvenance` (`requireProvenance`; any
+  new way of producing a deployable build must call it too). A new import path must go through
   `requireDeclaration`/`importProvenance` too. `stampProvenance` in
   `lib/build.js` marks every built page; `importProvenance.declaredBy` (the
   user's name and email) must never reach the build output (test.js and the
