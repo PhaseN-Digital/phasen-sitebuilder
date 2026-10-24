@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.0...phasen-sitebuilder-v0.8.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **mirror:** warn about robots.txt only when search engines are blocked ([#210](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/210)) ([95e843d](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/95e843dad05f7422f04a5cfe35b478f4c6225bc8))
+
 ## [0.8.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.7.0...phasen-sitebuilder-v0.8.0) (2026-10-24)
 
 
