@@ -26,6 +26,11 @@ alters a flow it covers, extend `test/drive.js` (UI, via `executeJavaScript`)
 or `test/regression.js` (built site under `wrangler dev`), and the fakes in
 `test/fakes.js` if needed. For anything else in the UI, launch the app and
 exercise it (headlessly with `xvfb-run` and `executeJavaScript`).
+In `drive.js`, wait for the state an action finishes in, not one it passes
+through (#155): `siteOpened()` rather than `site` being set (openSite is
+still saving and about to re-render), the re-rendered button rather than
+"Done!" in a streamed log, and a preview reload's own `?t=` before touching
+the frame. Never add sleeps or retries; check flakes under CPU load.
 
 ## Tracking work: required for every change
 
@@ -92,16 +97,21 @@ are not, so add them yourself.
   move the issue to Testing, and stop. Never merge a PR yourself unless you
   are the `release-manager` agent and the maintainer has authorised merging
   for the current session.
-- **No agent ever merges release-please's release PR.** Patch releases are
-  merged automatically by `release-please.yml`'s gate once the regression
-  suite passes; minor/major releases (`needs-approval` label) are the
-  maintainer's to merge.
+- **Release PRs:** patch releases are merged automatically by
+  `release-please.yml`'s gate once the regression suite passes; no agent
+  merges them. A minor/major release PR (`needs-approval` label) is merged
+  either by the maintainer, or by the `release-manager` agent **only** when the
+  maintainer has explicitly told it to release that version in the current
+  session (e.g. "release 0.8.0") and the gate has passed on the latest head.
+  General merge approvals never cover a release PR.
 - **Agents** (`.claude/agents/`): when working through issues, run one fresh
   `issue-worker` per issue (it implements, tests and opens a PR, but never
   merges) and hand ready PRs to the `release-manager`. The release manager
   is the only thing that merges, one PR at a time and in dependency order,
-  each brought up to date with `main` and green in CI first, and it says which
-  issues are safe to start next. Workers declare `Depends on #n` and
+  each brought up to date with `main` and green in CI first. The
+  `project-manager` agent owns issue intake, the project board, labels,
+  milestones, the roadmap, and deciding which issues are safe to start next.
+  Workers declare `Depends on #n` and
   `Files:` in their PR bodies. GitHub can't enforce any of this yet
   (branch protection needs a paid plan for this private repo, see #5).
 - Commit messages and PR titles must be Conventional Commits (`feat:`,

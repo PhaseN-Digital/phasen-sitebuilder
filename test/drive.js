@@ -57,6 +57,10 @@ app.on("browser-window-created", (_e, win) => {
     };
     const LAYOUTS_SECTIONS = Object.fromEntries(require("../lib/layouts").LAYOUTS.map((l) => [l.id, l.sections.length]));
     const saved = () => waitFor(() => run(`document.querySelector(".save-state")?.textContent === "All changes saved"`).then(async (ok) => ok && (await sleep(300), true)));
+    // Resolves to the open site's id once openSite() has finished, not just assigned `site`: until then
+    // it's still saving, building and about to re-render the editor (and #tab can be the Theme Builder's).
+    // loadSites marks the site active right before openSite's renderEditor, in the same microtask chain.
+    const siteOpened = (cond, ms) => waitFor(() => run(`${cond} && document.querySelector("#site-list .active")?.dataset.id === site.id && site.id`), ms);
     const fieldInput = (label, tag = "input") => `[...document.querySelectorAll("label.field")].find((l) => l.firstChild.textContent === ${JSON.stringify(label)}).querySelector("${tag}")`;
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
@@ -119,7 +123,7 @@ app.on("browser-window-created", (_e, win) => {
       check("settings: theme sources, updates, data and about sections", await run(`["Theme sources", "Check now", "Open data folder", "Find sites", "Turn on portable secrets", "Wrangler"].every((t) => document.querySelector("#settings-page").textContent.includes(t))`));
 
       await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
-      await waitFor(() => run(`site?.id === ${JSON.stringify(id)} && Boolean(document.querySelector("#tab"))`));
+      await siteOpened(`site?.id === ${JSON.stringify(id)}`);
       await run(`tab = "publish"; renderEditor(); 0`);
       const owner = `.overridable[data-key="owner"]`;
       const status = await waitFor(() => run(`document.querySelector('${owner} .default-value')?.textContent`));
@@ -139,6 +143,8 @@ app.on("browser-window-created", (_e, win) => {
 
       await clickButton("Publish website");
       const log = await waitFor(() => run(`document.querySelector("pre.log").textContent.includes("Done!") || [...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`), 30000);
+      // "Done!" streams in before the publish handler re-reads the site and re-renders (that's what adds "Take website offline").
+      await waitFor(() => run(`!publishing && [...document.querySelectorAll("button")].some((b) => b.textContent === "Take website offline")`));
       const d = calls.deploy[0];
       check("publish: uses the site's account and the resolved defaults", d?.token === "site" && d.accountId === "acct-site" && d.forms.contact.to === "app@example.com" && d.privacy.includes("run by Site Override Ltd") && d.privacy.includes("mailto:app@example.com"), d ? { token: d.token, accountId: d.accountId, to: d.forms.contact.to } : log);
       const state = JSON.parse(read(path.join(S(id), "publish.json")));
@@ -225,7 +231,7 @@ app.on("browser-window-created", (_e, win) => {
       if (png) check("theme builder: preview.png is 640x400", png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 400);
       else console.log("preview.png not captured (capturePage unavailable here, #87)");
       await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
-      await waitFor(() => run(`site?.id === ${JSON.stringify(id)} && Boolean(document.querySelector("#tab"))`));
+      await siteOpened(`site?.id === ${JSON.stringify(id)}`);
       await run(`tab = "design"; renderEditor(); 0`);
       const btn = await waitFor(() => run(`[...document.querySelectorAll("button.theme")].some((b) => b.querySelector("strong").textContent === "Regression Bikes theme")`));
       check("theme builder: listed in the Design tab picker", btn);
@@ -433,7 +439,7 @@ app.on("browser-window-created", (_e, win) => {
     // ---------- 1. a site made in the app ----------
     async function createSite() {
       await run(`document.querySelector("#new-site input").value = "Regression Bikes"; document.querySelector("#new-site").requestSubmit()`);
-      const id = await waitFor(() => run(`site?.name === "Regression Bikes" && site.id`));
+      const id = await siteOpened(`site?.name === "Regression Bikes"`);
       check("create site: editor opens", id, "no site after submitting the new-site form");
       result.sites.created = id;
       const siteDir = path.join(S(id)), pub = path.join(UD, "preview", id, "public");
@@ -587,7 +593,7 @@ app.on("browser-window-created", (_e, win) => {
 
       await run(`{ const f = document.querySelector("form.import"); f.username.value = ""; f.password.value = ""; f.querySelector('[value="editable"]').checked = true; f.querySelector("button").disabled = false; f.requestSubmit() }`);
       await declare();
-      const id = await waitFor(() => run(`site?.name === "Bob’s Bikes" && site.id`), 30000);
+      const id = await siteOpened(`site?.name === "Bob’s Bikes"`, 30000);
       check("wordpress: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       result.sites.wordpress = id;
@@ -628,7 +634,7 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.querySelector('[value="editable"]').checked = true; f.requestSubmit() }`);
       await declare();
-      const id = await waitFor(() => run(`site?.name === "Acme Ltd" && !site.mirror && site.id`), 30000);
+      const id = await siteOpened(`site?.name === "Acme Ltd" && !site.mirror`, 30000);
       check("elementor editable: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       await saved();
@@ -725,7 +731,7 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.requestSubmit() }`); // "auto" picks exact for Elementor
       await declare();
-      const id = await waitFor(() => run(`site?.mirror && site.id`), 60000);
+      const id = await siteOpened("site?.mirror", 60000);
       check("exact copy: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       result.sites.mirror = id;
@@ -817,14 +823,17 @@ app.on("browser-window-created", (_e, win) => {
       const original = read(path.join(S(id), "mirror-original", "index.html"));
       check("revert: page back to the import", read(path.join(M, "index.html")) === original && original.includes(">Welcome to Acme</h1>"));
       check("revert: save state", (await run(`document.querySelector(".save-state").textContent`)) === "Page reverted");
+      const undone = Date.now();
       await clickButton("Undo last change"); await settle();
       check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
 
       // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
       // Find and click in one poll: a separate click call can land on a frame the undo reload is replacing and hang.
-      const clickAbout = () => waitFor(() => inFrame(`{ const a = document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'); if (a) { a.click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); } Boolean(a) }`));
+      // Only in the document that reload loads (by its ?t=): the outgoing one still has the link, but a link-updated
+      // message sent to it is lost and the new one was read before the edit, so the preview would stay stale.
+      const clickAbout = (since) => waitFor(() => inFrame(`{ const a = +new URLSearchParams(location.search).get("t") >= ${since} && document.querySelector('li[data-sb-edit^="s-"] a[href="/about/"]'); if (a) { a.click(); document.activeElement.dispatchEvent(new FocusEvent("blur")); } Boolean(a) }`));
       const aboutLinks = (html) => (html.match(/<a href="([^"]*)">About<\/a>/g) || []).join(" ");
-      await clickAbout();
+      await clickAbout(undone);
       const shown = await waitFor(() => run(`document.querySelector(".copy-link input")?.value`), 5000);
       check("copy link: panel shows the current target", shown === "/about/", shown);
       const setLink = (v) => run(`{ const i = document.querySelector(".copy-link input"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("change")); 0 }`);
@@ -835,10 +844,11 @@ app.on("browser-window-created", (_e, win) => {
       now = grab();
       check("copy link: site-wide change on every page", all.every((f) => aboutLinks(now[f]) === '<a href="/contact-us/">About</a> <a href="/contact-us/">About</a>'), all.map((f) => aboutLinks(now[f])));
       check("copy link: preview updated", await waitFor(() => inFrame(`document.querySelectorAll('a[href="/about/"]').length === 0`), 3000));
+      const relinked = Date.now();
       await clickButton("Undo last change"); await settle();
       now = grab();
       check("copy link: undone everywhere", all.every((f) => aboutLinks(now[f]) === '<a href="/about/">About</a> <a href="/about/">About</a>'), all.map((f) => aboutLinks(now[f])));
-      await clickAbout();
+      await clickAbout(relinked);
       await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
       await shot("copy-link");
       await setLink("https://example.com/about-acme"); await settle();
