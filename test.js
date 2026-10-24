@@ -221,6 +221,15 @@ const site = {
     [{ containsMain: "false" }, "isn't based on main"], [{ startMain: "" }, "missing"], [{ tested: undefined }, "missing"]]) {
     assert(staleReason({ ...ok, ...change }).includes(want), `stale: ${JSON.stringify(change)}`);
   }
+  // #111: a PR the gate refused as stale is re-gated without a new push.
+  const { gateReason } = require("./scripts/release-bump");
+  const main = "refs/heads/main";
+  assert(gateReason({ event: "push", ref: main, prsCreated: "true" }));
+  assert.strictEqual(gateReason({ event: "push", ref: main, prsCreated: "false", labels: ["regression-failed"] }), "");
+  assert(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: ["autorelease: pending", "regate"] }));
+  assert.strictEqual(gateReason({ event: "schedule", ref: main, prsCreated: "false", labels: [""] }), "");
+  assert(gateReason({ event: "workflow_dispatch", ref: main, prsCreated: "false", labels: ["needs-approval"] }));
+  assert.strictEqual(gateReason({ event: "workflow_dispatch", ref: "refs/heads/fix/x", prsCreated: "false" }), "");
 
   // Theme packages: the bundled ones are valid, bad ones are caught, and a
   // font stack instead of a font id still loads.

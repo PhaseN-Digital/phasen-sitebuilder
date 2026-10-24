@@ -4,6 +4,9 @@
 //   node scripts/release-bump.js stale         prints why merging now is unsafe
 //     (nothing if it's safe), from START_MAIN, MAIN, BASE, TESTED, PR_HEAD and
 //     CONTAINS_MAIN in the environment.
+//   node scripts/release-bump.js gate          prints why this run should gate
+//     the open release PR (nothing if it shouldn't), from EVENT, REF,
+//     PRS_CREATED and LABELS (comma-separated) in the environment.
 // Anything that isn't a plain x.y.z upgrade counts as major, so it waits for
 // the maintainer rather than slipping through.
 function bump(from, to) {
@@ -25,10 +28,23 @@ function staleReason({ startMain, main, base, tested, head, containsMain }) {
   return "";
 }
 
+// #111: a refusal that only means "too early" (main or the head moved) adds
+// the `regate` label, so the next run of any kind picks the PR up again even
+// if nothing new is pushed; a manual dispatch on main gates it regardless.
+function gateReason({ event, ref, prsCreated, labels = [] }) {
+  if (prsCreated === "true") return "release-please updated it in this run";
+  if (event === "workflow_dispatch" && ref === "refs/heads/main") return "manual dispatch on main";
+  if (labels.includes("regate")) return "an earlier gate left it to be re-gated";
+  return "";
+}
+
 if (require.main === module) {
   const e = process.env;
-  console.log(process.argv[2] === "stale"
+  const cmd = process.argv[2];
+  console.log(cmd === "stale"
     ? staleReason({ startMain: e.START_MAIN, main: e.MAIN, base: e.BASE, tested: e.TESTED, head: e.PR_HEAD, containsMain: e.CONTAINS_MAIN })
-    : bump(process.argv[2], process.argv[3]));
+    : cmd === "gate"
+      ? gateReason({ event: e.EVENT, ref: e.REF, prsCreated: e.PRS_CREATED, labels: (e.LABELS || "").split(",") })
+      : bump(process.argv[2], process.argv[3]));
 }
-module.exports = { bump, staleReason };
+module.exports = { bump, staleReason, gateReason };

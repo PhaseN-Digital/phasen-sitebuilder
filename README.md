@@ -50,16 +50,18 @@ use `scripts/check-commit.js`.
   installers as run artifacts without releasing. Builds live in this
   workflow, not a tag-triggered one, because GitHub won't trigger workflows
   from release-please's `GITHUB_TOKEN` tags.
-- Release gate: whenever release-please opens or updates the release PR,
-  the same run calls `regression.yml` on the PR's head. A **patch** release
+- Release gate: whenever release-please opens or updates the release PR
+  (or on a manual dispatch, or for a PR labelled `regate`), the same run
+  calls `regression.yml` on the PR's head (read from the branch ref, #111). A **patch** release
   (`scripts/release-bump.js`: same major.minor) that passes is merged by the
   workflow and released and built in that same run. A **minor/major**
   release that passes gets the `needs-approval` label and a comment, and is
   released when the maintainer merges it. A failure gets the
   `regression-failed` label and a comment, and is never merged. The gate
   only merges if `main` is still exactly what the regression run tested
-  against (#97); if anything landed on `main` meanwhile it comments and
-  leaves the PR to the next run, which re-gates it with the new commits. This all
+  against (#97); if anything landed on `main` meanwhile it comments, labels
+  the PR `regate` and leaves it to the next run (a push, the hourly schedule,
+  or `gh workflow run release-please.yml`), which re-gates it. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
