@@ -4,7 +4,7 @@
 // "Your themes". Uses app.js's helpers (h, call, labelled, loadSites…).
 // Valid themes can be published to GitHub (#60, publishDialog).
 
-let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer;
+let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer, tbPicking = false;
 
 async function openThemes() {
   await flushSave();
@@ -46,6 +46,7 @@ function renderThemes() {
 function editTheme(controls) {
   tbEdit = controls;
   tbOn = "";
+  tbPicking = false;
   renderThemes();
   previewThemeDraft();
 }
@@ -58,7 +59,7 @@ function previewThemeDraft(delay = 0) {
       const r = await call("builder:preview", tbEdit, tbOn || null);
       $("#tb-warnings").textContent = r.warnings.join(" ");
       $("#tb-errors").textContent = r.errors.length ? `Advanced CSS can't be used: ${r.errors.join("; ")}` : "";
-      if (!r.errors.length) $("#preview").src = `preview://${r.id}/?t=${Date.now()}`;
+      if (!r.errors.length) $("#preview").src = `preview://${r.id}/?sb-theme&t=${Date.now()}`;
     } catch (e) {
       $("#tb-errors").textContent = errorText(e);
     }
@@ -111,17 +112,86 @@ function renderThemeEditor() {
           choice("Links", "links", [["underlined", "Underlined"], ["plain", "Underlined on hover"]])),
         h("details", { className: "sources", open: Boolean(c.css) },
           h("summary", {}, "Advanced CSS"),
-          labelled("", h("textarea", { style: "font-family:monospace;min-height:160px", value: c.css, spellcheck: false, oninput: changed((v) => { c.css = v; }) }),
-            "Added after the controls above. Plain CSS only: no @import, scripts or HTML.")),
+          labelled("", h("textarea", { id: "tb-css", style: "font-family:monospace;min-height:160px", value: c.css, spellcheck: false, oninput: changed((v) => { c.css = v; }) }),
+            "Added after the controls above. Plain CSS only: no @import, scripts or HTML. Right-click an element in the preview (or use Pick element) to add or find its rule.")),
         h("p", { className: "error", id: "tb-errors" }))),
     h("section", { className: `preview${previewMobile ? " mobile" : ""}` },
       h("div", { className: "preview-bar" },
         h("span", {}, "Preview with"),
         h("select", { style: "width:auto", onchange: (e) => { tbOn = e.target.value; previewThemeDraft(); } },
           h("option", { value: "" }, "Sample content"), tbSites.map((s) => h("option", { value: s.id, selected: tbOn === s.id }, s.name || "Untitled"))),
+        h("button", { id: "tb-pick", className: tbPicking ? "primary" : "", "aria-pressed": String(tbPicking), onclick: () => setPicking(!tbPicking, true),
+          title: "Then click an element, or use the arrow keys and Enter. Esc stops. Right-click or Alt+click works any time." }, "Pick element"),
         h("button", { className: previewMobile ? "" : "primary", onclick: () => { previewMobile = false; renderThemes(); previewThemeDraft(); } }, "Desktop"),
         h("button", { className: previewMobile ? "primary" : "", onclick: () => { previewMobile = true; renderThemes(); previewThemeDraft(); } }, "Mobile")),
       h("div", { className: "preview-stage" }, h("iframe", { id: "preview", title: "Theme preview" }))));
+}
+
+// Right-click menu for the preview (#156). app/theme-builder-frame.js, injected
+// into the preview, reports the clicked element's selectors and styles; the
+// menu is rendered here, never inside the page. "Pick element" mode is the
+// keyboard way in (and Alt+click).
+const tbFrame = () => $("#preview")?.contentWindow;
+function setPicking(on, focus = false) {
+  tbPicking = on;
+  const btn = $("#tb-pick");
+  if (btn) { btn.className = on ? "primary" : ""; btn.setAttribute("aria-pressed", String(on)); }
+  if (focus && on) $("#preview").focus();
+  tbFrame()?.postMessage({ sbTheme: true, type: "pick", on, focus }, "*");
+}
+
+window.addEventListener("message", (event) => {
+  if (!tbEdit || !tbFrame() || event.source !== tbFrame() || event.data?.sbTheme !== true) return;
+  const d = event.data;
+  if (d.type === "ready" && tbPicking) setPicking(true);
+  if (d.type === "pick-off") { setPicking(false); $("#tb-pick")?.focus(); }
+  if (d.type === "element" && Array.isArray(d.selectors) && d.selectors.length) ruleMenu(d);
+});
+
+function ruleMenu({ selectors, styles, x, y }) {
+  $(".tb-menu")?.remove();
+  const back = document.activeElement;
+  const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); };
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  const toggle = (part) => (e) => { part.hidden = !part.hidden; e.currentTarget.setAttribute("aria-expanded", String(!part.hidden)); };
+  const pick = (list) => () => { close(); styleRule(list); };
+  const choices = h("div", { className: "tb-menu-sub", hidden: true }, selectors.map((s) => h("button", { role: "menuitem", onclick: pick([s]) }, h("code", {}, s))));
+  const current = h("dl", { className: "tb-menu-sub", hidden: true }, Object.entries(styles || {}).map(([k, v]) => [h("dt", {}, k), h("dd", {}, String(v))]));
+  const menu = h("div", { className: "tb-menu", role: "menu", "aria-label": `Element ${selectors[0]}`,
+    onkeydown: (e) => {
+      const items = [...menu.querySelectorAll("button")].filter((b) => b.offsetParent);
+      const i = items.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+      else if (e.key === "Escape" || e.key === "Tab") { close(); (back === document.body ? $("#preview") : back)?.focus(); }
+      else return;
+      e.preventDefault();
+    } },
+    h("button", { role: "menuitem", onclick: pick(selectors) }, "Style this element…"),
+    h("button", { role: "menuitem", "aria-expanded": "false", onclick: toggle(choices) }, "Choose selector…"), choices,
+    h("button", { role: "menuitem", "aria-expanded": "false", onclick: toggle(current) }, "Show current styles"), current);
+  document.body.append(menu);
+  const frame = $("#preview").getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(frame.left + x, innerWidth - menu.offsetWidth - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(frame.top + y, innerHeight - menu.offsetHeight - 4))}px`;
+  document.addEventListener("mousedown", outside, true);
+  menu.querySelector("button").focus();
+}
+
+// Selects the existing rule for the first selector that has one, or adds an
+// empty one (lib/theme-builder.js cssRule) with the cursor inside.
+async function styleRule(selectors) {
+  try {
+    const r = await call("builder:css-rule", tbEdit.css, selectors);
+    const box = $("#tb-css");
+    if (!box) return;
+    tbEdit.css = box.value = r.css;
+    box.closest("details").open = true;
+    box.focus();
+    box.setSelectionRange(r.found ? r.start : r.cursor, r.found ? r.end : r.cursor);
+    const cs = getComputedStyle(box), line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+    box.scrollTop = Math.max(0, r.css.slice(0, r.start).split("\n").length * line - box.clientHeight / 3);
+    box.scrollIntoView({ block: "nearest" });
+  } catch (e) { $("#tb-errors").textContent = errorText(e); }
 }
 
 // "Push to repo" commits the theme to a repo the user can write to; "Submit to

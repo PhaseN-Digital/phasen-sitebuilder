@@ -573,6 +573,32 @@ const site = {
     const sample = tb.sampleSite({});
     assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
 
+    // Right-click menu (#156): its selector classes are exactly the ones the built markup uses.
+    const frameLib = require("./app/theme-builder-frame");
+    const fdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-frame-site-"));
+    await tb.writeTheme(path.join(fdir, "theme"), tb.clean({}));
+    const every = { ...sample, analyticsId: "G-TEST1", pages: sample.pages.map((p, i) => i ? p : { ...p, sections: [
+      ...p.sections.map((s) => (s.type === "hero" ? { ...s, image: { src: "assets/sample-1.svg" } } : s.type === "text" ? { ...s, imageLeft: true } : s)),
+      { id: "v", type: "richtext", html: '<div class="video-embed" data-src="https://player.vimeo.com/video/1"></div>' }] }) };
+    const fout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-frame-built-"));
+    await build(every, fdir, fout, { sitekey: "SITEKEY" });
+    const builtClasses = new Set(fs.readdirSync(path.join(fout, "public")).filter((f) => f.endsWith(".html"))
+      .flatMap((f) => [...fs.readFileSync(path.join(fout, "public", f), "utf8").matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/))));
+    assert.deepStrictEqual([...builtClasses].sort(), [...frameLib.STABLE].sort(), "STABLE matches renderPage/renderSection's classes");
+    const el = (tag, ...classes) => ({ tag, classes });
+    assert.deepStrictEqual(frameLib.candidates([el("h1"), el("div", "wrap"), el("section", "hero", "has-image"), el("main")]), [".hero h1", "main h1", "h1"]);
+    assert.deepStrictEqual(frameLib.candidates([el("a", "button", "wp-x"), el("p"), el("div", "wrap"), el("section", "richtext"), el("main")]), [".richtext .button", "main .button", ".button"]);
+    assert.deepStrictEqual(frameLib.candidates([el("section", "hero"), el("main")]), ["main .hero", ".hero"]);
+    assert.deepStrictEqual(frameLib.candidates([el("p", "elementor-1"), el("div", "x-7")]), ["p"], "unknown classes and ids never used");
+    // Advanced CSS rule lookup: comments, strings and nested at-rules don't fool it.
+    const adv = '/* .hero h1 { } */\n.x { content: "}{ .hero h1 {"; }\n@media (max-width: 1px) { .hero h1 { color: red } }\n.hero h1, h2 { color: blue }\n.hero  >  h1 {}\n.hero   h1 { color: green; }\n';
+    assert.deepStrictEqual(tb.cssRules(adv).map((r) => r.selector), [".x", "@media (max-width: 1px)", ".hero h1,h2", ".hero>h1", ".hero h1"]);
+    const found = tb.cssRule(adv, { selectors: ["main h1", ".hero h1"] });
+    assert(found.found && found.css === adv && adv.slice(found.start, found.end) === ".hero   h1 { color: green; }", "selects the existing top-level rule");
+    const added = tb.cssRule(".a { }\n\n", { selectors: ["main h1", "h1"] });
+    assert.deepStrictEqual(added, { css: ".a { }\n\nmain h1 {\n  \n}\n", start: 8, end: 22, cursor: 20, found: false });
+    assert.deepStrictEqual(await tb.writeTheme(path.join(root, "rule"), tb.clean({ css: added.css })), [], "an added rule stays valid");
+
     // Publishing a theme to GitHub (#60), against the fake GitHub in test/fakes.js.
     const gh = require("./lib/github");
     assert.strictEqual(gh.clientId({ env: { SITEBUILDER_GITHUB_CLIENT_ID: " abc " }, dir: root }), "abc");

@@ -363,6 +363,11 @@ const handlers = {
   "builder:list": () => builder.listLocal(localThemes()),
   "builder:new": () => builder.clean({}),
   "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
+  // Selectors come from the preview's frame script: classes and tag names only.
+  "builder:css-rule": (css, selectors) => {
+    if (typeof css !== "string" || !Array.isArray(selectors) || !selectors.length || !selectors.every((s) => typeof s === "string" && /^[\w.\- >]{1,200}$/.test(s))) throw new Error("Bad selector");
+    return builder.cssRule(css, { selectors });
+  },
   "builder:save": async (controls) => {
     const { errors } = await previewTheme(controls);
     if (errors.length) return { errors };
@@ -638,8 +643,9 @@ app.whenReady().then(() => {
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host)) return new Response("Not found", { status: 404 });
     const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
-    if (p === "/__sb-edit.js") {
-      return new Response(await fs.readFile(path.join(__dirname, "app", "copy-edit-frame.js")), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
+    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
+    if (frameScript) {
+      return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
     }
     // Uploaded images come straight from the site folder so a fresh upload
     // shows before the next preview build finishes; exact-copy pages are
@@ -663,6 +669,11 @@ app.whenReady().then(() => {
     if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
       let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
       if (found && new URL(request.url).searchParams.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    }
+    // The Theme Builder's preview gets its right-click menu script (#156).
+    if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
+      const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
       return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     }
     const res = await net.fetch(pathToFileURL(file).href);
