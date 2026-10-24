@@ -8,7 +8,7 @@ on:
   # so a refusal that only meant "too early" doesn't strand it. Cheap when
   # there's nothing to do: release-please plus one API call.
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 6 * * *" # daily: every run bills at least a minute on this private repo
 
 permissions:
   contents: write
@@ -118,7 +118,7 @@ jobs:
           run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           git fetch -q origin main "$SHA"
           # A refusal that only means "too early" labels the PR `regate`, so
-          # the next run of any kind (push, the hourly schedule, a dispatch)
+          # the next run of any kind (push, the daily schedule, a dispatch)
           # re-gates it even if nothing new is pushed (#111).
           regate() {
             gh label create regate --color c5def5 --description "Release gate refused as too early; the next run re-gates it" --force

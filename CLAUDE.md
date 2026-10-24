@@ -135,7 +135,7 @@ are not, so add them yourself.
   doesn't contain main; it re-classifies the bump from the current versions,
   checks main once more just before `gh pr merge`, and fails without
   releasing if the squash isn't exactly the tested tree. A `regate` PR is
-  re-gated by the next run of any kind (a push, the hourly `schedule`, or a
+  re-gated by the next run of any kind (a push, the daily `schedule`, or a
   dispatch), so a refusal never strands it; the label goes once a gate
   reaches a verdict. **Release manager: to re-gate a stuck release PR now
   (e.g. after a flaky `regression-failed`), run
