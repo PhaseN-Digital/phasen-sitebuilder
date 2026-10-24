@@ -36,6 +36,7 @@ const site = {
   const home = read("public/index.html");
   assert(home.includes("&lt;script&gt;x&lt;/script&gt;") && !home.includes("<script>x"), "user text is escaped");
   assert(home.includes('href="/contact-us"') && home.includes("<p>Hi</p><p>There</p>"));
+  assert(/<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-nav" hidden>/.test(home) && home.includes('<nav id="site-nav"'), "mobile menu toggle, hidden until its script runs");
   assert(!home.includes("turnstile"), "no captcha script on pages without forms");
   const contact = read("public/contact-us.html");
   assert(contact.includes('data-sitekey="SITEKEY"') && contact.includes('name="website"') && contact.includes("turnstile/v0/api.js"));
