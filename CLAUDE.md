@@ -205,7 +205,7 @@ are not, so add them yourself.
 - GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
   and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
   be sent (`themeFiles`). The sign-in token stays in the main process
-  (sealed `settings.github`), only goes to the API host, and never to the
+  (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
   ignored when `app.isPackaged` (packaged apps read

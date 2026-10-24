@@ -305,7 +305,7 @@ published always-pass test secret, so that one step needs internet access.
   OAuth device flow (the app shows a code, the user approves it on
   github.com; no client secret), scope `public_repo`, plus `repo` when
   "Also allow private repositories" is ticked. The token is app-wide,
-  sealed in `settings.json`'s `github`, and also used for theme sources that
+  in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
   `preview.png`, as one commit through the git data API. "Push to repo"
