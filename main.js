@@ -12,6 +12,7 @@ const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
+const { migrateLayouts } = require("./lib/layouts");
 const json = require("./lib/json-store");
 const github = require("./lib/github");
 const secrets = require("./lib/secrets");
@@ -66,7 +67,7 @@ const hex = (n) => crypto.randomBytes(n).toString("hex");
 let keyring, settingsStore;
 const loadSettings = () => settingsStore.load();
 const updateSettings = (change) => settingsStore.update(change); // read-modify-write under one queue (#147)
-const readSite = (id) => json.read(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
+const readSite = (id) => json.read(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then(migrateLayouts).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
 // Everything a site operation needs: the site's overrides, else the app's settings.
 // `published` is the accounts the site was last published with (lib/settings.js publishedWith).
 async function settingsFor(id, site) {

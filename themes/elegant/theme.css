@@ -5,3 +5,17 @@ h1, h2 { font-weight: 400; letter-spacing: .03em; }
 .hero h1, .hero p { margin-inline: auto; }
 .gallery-grid img { border: 6px solid #fff; box-shadow: 0 2px 12px rgb(0 0 0 / .12); }
 .form form { margin-inline: auto; }
+/* Layouts (#169) */
+.title-band { text-align: center; padding: 72px 0 8px; }
+.title-band h1 { font-size: clamp(2.2rem, 5vw, 3.2rem); font-weight: 400; }
+.title-band .wrap::after { content: ""; display: block; width: 56px; height: 1px; margin: 28px auto 0; background: var(--accent); }
+.post-meta { font-style: italic; }
+.card { background: transparent; border: 0; border-top: 1px solid var(--accent); border-radius: 0; padding: 24px 8px 0; text-align: center; }
+.card h3 { font-weight: 400; font-size: 1.3rem; letter-spacing: .02em; }
+.layout-home main > .richtext.has-cards h2, .layout-landing main > .richtext.has-cards h2, .layout-services main > .richtext.has-cards h2 { text-align: center; }
+.layout-blog-post main section h2, .layout-legal main section h2, .contact-columns h2 { text-align: left; }
+.contact-columns .form form { margin-inline: 0; }
+.layout-legal .title-band, .layout-legal .title-band .wrap::after { text-align: left; margin-left: 0; }
+.post-card h2 { font-weight: 400; text-align: left; }
+.post-card + .post-card { border-top: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); padding-top: 32px; }
+.pagination { border-top-color: var(--accent); }

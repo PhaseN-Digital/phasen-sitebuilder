@@ -1,1 +1,10 @@
 :root { --radius: 8px; }
+/* Layouts (#169) */
+.title-band { background: color-mix(in srgb, var(--primary) 6%, var(--background)); border-bottom: 1px solid color-mix(in srgb, var(--primary) 14%, transparent); padding: 56px 0 48px; }
+.title-band + section, .featured-image + section { padding-top: 48px; }
+.card { background: var(--background); border-top: 3px solid var(--primary); box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 4px 16px rgb(0 0 0 / .05); }
+.layout-blog-post .title-band, .layout-legal .title-band { background: none; border: 0; padding-bottom: 0; }
+.layout-blog-post .title-band h1 { font-size: clamp(2rem, 4.5vw, 2.8rem); }
+.post-card { padding-bottom: 32px; border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent); }
+.pagination { border: 0; padding-top: 0; }
+.layout-landing .site-header { border: 0; }
