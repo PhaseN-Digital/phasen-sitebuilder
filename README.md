@@ -39,8 +39,8 @@ use `scripts/check-commit.js`.
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
   on PRs.
 - `regression.yml`: `npm run test:regression` on release-please's release
-  PRs (branches starting `release-please--`), by hand ("Run workflow") and
-  via `workflow_call`. On failure the screenshots, wrangler logs and
+  PRs (branches starting `release-please--`), on PRs that change anything
+  under `test/` (#228), by hand ("Run workflow") and via `workflow_call`. On failure the screenshots, wrangler logs and
   results are uploaded as the `regression-output` artifact.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
