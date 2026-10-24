@@ -24,11 +24,13 @@
     "appId": "digital.phasen.sitebuilder",
     "productName": "PhaseN Site Builder",
     "asar": false,
+    "icon": "build/icon.png",
     "files": [
       "main.js",
       "preload.js",
       "app/**",
       "lib/**",
+      "build/icon.png",
       "themes/**",
       "runtime/**",
       "!node_modules/@img/**",
