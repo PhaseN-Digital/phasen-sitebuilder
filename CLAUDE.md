@@ -254,6 +254,12 @@ are not, so add them yourself.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
+- Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
+  leaves the editor or writes/publishes the site (switching site, Settings,
+  Themes, Import, delete, publish, and window close via main.js's `close`
+  handler) must `await flushSave()` first, never just `clearTimeout`, or the
+  last edit is lost (#143). `flushSave` also waits for copied-page edits
+  (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
 - Rich text is Quill 2 (`richTextEditor` in `app/app.js`), loaded from
   `node_modules/quill/dist` by `app/index.html`. Everything it saves goes
   through the same sanitizer, so a new Quill format needs a matching

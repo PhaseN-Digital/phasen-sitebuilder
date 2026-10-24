@@ -603,6 +603,16 @@ app.whenReady().then(() => {
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e) => e.preventDefault());
+  // Closing (or quitting) first writes an edit still waiting for the editor's
+  // autosave (app.js flushSave, #143); a stuck renderer can't hold it open past 5s.
+  let flushed = false;
+  win.on("close", (e) => {
+    if (flushed) return;
+    e.preventDefault();
+    flushed = true;
+    Promise.race([win.webContents.executeJavaScript("flushSave()"), new Promise((r) => setTimeout(r, 5000))])
+      .catch(() => {}).finally(() => win.close());
+  });
   win.loadFile(path.join(__dirname, "app", "index.html"));
 });
 

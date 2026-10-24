@@ -6,7 +6,7 @@
 let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer;
 
 async function openThemes() {
-  clearTimeout(saveTimer);
+  await flushSave();
   site = null;
   tbEdit = null;
   loadSites();
