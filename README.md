@@ -196,10 +196,17 @@ Twitter tags. `canonical`, `og:url`, absolute image URLs, `sitemap.xml` and
 `robots.txt` need the published hostname, so `build()` only writes them when
 given `publish.hostname` (always the case when publishing, only with a domain
 on export) and never in the preview. The sitemap lists every indexable page
-(not the noindex privacy page or 404). An exact copy keeps its own
-`sitemap.xml`/`robots.txt` if the copy has them; otherwise its sitemap lists
-the copied pages, skipping any whose HTML has a `noindex` meta tag. Copied
-pages' own `<head>` tags are left as they were.
+(not the noindex privacy page or 404). An exact copy downloads the original
+site's `robots.txt` and `/sitemap.xml` (not for a subfolder copy), keeping
+only sitemap entries for pages that were copied and pointing robots.txt's
+`Sitemap:` line at the copy's own; a sitemap index (WordPress's and Yoast's
+usual one) isn't copied, and the sitemap then lists the copied pages,
+skipping any whose HTML has a `noindex` meta tag. Copied pages keep their own
+`<head>` tags, but `lib/mirror.js` makes their canonical, `og:url`,
+`og:image` and Twitter URL/image tags root-relative (a canonical naming
+another host keeps just its path) and `build()`'s `absolutise()` puts the
+published hostname back in front, in those tags and in the copied
+robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 
 ## Importing from WordPress
 
