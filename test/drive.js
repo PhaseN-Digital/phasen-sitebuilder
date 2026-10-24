@@ -44,7 +44,7 @@ app.on("browser-window-created", (_e, win) => {
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     // Image uploads go through pickFiles; swap it for a generated PNG.
     const fakePick = (w, h, color) => run(`pickFiles = async (multiple, cb) => { const c = new OffscreenCanvas(${w}, ${h}); const g = c.getContext("2d"); g.fillStyle = "${color}"; g.fillRect(0, 0, ${w}, ${h}); cb([new File([await c.convertToBlob({ type: "image/png" })], "upload.png")]); }; 0`);
-    const steps = { updateBanner, createSite, wordpressImport, elementorEditable, exactCopy };
+    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -102,6 +102,72 @@ app.on("browser-window-created", (_e, win) => {
       await shot("designTab");
     }
 
+    // ---------- 1b. rich text editor (Quill, #120) on the made-in-app site's home page ----------
+    async function richText() {
+      const id = result.sites.created;
+      if (!id) return;
+      const pub = path.join(UD, "preview", id, "public");
+      await run(`tab = "pages"; pageId = site.pages[0].id; renderEditor(); [...document.querySelectorAll(".adders button")].find((b) => b.textContent === "+ Rich text").click(); 0`);
+      await waitFor(() => run(`Boolean(document.querySelector(".rich-editor .ql-editor"))`));
+      const q = `Quill.find(document.querySelector(".rich"))`;
+      const select = (word) => run(`{ const q = ${q}; q.setSelection(q.getText().indexOf(${JSON.stringify(word)}), ${word.length}); 0 }`);
+      const panelButton = (label) => run(`[...document.querySelectorAll(".rich-panel button")].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+      const panelInput = (value, sel = "input") => run(`{ const i = document.querySelector(".rich-panel ${sel}"); i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("change")); 0 }`);
+      const html = () => run(`site.pages[0].sections.at(-1).html`);
+
+      await run(`{ const q = ${q}; q.setSelection(q.getLength() - 1); 0 }`);
+      await win.webContents.insertText(" Regression rich text, typed.");
+      check("rich text: typing", (await html()).includes("Regression rich text, typed."), await html());
+      await select("rich");
+      await run(`document.querySelector(".rich-editor .ql-bold").click()`);
+      check("rich text: bold", (await html()).includes("<strong>rich</strong>"), await html());
+
+      await select("text,");
+      await run(`document.querySelector(".rich-editor .ql-link").click()`);
+      await panelInput("javascript:alert(1)"); await panelButton("Apply link");
+      const linkError = await run(`document.querySelector(".rich-panel .error").textContent`);
+      await panelInput("https://example.com/rt"); await panelButton("Apply link");
+      check("rich text: link validated, then applied", /Use a web address/.test(linkError) && (await html()).includes('<a href="https://example.com/rt">text,</a>') && !(await html()).includes("javascript:"), [linkError, await html()]);
+
+      await fakePick(900, 600, "#c33");
+      await run(`{ const q = ${q}; q.setSelection(q.getLength() - 1); document.querySelector(".rich-editor .ql-image").click(); 0 }`);
+      await waitFor(() => run(`Boolean(document.querySelector(".rich-panel label.field input"))`));
+      await panelInput("A red box", "label.field input");
+      await panelInput("Our caption", "label.field:nth-of-type(2) input");
+      check("rich text: image uploaded as an asset, with alt text and caption", /<figure><img src="assets\/[a-f0-9]+\.webp" alt="A red box"><figcaption>Our caption<\/figcaption><\/figure>/.test(await html()) && !(await html()).includes("data:"), await html());
+
+      await run(`{ const q = ${q}; q.setSelection(q.getLength() - 1); document.querySelector(".rich-editor .ql-table").click(); 0 }`);
+      await win.webContents.insertText("Cell A1");
+      check("rich text: table", /<table><tbody><tr><td>Cell A1<\/td><td><\/td><td><\/td><\/tr>/.test(await html()), await html());
+
+      await run(`{ const q = ${q}; q.setSelection(q.getLength() - 1); document.querySelector(".rich-editor .ql-video").click(); 0 }`);
+      await panelInput("https://example.com/not-a-video"); await panelButton("Insert video");
+      const videoError = await run(`document.querySelector(".rich-panel .error").textContent`);
+      await panelInput("https://youtu.be/dQw4w9WgXcQ"); await panelButton("Insert video");
+      check("rich text: video validated, stored as a youtube-nocookie placeholder", /YouTube or Vimeo/.test(videoError) && (await html()).includes('<div class="video-embed" data-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></div>'), [videoError, await html()]);
+      await run(`document.querySelector(".rich-editor .ql-undo").click()`);
+      const undone = !(await html()).includes("video-embed");
+      await run(`document.querySelector(".rich-editor .ql-redo").click()`);
+      check("rich text: undo and redo", undone && (await html()).includes("video-embed"));
+
+      // Paste from Google Docs / Word: basic formatting kept, styles, spans and data: images dropped.
+      await run(`{ const q = ${q}; q.clipboard.dangerouslyPasteHTML(q.getLength() - 1, '<b style="font-weight:normal" id="docs-internal-guid-1"><p dir="ltr" style="text-align:center"><span style="font-weight:700;color:#f00;font-family:Arial">Pasted bold</span></p></b><p class=MsoNormal><i>Word italic</i><o:p></o:p></p><img src="data:image/png;base64,iVBORw0KGgo=">', "user"); 0 }`);
+      const pasted = await html();
+      check("rich text: paste keeps basic formatting, strips junk", pasted.includes('<p class="align-center"><strong>Pasted bold</strong></p>') && pasted.includes("<em>Word italic</em>") && !/style=|span|data:|Mso|font/i.test(pasted), pasted);
+
+      const sanitized = await run(`sanitizeHtml('<p class="align-center evil" style="color:red">c</p><a class="button x" href="javascript:alert(1)">b</a><a class="button" href="#page:abc">ok</a><s>s</s><div class="video-embed" data-src="https://evil.example/embed/x"></div><div class="video-embed" data-src="https://player.vimeo.com/video/123" onclick="x()">t</div><figure class="align-right"><img src="data:image/png;base64,x"></figure>')`);
+      check("sanitizer: editor classes, video hosts and data: images", sanitized === '<p class="align-center">c</p><a class="button">b</a><a href="#page:abc" class="button">ok</a><s>s</s><div class="video-embed" data-src="https://player.vimeo.com/video/123"></div><figure class="align-right"></figure>', sanitized);
+
+      await saved();
+      const built = read(path.join(pub, "index.html"));
+      check("rich text: built page shows it", built.includes("<strong>rich</strong>") && built.includes('<a href="https://example.com/rt">text,</a>') && /<img src="\/assets\/[a-f0-9]+\.webp" alt="A red box">/.test(built)
+        && built.includes("<td>Cell A1</td>") && /<div class="video-embed"><iframe title="Video from YouTube" srcdoc="[^"]*youtube-nocookie\.com\/embed\/dQw4w9WgXcQ\?autoplay=1/.test(built) && !built.includes('data-src='), built.slice(built.indexOf('class="richtext"'), built.indexOf('class="richtext"') + 1500));
+      check("rich text: preview shows the click-to-load video", await waitFor(() => inFrame(`Boolean(document.querySelector(".video-embed iframe")?.contentDocument?.querySelector("a")?.textContent.includes("Play video"))`)), "no play link in the preview");
+      await run(`document.querySelector(".rich-editor").scrollIntoView(); 0`);
+      await inFrame(`document.querySelector(".richtext").scrollIntoView(); 0`).catch(() => {});
+      await shot("rich-text");
+    }
+
     // ---------- 2. editable WordPress import ----------
     async function wordpressImport() {
       await run(`document.querySelector("#import-wp").click()`);
@@ -130,6 +196,16 @@ app.on("browser-window-created", (_e, win) => {
       check("wordpress: form replaced with ours", contact.sections.some((x) => x.type === "form" && x.formId === "contact") && !contact.sections[0].html.includes("<form"), contact.sections);
       const built = read(path.join(UD, "preview", id, "public", "about", "index.html"));
       check("wordpress: built page at its old address", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|evil\(\)|javascript:alert/.test(built));
+
+      // Imported rich text loads into the editor and saves back without losing anything.
+      await run(`tab = "pages"; pageId = site.pages[1].id; renderEditor(); 0`);
+      await waitFor(() => run(`Boolean(document.querySelector(".rich-editor .ql-editor"))`));
+      await run(`{ const q = Quill.find(document.querySelector(".rich")); q.insertText(0, "x", "user"); q.deleteText(0, 1, "user"); 0 }`);
+      await saved();
+      const resaved = JSON.parse(read(path.join(UD, "sites", id, "site.json"))).pages[1].sections[0].html;
+      const textOf = (h) => h.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
+      check("wordpress: rich text survives a round trip through the editor", textOf(resaved) === textOf(about) && resaved.includes("We <strong>fix</strong> bikes.") && resaved.includes("<h1>Big</h1>")
+        && resaved.includes(`href="#page:${contact.id}"`) && /<figure class="gallery-grid"><figure><img src="assets\/[a-f0-9]+\.webp" alt="Shop"><\/figure><\/figure>/.test(resaved), [about, resaved]);
     }
 
     // ---------- 2b. editable import of an Elementor site: kit colours/font, site-logo widget ----------

@@ -227,6 +227,14 @@ are not, so add them yourself.
 - Anything WordPress-imported is untrusted: editable imports go through the
   allowlist sanitizer in `app/wordpress.js`, and copied-page edits through
   `cleanEdit` in `app/copied.js`.
+- Rich text is Quill 2 (`richTextEditor` in `app/app.js`), loaded from
+  `node_modules/quill/dist` by `app/index.html`. Everything it saves goes
+  through the same sanitizer, so a new Quill format needs a matching
+  allowlist entry there (classes, not styles), CSS in `themes/base.css`, and
+  must survive a load/save round trip of imported HTML (`test/drive.js`
+  checks one). Videos are only the placeholder `div.video-embed[data-src]`
+  for `SAFE_VIDEO` hosts; `lib/build.js` makes the player, never an
+  `<iframe src>` in stored HTML.
 - Uploaded images are found by `usedAssets` (`lib/build.js`) searching
   site.json and the `mirror`/`mirror-original` HTML for `assets/<name>`. A
   new place that stores an image reference must be covered there, or

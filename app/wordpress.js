@@ -3,16 +3,20 @@
 // colours, fonts) onto the closest built-in theme, and bring each page's
 // content in as a sanitized "Rich text" section.
 
-const ALLOWED_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG", "EM", "B", "I", "U", "A", "BLOCKQUOTE", "BR", "HR",
+const ALLOWED_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG", "EM", "B", "I", "U", "S", "A", "BLOCKQUOTE", "BR", "HR",
   "IMG", "FIGURE", "FIGCAPTION", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
 const DROPPED_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "FORM", "NOSCRIPT", "SVG", "MATH", "TEMPLATE", "BUTTON",
   "INPUT", "SELECT", "TEXTAREA", "LINK", "META", "VIDEO", "AUDIO", "CANVAS", "HEAD", "TITLE"]);
 const SAFE_HREF = /^(https?:|mailto:|tel:|#page:[a-z0-9]+$)/i;
 const SAFE_SRC = /^(https?:\/\/|assets\/[a-f0-9]+\.webp$)/i;
+// The rich text editor's video placeholder; lib/build.js turns it into a click-to-load player.
+const SAFE_VIDEO = /^https:\/\/(www\.youtube-nocookie\.com\/embed\/[\w-]{11}|player\.vimeo\.com\/video\/\d+)$/;
 
 // Allowlist sanitizer. DOMParser documents are inert: nothing in them runs or
 // loads. Unknown elements are unwrapped (their text kept), dangerous ones
-// dropped with their contents, and every attribute but href/src/alt removed.
+// dropped with their contents, and every attribute but href/src/alt removed,
+// apart from the rich text editor's classes (align-*, a.button) and its video
+// placeholder, <div class="video-embed" data-src="…">, for approved hosts only.
 // With `base`, relative links and images are resolved against it first.
 function cleanFragment(html, base) {
   const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
@@ -23,17 +27,21 @@ function cleanFragment(html, base) {
       const tag = child.tagName.toUpperCase();
       if (DROPPED_TAGS.has(tag)) { child.remove(); continue; }
       walk(child);
+      const video = tag === "DIV" && child.className === "video-embed" && SAFE_VIDEO.test(child.dataset.src || "") && child.dataset.src;
+      if (video) { [...child.attributes].forEach(({ name }) => child.removeAttribute(name)); child.replaceChildren(); child.className = "video-embed"; child.dataset.src = video; continue; }
       if (!ALLOWED_TAGS.has(tag)) { child.replaceWith(...child.childNodes); continue; }
-      const gallery = tag === "FIGURE" && child.classList.contains("wp-block-gallery");
+      const gallery = tag === "FIGURE" && (child.classList.contains("wp-block-gallery") || child.classList.contains("gallery-grid"));
+      const classes = [...child.classList].filter((c) => /^align-(left|center|right|justify)$/.test(c) || (tag === "A" && c === "button"));
       const keep = tag === "A" ? ["href"] : tag === "IMG" ? ["src", "alt"] : [];
       for (const { name } of [...child.attributes]) if (!keep.includes(name)) child.removeAttribute(name);
+      if (classes.length) child.className = classes.join(" ");
       for (const name of base ? ["href", "src"] : []) {
         const value = child.getAttribute(name);
         if (value && !/^[a-z]+:/i.test(value)) try { child.setAttribute(name, new URL(value, base).href); } catch { child.removeAttribute(name); }
       }
       if (tag === "A" && !SAFE_HREF.test(child.getAttribute("href") || "")) child.removeAttribute("href");
       if (tag === "IMG" && !SAFE_SRC.test(child.getAttribute("src") || "")) child.remove();
-      if (gallery) child.className = "gallery-grid";
+      if (gallery) child.classList.add("gallery-grid");
     }
   };
   walk(doc.body);
@@ -157,6 +165,7 @@ async function copySite(url, log) {
 
 async function importWordPress(wp, log) {
   log(`Found "${plainText(wp.name)}" with ${wp.pages.length} page${wp.pages.length === 1 ? "" : "s"}.`);
+  if (wp.skipped?.length) log(`Skipped ${wp.skipped.map((t) => `"${plainText(t)}"`).join(", ")}: shop, log-in and account pages only work on WordPress itself.`);
   const home = new DOMParser().parseFromString(wp.homeHtml, "text/html");
 
   const style = wordpressStyle(home, wp.kitCss);
@@ -213,8 +222,8 @@ async function importWordPress(wp, log) {
         if (figure && !figure.querySelector("img") && !figure.textContent.trim()) figure.remove();
       }
       const sections = [{ id: rid(), type: "richtext", html: body.innerHTML.trim() }];
-      // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours.
-      if (/<form[\s>]/i.test(p.html)) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
+      // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours. Never for log-in/shop forms (lib/wordpress.js).
+      if (p.form) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
       // The old address, so lib/build.js can keep it (or 301 it) and renaming the page doesn't move it.
       let oldPath = null;
       try { oldPath = decodeURIComponent(new URL(p.link, wp.base + "/").pathname); } catch {}

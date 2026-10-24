@@ -13,7 +13,10 @@ const site = {
   pages: [
     { id: "h", title: "Home", sections: [{ type: "hero", heading: "<script>x</script>", text: "Hi\n\nThere", buttonText: "Go", buttonPage: "c" }] },
     { id: "c", title: "Contact Us!", sections: [{ type: "form", formId: "contact", heading: "Ask", buttonText: "Send" }] },
-    { id: "d", title: "404", sections: [{ type: "richtext", html: '<p><a href="#page:c">Contact</a> <img src="assets/abc123.webp" alt=""></p>' }] },
+    { id: "d", title: "404", sections: [{ type: "richtext", html: '<p><a href="#page:c">Contact</a> <img src="assets/abc123.webp" alt=""></p>'
+      + '<p class="align-center"><a href="#page:c" class="button">Book</a></p><figure class="align-right"><img src="assets/abc123.webp" alt="Bike"><figcaption>Ours</figcaption></figure>'
+      + '<div class="video-embed" data-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></div><div class="video-embed" data-src="https://player.vimeo.com/video/76979871"></div>'
+      + '<div class="video-embed" data-src="https://evil.example/embed/x"></div>' }] },
   ],
   forms: [{ id: "contact", name: "Contact", to: "", success: "Thanks", fields: [
     { id: "name", label: "Name", type: "text", required: true },
@@ -44,6 +47,12 @@ const site = {
   assert.strictEqual(JSON.parse(read("worker/forms.json")).contact.to, "owner@example.com");
   assert(read("wrangler.toml").includes("workers_dev = true") && !read("wrangler.toml").includes("custom_domain"));
   assert(read("public/404-2.html").includes('<a href="/contact-us">Contact</a> <img src="/assets/abc123.webp"'), "richtext page links + image paths resolved");
+  const rich = read("public/404-2.html");
+  assert(rich.includes('<p class="align-center"><a href="/contact-us" class="button">Book</a></p><figure class="align-right"><img src="/assets/abc123.webp" alt="Bike">'), "rich text: button links, alignment, figures");
+  const players = [...rich.matchAll(/<div class="video-embed"><iframe title="Video from (\w+)" srcdoc="([^"]*)"/g)];
+  assert.deepStrictEqual(players.map((m) => m[1]), ["YouTube", "Vimeo"], "videos become click-to-load players");
+  assert(players[0][2].includes("&lt;a href=&quot;https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&quot;&gt;") && players[1][2].includes("https://player.vimeo.com/video/76979871?autoplay=1"));
+  assert(!/<iframe[^>]* src=|evil\.example\/embed\/x"><\/iframe/.test(rich), "nothing loads from a video host before a click, unapproved hosts never become players");
   // Sites with a form get a noindex privacy page, linked from every footer.
   const privacy = read("public/privacy.html");
   assert(privacy.includes('<meta name="robots" content="noindex">') && privacy.includes("Bob&#39;s &lt;Bikes&gt;, who is responsible"));
@@ -158,6 +167,19 @@ const site = {
   assert.strictEqual(detectBuilder(`<body class="elementor-kit-5"><div data-elementor-type="wp-page">`), "Elementor");
   assert.strictEqual(detectBuilder(`<img src="/wp-content/uploads/Elementor-Logo.svg">`), null);
 
+  // Editable import skips WordPress-only pages and only swaps enquiry forms for ours (#56).
+  {
+    const { classifyPage } = require("./lib/wordpress");
+    const c = (title, html, link = "https://x.test/page/") => classifyPage({ title, html, link });
+    assert.deepStrictEqual(c("Register your interest", `<form class="wpcf7-form" method="post" action="/register-your-interest/#wpcf7-f1"><input name="your-email"></form>`), { wpOnly: false, enquiry: true });
+    assert.deepStrictEqual(c("Find us", `<form role="search" method="get"><input name="s"></form>`), { wpOnly: false, enquiry: false });
+    assert.deepStrictEqual(c("Get in touch", `<form class="woocommerce-form-login" method="post"><input name="username"><input type="password" name="password"></form><form class="wpforms-form" method="post"><input name="wpforms[fields][1]"></form>`), { wpOnly: false, enquiry: true });
+    assert.strictEqual(c("Your stuff", "<p>[woocommerce_my_account]</p>").wpOnly, true);
+    assert.strictEqual(c("Sign&nbsp;In", "<p>Welcome back</p>").wpOnly, true);
+    assert.strictEqual(c("Welcome", "<p>Hi</p>", "https://x.test/lost-password/").wpOnly, true);
+    assert.strictEqual(c("Join", `<form method="post"><input name="user_login"><input type="password" name="pass1"></form>`).wpOnly, true);
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {
@@ -172,6 +194,8 @@ const site = {
           const r = await fetchWordPress(wp.url.replace("http:", "https:"), "admin", "abcd efgh");
           const welcome = r.pages.find((p) => p.id === 3).html;
           assert(r.pages.length === 3 && r.name === "Bob&#8217;s Bikes", `hidden=${hidden}: pages fetched`);
+          assert.deepStrictEqual(r.skipped, ["Members", "Cart"], `hidden=${hidden}: WordPress-only pages skipped`);
+          assert.deepStrictEqual(r.pages.map((p) => p.form), [false, true, false], `hidden=${hidden}: only the contact page gets our form`);
           assert.strictEqual(welcome.includes("already signed in"), hidden, `hidden=${hidden}: welcome rendered as ${hidden ? "admin" : "visitor"}`);
           assert.strictEqual(wp.requests.some(([, authed]) => authed), hidden, `hidden=${hidden}: credentials ${hidden ? "used" : "unused"}`);
         } finally { await wp.close(); }
@@ -203,6 +227,17 @@ const site = {
     const local = home.match(/href='(\/google-fonts\/\w+\.css)'/)[1];
     assert.strictEqual(fs.readFileSync(path.join(out, local), "utf8"), "@font-face{font-family:'Sbtest';src:url(/google-fonts/s/sbtest/v1/a.woff2) format('woff2')}");
     assert.strictEqual(fs.readFileSync(path.join(out, "google-fonts/s/sbtest/v1/a.woff2"), "utf8"), "GOOGLEFONT");
+    // Page-address tags, robots.txt and sitemap.xml: root-relative in the copy, absolute on the published hostname (#115).
+    const about = fs.readFileSync(path.join(out, "about/index.html"), "utf8");
+    assert(about.includes('<link rel="canonical" href="/">') && about.includes('<meta property="og:url" content="/about/">') && about.includes('<meta property="og:image" content="/wp-content/uploads/2024/01/hero.png">') && about.includes('content="https://cdn.example/x.png"'));
+    assert.strictEqual(fs.readFileSync(path.join(out, "robots.txt"), "utf8"), "User-agent: *\nDisallow: /wp-admin/\n\nSitemap: https://other.example/s.xml\n\nSitemap: /sitemap.xml\n");
+    assert.strictEqual(fs.readFileSync(path.join(out, "sitemap.xml"), "utf8"), '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>/</loc><lastmod>2024-01-01</lastmod></url>\n<url><loc>/about/</loc></url>\n</urlset>\n');
+    const elDir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-elsite-")), elBuilt = fs.mkdtempSync(path.join(os.tmpdir(), "sb-elout-"));
+    fs.cpSync(out, path.join(elDir, "mirror"), { recursive: true });
+    await build({ ...site, mirror: {}, forms: [], pages: r.pages.map((p, i) => ({ id: `m${i}`, title: p.title, mirror: p.path, file: p.file, sections: [] })) }, elDir, elBuilt, { hostname: "new.example" });
+    const pub = (f) => fs.readFileSync(path.join(elBuilt, "public", f), "utf8");
+    assert(pub("about/index.html").includes('<link rel="canonical" href="https://new.example/">') && pub("about/index.html").includes('content="https://new.example/about/"') && pub("about/index.html").includes('content="https://new.example/wp-content/uploads/2024/01/hero.png"'));
+    assert(pub("robots.txt").endsWith("Sitemap: https://new.example/sitemap.xml\n") && pub("sitemap.xml").includes("<loc>https://new.example/about/</loc>"));
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
@@ -326,6 +361,17 @@ const site = {
   assert.deepStrictEqual(validateAll("themes"), {});
   assert.deepStrictEqual(Object.keys(themes), ["clean", "bold", "elegant"]);
   assert(read("public/styles.css").includes("--font: Georgia") && read("public/styles.css").includes("text-transform"), "bold theme.css + serif font");
+  // Black/white text is whichever contrasts more, and every bundled theme's
+  // defaults meet WCAG AA (4.5:1) for text, links, buttons and the header/hero.
+  const { contrastRatio, contrastText } = require("./lib/build");
+  assert.strictEqual(contrastText("#f97316"), "#111111", "orange gets dark text");
+  assert.strictEqual(contrastText("#1e3a8a"), "#ffffff", "navy gets white text");
+  for (const [id, { colors: c }] of Object.entries(themes)) {
+    for (const [what, fg, bg] of [["text", c.text, c.background], ["links", c.primary, c.background],
+      ["button text", contrastText(c.accent), c.accent], ["header text", contrastText(c.primary), c.primary]]) {
+      assert(contrastRatio(fg, bg) >= 4.5, `${id} ${what}: ${contrastRatio(fg, bg).toFixed(2)}:1`);
+    }
+  }
   const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themes-"));
   const pkg = (id, json, css) => {
     fs.mkdirSync(path.join(tdir, id));

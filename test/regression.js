@@ -154,6 +154,9 @@ async function workerChecks(sites) {
       const css = (await get(s.base, "/styles.css")).text;
       check("worker (made in app): theme from a theme source", css.includes("retro-theme-css") && css.includes('--font: "Courier New"'), css.slice(0, 300));
       check("worker (made in app): uploaded image served", img && (await get(s.base, img)).status === 200, img);
+      const figure = home.text.match(/<figure><img src="(\/assets\/[a-f0-9]+\.webp)" alt="A red box">/)?.[1];
+      check("worker (made in app): rich text with its image, table and click-to-load video (#120)", figure && (await get(s.base, figure)).status === 200 && home.text.includes("<td>Cell A1</td>")
+        && home.text.includes('<div class="video-embed"><iframe title="Video from YouTube" srcdoc=') && !home.text.includes("<iframe src="), figure);
       const contact = await get(s.base, "/contact");
       check("worker (made in app): contact page with form", contact.status === 200 && contact.text.includes('data-form="contact"') && contact.text.includes('data-sitekey="REAL_SITEKEY"'), contact.status);
       check("worker (made in app): cookie banner, no gtag before consent", home.text.includes('id="cookie-banner"') && !home.text.includes("googletagmanager")
@@ -178,6 +181,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/"), contact = await get(s.base, "/contact/");
       check("worker (editable import): pages keep their WordPress addresses", about.status === 200 && about.text.includes("We <strong>fix</strong> bikes.")
         && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
+      const cart = await get(s.base, "/cart/");
+      check("worker (editable import): WordPress-only pages skipped", cart.status === 404 && !s.site.pages.some((p) => ["Members", "Cart"].includes(p.title)), cart.status);
     } finally { await s.child.stop(); }
   }
   if (sites.mirror) {
@@ -191,7 +196,8 @@ async function workerChecks(sites) {
       const about = await get(s.base, "/about/");
       check("worker (exact copy): copied page", about.status === 200);
       const copySitemap = (await get(s.base, "/sitemap.xml")).text;
-      check("worker (exact copy): sitemap from copied pages (#74)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>"), copySitemap);
+      check("worker (exact copy): original sitemap, copied pages only (#74, #115)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>") && !copySitemap.includes("old-post"), copySitemap);
+      check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);

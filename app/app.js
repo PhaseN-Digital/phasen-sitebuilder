@@ -181,11 +181,35 @@ function designTab() {
     h("p", { className: "hint", style: "margin-top:8px" }, "Picking a theme resets colours and font to that theme's defaults."),
     h("h3", { className: "section-title" }, "Colours"),
     h("div", { className: "grid2" }, [["background", "Background"], ["text", "Text"], ["primary", "Main colour"], ["accent", "Buttons"]].map(([key, label]) =>
-      labelled(label, h("input", { type: "color", value: site.colors[key], oninput: (e) => { site.colors[key] = e.target.value; save(); } })))),
+      labelled(label, h("input", { type: "color", value: site.colors[key], oninput: (e) => { site.colors[key] = e.target.value; save(); colourHint(); } })))),
+    colourHint(h("p", { className: "hint", id: "colour-hint", role: "status", style: "margin-top:8px" })),
     select("Font", site, "font", Object.entries(fonts).map(([id, f]) => [id, f.label])),
     imageField("Logo", site, "logo", 600, "Shown at the top of every page instead of your website name. A wide image with a transparent background works best."),
     themeSourcesSettings(),
   ];
+}
+
+// Same WCAG maths as lib/build.js contrastRatio (the renderer can't require it).
+function contrast(a, b) {
+  const lum = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// A gentle, non-blocking note when text or links are hard to read on the background (WCAG AA is 4.5:1).
+// Only for colours the user picked: a theme's own defaults are checked by its author, and some
+// themes (e.g. minimal) don't colour links with the main colour at all.
+// ponytail: assumes links use the main colour once the user changes it; ask themes to declare a link colour if that misleads.
+function colourHint(el = $("#colour-hint")) {
+  const c = site.colors;
+  const d = (site.themeSource ? SOURCES.find((s) => s.spec === site.themeSource)?.themes?.[site.theme] : THEMES.themes[site.theme])?.colors || {};
+  const low = [["Text", "text"], ["Links (main colour)", "primary"]]
+    .filter(([, k]) => !(c[k] === d[k] && c.background === d.background) && contrast(c[k], c.background) < 4.5);
+  el.hidden = !low.length;
+  el.textContent = low.length ? `${low.map(([n]) => n).join(" and ")} may be hard to read on this background. Try a darker or lighter colour (aim for a contrast of at least 4.5:1).` : "";
+  return el;
 }
 
 function themeButton(t, active, choose) {
@@ -311,19 +335,245 @@ function sectionEditor(s) {
           save(); renderTab();
         }) }, "Add photos…"))];
     }
-    case "richtext": {
-      // Stored images are "assets/x.webp"; the editor shows them via preview://.
-      const viewPrefix = `preview://${site.id}/assets/`;
-      const editor = h("div", { className: "rich", contentEditable: "true", innerHTML: s.html.replaceAll('src="assets/', `src="${viewPrefix}`),
-        oninput: () => { s.html = sanitizeHtml(editor.innerHTML.replaceAll(viewPrefix, "assets/")); save(); } });
-      const tool = (label, command, arg) => h("button", { className: "icon", title: label, onmousedown: (e) => { e.preventDefault(); document.execCommand(command, false, arg); } }, label);
-      return [h("div", { className: "inline toolbar" }, tool("Bold", "bold"), tool("Italic", "italic"), tool("Heading", "formatBlock", "h2"),
-        tool("Subheading", "formatBlock", "h3"), tool("Paragraph", "formatBlock", "p"), tool("• List", "insertUnorderedList"), tool("1. List", "insertOrderedList")), editor];
-    }
+    case "richtext":
+      return [richTextEditor(s)];
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
         h("p", { className: "hint" }, "Edit the form's questions in the Forms tab.")];
   }
+}
+
+// ---------- Rich text: Quill 2 (BSD-3-Clause, node_modules/quill) ----------
+// Stored as sanitized HTML in s.html. Images are "assets/x.webp" in storage
+// and preview://<site>/assets/x.webp in the editor; videos are a placeholder
+// <div class="video-embed" data-src="…"> that lib/build.js makes click-to-load.
+const RICH_FORMATS = ["header", "bold", "italic", "underline", "strike", "align", "blockquote", "list", "indent",
+  "link", "button", "image", "figure", "video", "divider", "table"];
+const RICH_TOOLBAR = [[{ header: [2, 3, 4, false] }], ["bold", "italic", "underline", "strike"], [{ align: [] }, "blockquote"],
+  [{ list: "bullet" }, { list: "ordered" }, { indent: "-1" }, { indent: "+1" }], ["link", "image", "video", "table", "divider"], ["undo", "redo", "clean"]];
+const MOD = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+";
+const RICH_TITLES = { header: "Heading", bold: `Bold (${MOD}B)`, italic: `Italic (${MOD}I)`, underline: `Underline (${MOD}U)`, strike: "Strikethrough",
+  align: "Alignment", blockquote: "Quote", "list:bullet": "Bulleted list", "list:ordered": "Numbered list", "indent:-1": "Indent less", "indent:+1": "Indent more",
+  link: `Link (${MOD}K)`, image: "Image", video: "Video (YouTube or Vimeo)", table: "Table", divider: "Horizontal line",
+  undo: `Undo (${MOD}Z)`, redo: `Redo (${MOD}Shift+Z)`, clean: "Clear formatting" };
+
+// YouTube (any form, played from youtube-nocookie) or Vimeo links → the embed address, else null.
+function videoEmbedUrl(value) {
+  let u;
+  try { u = new URL(String(value).trim()); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const host = u.hostname.replace(/^(www|m)\./, "");
+  const yt = host === "youtu.be" ? u.pathname.slice(1)
+    : ["youtube.com", "youtube-nocookie.com"].includes(host) && (u.searchParams.get("v") || u.pathname.match(/^\/(?:embed|shorts|live)\/([^/]+)/)?.[1]);
+  if (yt) return /^[\w-]{11}$/.test(yt) ? `https://www.youtube-nocookie.com/embed/${yt}` : null;
+  const vimeo = /^(player\.)?vimeo\.com$/.test(host) && u.pathname.match(/^\/(?:video\/)?(\d+)$/)?.[1];
+  return vimeo ? `https://player.vimeo.com/video/${vimeo}` : null;
+}
+
+// Allowed rich text links: web addresses, email, phone, or one of the site's pages (#page:<id>).
+const richLink = (v) => (v.startsWith("#page:") ? (site.pages.some((p) => `#page:${p.id}` === v) ? v : null) : [linkTarget(v)].find((t) => t && SAFE_HREF.test(t)) || null);
+
+let quillSetUp = false;
+function setUpQuill() {
+  if (quillSetUp) return;
+  quillSetUp = true;
+  const Parchment = Quill.import("parchment"), BlockEmbed = Quill.import("blots/block/embed");
+  const Link = Quill.import("formats/link"), Image = Quill.import("formats/image");
+  class SafeLink extends Link { static sanitize(url) { return SAFE_HREF.test(url) ? url : "about:blank"; } }
+  class ButtonLink extends SafeLink { static blotName = "button"; static className = "button"; }
+  class SafeImage extends Image { static sanitize(url) { return /^(https?|preview):/i.test(url) ? url : "//:0"; } }
+  class Divider extends BlockEmbed { static blotName = "divider"; static tagName = "HR"; }
+  class Video extends BlockEmbed {
+    static blotName = "video"; static tagName = "DIV"; static className = "video-embed";
+    static create(url) { const node = super.create(); node.dataset.src = url; node.contentEditable = "false"; return node; }
+    static value(node) { return SAFE_VIDEO.test(node.dataset.src || "") ? node.dataset.src : null; }
+  }
+  // An image with optional caption, alignment and link, or a gallery from a WordPress import.
+  // Other figures (tables, quotes, several images) return null and load as their contents.
+  class Figure extends BlockEmbed {
+    static blotName = "figure"; static tagName = "FIGURE";
+    static create(v) {
+      const node = super.create(), el = (tag, props) => Object.assign(document.createElement(tag), props);
+      node.contentEditable = "false";
+      if (v.align) node.className = `align-${v.align}`;
+      if (v.gallery) node.classList.add("gallery-grid");
+      for (const item of v.gallery || [v]) {
+        const img = el("img");
+        img.setAttribute("src", item.src);
+        img.setAttribute("alt", item.alt || "");
+        const pic = item.href ? el("a", { href: item.href }) : img;
+        if (item.href) pic.append(img);
+        node.append(v.gallery ? el("figure", {}) : pic);
+        if (v.gallery) { node.lastChild.append(pic); if (item.caption) node.lastChild.append(el("figcaption", { textContent: item.caption })); }
+      }
+      if (v.caption) node.append(el("figcaption", { textContent: v.caption }));
+      return node;
+    }
+    static value(node) {
+      const caption = (f) => f.querySelector(":scope > figcaption")?.textContent.trim() || "";
+      const items = [...node.querySelectorAll("img")].map((img) => {
+        const f = img.closest("figure");
+        return { src: img.getAttribute("src"), alt: img.getAttribute("alt") || "", href: img.closest("a")?.getAttribute("href") || "", caption: f === node ? "" : caption(f) };
+      });
+      const align = node.className.match(/\balign-(left|center|right)\b/)?.[1] || "";
+      if (node.classList.contains("gallery-grid")) return items.length ? { gallery: items, caption: caption(node), align } : null;
+      if (items.length !== 1 || node.querySelector("table, blockquote, p, ul, ol, h1, h2, h3, h4")) return null;
+      return { ...items[0], caption: caption(node), align };
+    }
+  }
+  const Align = new Parchment.ClassAttributor("align", "align", { scope: Parchment.Scope.BLOCK, whitelist: ["right", "center", "justify"] });
+  Quill.register({ "formats/link": SafeLink, "formats/button": ButtonLink, "formats/image": SafeImage, "formats/divider": Divider,
+    "formats/video": Video, "formats/figure": Figure, "formats/align": Align, "attributors/class/align": Align }, true);
+  const order = Quill.import("blots/inline").order;
+  order.splice(order.indexOf("link") + 1, 0, "button");
+}
+
+function richTextEditor(s) {
+  setUpQuill();
+  const Delta = Quill.import("delta");
+  const viewPrefix = `preview://${site.id}/assets/`;
+  const box = h("div", { className: "rich" }), panel = h("div", { className: "rich-panel", hidden: true });
+  const wrap = h("div", { className: "rich-editor" }, box, panel);
+  const show = (...kids) => { panel.hidden = false; panel.replaceChildren(...kids); };
+  const hide = () => { panel.hidden = true; panel.replaceChildren(); };
+  const keepFocus = (label, action, className = "") => h("button", { type: "button", className, onmousedown: (e) => e.preventDefault(), onclick: action }, label);
+  const range = () => quill.getSelection(true);
+  // Block embeds go on a line of their own, so they land exactly at the returned index.
+  const insertBlock = (at, name, value) => {
+    if (quill.getLine(at)[1] > 0) quill.insertText(at++, "\n", "user");
+    quill.insertEmbed(at, name, value, "user");
+    quill.setSelection(at + 1, 0, "silent"); // silent, or the selection change would close the panel
+    return at;
+  };
+
+  const quill = new Quill(box, {
+    theme: "snow", formats: RICH_FORMATS,
+    modules: {
+      table: true,
+      // Dropped or pasted image files go through the same resize/upload as the Image button, never data: URLs.
+      uploader: { mimetypes: ["image/png", "image/jpeg", "image/webp", "image/gif"], handler: (r, files) => insertImages(r.index, files) },
+      toolbar: { container: RICH_TOOLBAR, handlers: {
+        link: () => linkPanel(),
+        image: () => { const at = range().index; pickFiles(true, (files) => insertImages(at, files)); },
+        video: () => videoPanel(range().index),
+        table: () => { quill.getModule("table").insertTable(3, 3); tablePanel(); },
+        divider: () => insertBlock(range().index, "divider", true),
+        undo: () => quill.history.undo(),
+        redo: () => quill.history.redo(),
+      } },
+    },
+  });
+  const toolbar = quill.getModule("toolbar").container;
+  for (const el of toolbar.querySelectorAll("button, .ql-picker")) {
+    const name = [...el.classList].find((c) => c.startsWith("ql-") && c !== "ql-picker" && c !== "ql-active")?.slice(3);
+    const title = RICH_TITLES[el.value ? `${name}:${el.value}` : name];
+    if (title) el.title = title;
+    if (el.tagName === "BUTTON" && !el.innerHTML) el.textContent = { divider: "—", undo: "↶", redo: "↷" }[name] || name;
+  }
+  // Images from other sites' pasted HTML (data: URLs, tracking pixels on file:) are dropped.
+  quill.clipboard.addMatcher("IMG", (node, delta) => (/^(https?|preview):/i.test(node.getAttribute("src") || "") ? delta : new Delta()));
+  // Quill's tables have no header cells: imported <th>s become ordinary cells (or they'd merge into one).
+  const html = String(s.html || "").replaceAll('src="assets/', `src="${viewPrefix}`).replace(/<(\/?)th>/g, "<$1td>");
+  quill.setContents(quill.clipboard.convert({ html }), "silent");
+  quill.history.clear();
+  quill.on("text-change", () => {
+    // getSemanticHTML writes every space as &nbsp;; real non-breaking spaces stay as the character.
+    s.html = sanitizeHtml(quill.getSemanticHTML().replaceAll("&nbsp;", " ").replaceAll(viewPrefix, "assets/"));
+    save();
+  });
+
+  async function insertImages(at, files) {
+    for (const file of files) {
+      const src = await processImage(file, 1600);
+      if (!src) continue;
+      at = insertBlock(at, "figure", { src: thumbUrl(src), alt: "", caption: "", align: "" });
+      figurePanel(at++);
+    }
+  }
+
+  // The link (or button link) under the cursor, as [index, length, href, isButton], or the selection.
+  function linkAt(r) {
+    const [blot] = quill.scroll.descendant((b) => ["link", "button"].includes(b?.statics.blotName), r.index);
+    if (blot) return [quill.getIndex(blot), blot.length(), blot.domNode.getAttribute("href"), blot.statics.blotName === "button"];
+    return r.length ? [r.index, r.length, "", false] : null;
+  }
+
+  function linkPanel(r = range(), focus = true) {
+    const found = linkAt(r);
+    if (!found) return show(h("p", { className: "hint" }, "Select some text first, then click Link."));
+    const [at, length, href, isButton] = found;
+    const page = href?.startsWith("#page:") ? href.slice(6) : "";
+    const input = h("input", { value: page ? "" : href || "", placeholder: "https://…, mailto:… or tel:…", hidden: Boolean(page) });
+    const target = h("select", { onchange: () => { input.hidden = Boolean(target.value); } },
+      h("option", { value: "" }, "A web address, email or phone number"), site.pages.map((p) => h("option", { value: p.id, selected: p.id === page }, `Page: ${p.title}`)));
+    const asButton = h("input", { type: "checkbox", checked: isButton });
+    const error = h("p", { className: "error" });
+    const apply = () => {
+      const value = target.value ? `#page:${target.value}` : richLink(input.value.trim());
+      if (!value) { error.textContent = "Use a web address (https://…), mailto:, tel: or one of your pages."; return; }
+      quill.formatText(at, length, asButton.checked ? { link: false, button: value } : { button: false, link: value }, "user");
+      hide();
+    };
+    show(h("div", { className: "inline" }, target, input), h("label", { className: "inline" }, asButton, "Show as a button"),
+      h("div", { className: "inline" }, keepFocus("Apply link", apply, "primary"), href && keepFocus("Remove link", () => { quill.formatText(at, length, { link: false, button: false }, "user"); hide(); }, "danger")), error);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+    if (focus && !page) input.focus();
+  }
+
+  function videoPanel(at) {
+    const input = h("input", { placeholder: "https://www.youtube.com/watch?v=… or https://vimeo.com/…" });
+    const error = h("p", { className: "error" });
+    const insert = () => {
+      const url = videoEmbedUrl(input.value);
+      if (!url) { error.textContent = "Paste a YouTube or Vimeo video link."; return; }
+      insertBlock(at, "video", url);
+      hide();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); insert(); } });
+    show(h("p", { className: "hint" }, "Visitors see a play button; nothing loads from YouTube or Vimeo until they click it."),
+      h("div", { className: "inline" }, input, h("button", { type: "button", className: "primary", onclick: insert }, "Insert video")), error);
+    input.focus();
+  }
+
+  // Edits replace the figure in one step, so undo works.
+  function figurePanel(at) {
+    const v = quill.getContents(at, 1).ops[0]?.insert?.figure;
+    if (!v) return hide();
+    const update = (change) => quill.updateContents(new Delta().retain(at).delete(1).insert({ figure: Object.assign(v, change) }), "user");
+    const remove = h("button", { type: "button", className: "danger", onclick: () => { quill.deleteText(at, 1, "user"); hide(); } }, "Remove");
+    if (v.gallery) return show(h("p", { className: "hint" }, `A gallery of ${v.gallery.length} photos.`), remove);
+    show(
+      labelled("Describe the image (for screen readers)", h("input", { value: v.alt, onchange: (e) => update({ alt: e.target.value }) })),
+      labelled("Caption (optional)", h("input", { value: v.caption, onchange: (e) => update({ caption: e.target.value }) })),
+      labelled("Position", h("select", { onchange: (e) => update({ align: e.target.value }) },
+        [["", "Full width"], ["left", "Left, text wraps around"], ["center", "Centred"], ["right", "Right, text wraps around"]].map(([value, name]) => h("option", { value, selected: v.align === value }, name)))),
+      remove);
+  }
+
+  function tablePanel() {
+    const t = quill.getModule("table");
+    show(h("div", { className: "inline" }, h("span", { className: "hint" }, "Table:"),
+      keepFocus("Add row", () => t.insertRowBelow()), keepFocus("Add column", () => t.insertColumnRight()),
+      keepFocus("Delete row", () => t.deleteRow()), keepFocus("Delete column", () => t.deleteColumn()),
+      keepFocus("Delete table", () => { t.deleteTable(); hide(); }, "danger")));
+  }
+
+  quill.on("selection-change", (r) => {
+    if (!r) return; // focus moved into the panel
+    const inLink = !r.length && linkAt(r);
+    if (inLink) linkPanel(r, false);
+    else if (quill.getModule("table").getTable(r)[0]) tablePanel();
+    else hide();
+  });
+  quill.root.addEventListener("click", (e) => {
+    const el = e.target.closest(".ql-editor > figure, .ql-editor > .video-embed");
+    const blot = el && Quill.find(el);
+    if (!blot) return;
+    const at = quill.getIndex(blot);
+    if (el.tagName === "FIGURE") figurePanel(at);
+    else show(h("p", { className: "hint" }, `Video: ${el.dataset.src}`), h("button", { type: "button", className: "danger", onclick: () => { quill.deleteText(at, 1, "user"); hide(); } }, "Remove video"));
+  });
+  return wrap;
 }
 
 function pagesTab() {
