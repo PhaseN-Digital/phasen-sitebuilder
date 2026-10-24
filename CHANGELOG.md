@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.3](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.2...phasen-sitebuilder-v0.4.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **import:** keep WordPress page addresses, 301 the rest ([#72](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/72)) ([#98](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/98)) ([577a7c5](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/577a7c5a1c3c86932cabd555e95d215b2e2dbd25))
+
+## [0.4.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.1...phasen-sitebuilder-v0.4.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **release:** only auto-merge a patch release onto the main it tested ([#101](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/101)) ([032888f](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/032888fda79ad923ac9e172bdadaf665e730ace6))
+
 ## [0.4.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.4.0...phasen-sitebuilder-v0.4.1) (2026-10-23)
 
 

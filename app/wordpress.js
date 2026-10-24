@@ -215,7 +215,10 @@ async function importWordPress(wp, log) {
       const sections = [{ id: rid(), type: "richtext", html: body.innerHTML.trim() }];
       // WordPress forms (Contact Form 7, WPForms…) need PHP; swap in ours.
       if (/<form[\s>]/i.test(p.html)) sections.push({ id: rid(), type: "form", heading: "", text: "", formId: "contact", buttonText: "Send" });
-      s.pages.push({ id: ids.get(p.id), title: plainText(p.title) || "Untitled", sections });
+      // The old address, so lib/build.js can keep it (or 301 it) and renaming the page doesn't move it.
+      let oldPath = null;
+      try { oldPath = decodeURIComponent(new URL(p.link, wp.base + "/").pathname); } catch {}
+      s.pages.push({ id: ids.get(p.id), title: plainText(p.title) || "Untitled", ...(oldPath && { path: oldPath }), sections });
     }
   }
 
