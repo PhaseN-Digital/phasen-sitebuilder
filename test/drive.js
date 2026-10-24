@@ -128,8 +128,8 @@ app.on("browser-window-created", (_e, win) => {
       check("wordpress: other links point at the old site", about.includes(`href="${SB_WP}/blog/post-1/"`), about);
       check("wordpress: images downloaded, missing ones dropped", (about.match(/<img /g) || []).length === 1 && /<img src="assets\/[a-f0-9]+\.webp" alt="Shop">/.test(about) && !about.includes("missing.png"), about);
       check("wordpress: form replaced with ours", contact.sections.some((x) => x.type === "form" && x.formId === "contact") && !contact.sections[0].html.includes("<form"), contact.sections);
-      const built = read(path.join(UD, "preview", id, "public", "about-team.html"));
-      check("wordpress: built page", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|onclick/.test(built));
+      const built = read(path.join(UD, "preview", id, "public", "about", "index.html"));
+      check("wordpress: built page at its old address", built.includes("We <strong>fix</strong> bikes.") && !/<script>alert|onclick/.test(built));
     }
 
     // ---------- 2b. editable import of an Elementor site: kit colours/font, site-logo widget ----------
@@ -185,8 +185,12 @@ app.on("browser-window-created", (_e, win) => {
       check("tagging: layout untagged", !/<(section|div) class="elementor-(section|container|column)[^"]*"[^>]*data-sb-edit/.test(home));
       check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(path.join(M, f)).includes(`data-sb-edit="${footer}"`)));
 
-      // Preview: our submit handler wins over Elementor's.
-      await waitFor(() => inFrame(`Boolean(document.querySelector(".elementor-form"))`));
+      // Preview: our submit handler wins over Elementor's. The editor opens on site.pages[0], which is
+      // whichever page the crawl finished first (not always the one with the form), so load the home
+      // page explicitly and wait for that load (by its ?t=) to have run /form.js, which comes after the form.
+      const since = Date.now();
+      await run(`pageId = site.pages.find((p) => p.mirror === "/").id; refreshPreview(); 0`);
+      await waitFor(() => inFrame(`+new URLSearchParams(location.search).get("t") >= ${since} && typeof onTurnstileLoad === "function" && Boolean(document.querySelector(".elementor-form"))`));
       await inFrame(`document.querySelector("#form-field-name").value = "A"; document.querySelector('[name="form_fields[email]"]').value = "a@b.co"; document.querySelector(".elementor-form").requestSubmit()`).catch(() => {});
       const status = await waitFor(() => inFrame(`document.querySelector(".form-status").textContent`), 3000);
       check("exact copy: preview form doesn't post to WordPress", /once your website is published/.test(status || "") && !(await inFrame("window.__elementorPosted || false")), status);

@@ -144,6 +144,14 @@ async function workerChecks(sites) {
       await formChecks("worker (made in app) form", s, "contact", valid);
     } finally { await s.child.stop(); }
   }
+  if (sites.wordpress) {
+    const s = await serve("wordpress", sites.wordpress);
+    try {
+      const about = await get(s.base, "/about/"), contact = await get(s.base, "/contact/");
+      check("worker (editable import): pages keep their WordPress addresses", about.status === 200 && about.text.includes("We <strong>fix</strong> bikes.")
+        && contact.status === 200 && contact.text.includes('data-form="contact"'), [about.status, contact.status]);
+    } finally { await s.child.stop(); }
+  }
   if (sites.mirror) {
     const s = await serve("mirror", sites.mirror);
     try {

@@ -11,7 +11,9 @@ permissions:
   issues: write # labels and comments on the release PR
 
 # One run at a time: the gate merges and releases, and must not interleave
-# with another run updating the same release PR.
+# with another run updating the same release PR. Never cancel in progress: a
+# push that lands mid-run queues the next run, and the gate below refuses to
+# merge onto the moved main and leaves the PR to that run (#97).
 concurrency:
   group: release-please
   cancel-in-progress: false
@@ -24,8 +26,14 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       pr_number: ${{ steps.pr.outputs.number }}
       pr_sha: ${{ steps.pr.outputs.sha }}
-      bump: ${{ steps.pr.outputs.bump }}
+      main_sha: ${{ steps.main.outputs.sha }}
     steps:
+      # main as this run found it, before release-please builds the PR on it.
+      # The gate only merges if main is still exactly this (#97).
+      - id: main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" -q .sha)" >> "$GITHUB_OUTPUT"
       - uses: googleapis/release-please-action@v5
         id: release
         with:
@@ -34,19 +42,16 @@ jobs:
       # prs_created is only true when the release PR was opened or updated in
       # this run, so an unchanged PR isn't re-gated.
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v7
-      - if: ${{ steps.release.outputs.prs_created == 'true' }}
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PR: ${{ steps.release.outputs.pr }}
         run: |
           number=$(jq -r .number <<<"$PR")
           sha=$(gh pr view "$number" --json headRefOid -q .headRefOid)
-          git fetch -q --depth 1 origin "$sha"
-          bump=$(node scripts/release-bump.js "$(jq -r '."."' .release-please-manifest.json)" "$(git show "$sha:.release-please-manifest.json" | jq -r '."."')")
-          echo "Release PR #$number at $sha is a $bump release"
-          { echo "number=$number"; echo "sha=$sha"; echo "bump=$bump"; } >> "$GITHUB_OUTPUT"
+          echo "Release PR #$number at $sha"
+          { echo "number=$number"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
 
   # Release gate (#47): the regression suite runs against the release PR's
   # head. Patch releases that pass are merged here and released by the
@@ -71,12 +76,27 @@ jobs:
       GH_REPO: ${{ github.repository }}
       PR: ${{ needs.release-please.outputs.pr_number }}
       SHA: ${{ needs.release-please.outputs.pr_sha }}
-      BUMP: ${{ needs.release-please.outputs.bump }}
+      START_MAIN: ${{ needs.release-please.outputs.main_sha }}
       RESULT: ${{ needs.regression.result }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Everything below is re-read right before merging, not taken from the
+      # start of the run: regression takes minutes and main can move (#97).
       - id: gate
         run: |
           run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git fetch -q origin main "$SHA"
+          read -r PR_HEAD BASE < <(gh pr view "$PR" --json headRefOid,baseRefOid -q '"\(.headRefOid) \(.baseRefOid)"')
+          git fetch -q origin "$PR_HEAD"
+          export PR_HEAD BASE TESTED="$SHA" MAIN=$(git rev-parse origin/main)
+          export CONTAINS_MAIN=$(git merge-base --is-ancestor "$MAIN" "$SHA" && echo true || echo false)
+          stale=$(node scripts/release-bump.js stale)
+          if [ -n "$stale" ]; then
+            gh pr comment "$PR" --body "Not merging: $stale ([run]($run)). The run started by the newer push re-gates this PR once release-please has updated it."
+            exit 0
+          fi
           if [ "$RESULT" != success ]; then
             gh label create regression-failed --color d73a4a --description "Release PR failed the regression suite" --force
             gh pr edit "$PR" --add-label regression-failed
@@ -84,14 +104,31 @@ jobs:
             exit 0
           fi
           gh pr edit "$PR" --remove-label regression-failed 2>/dev/null || true
+          # Classified from the versions now on main and the PR head, so a
+          # patch decision can't outlive a feat landing on main.
+          BUMP=$(node scripts/release-bump.js "$(git show origin/main:.release-please-manifest.json | jq -r '."."')" "$(git show "$PR_HEAD:.release-please-manifest.json" | jq -r '."."')")
           if [ "$BUMP" != patch ]; then
             gh label create needs-approval --color fbca04 --description "Minor/major release: the maintainer merges it" --force
             gh pr edit "$PR" --add-label needs-approval
             gh pr comment "$PR" --body "Regression suite passed on $SHA ([run]($run)). This is a **$BUMP** release, so it waits for the maintainer to merge it."
             exit 0
           fi
-          # --match-head-commit: only merge exactly what the regression run tested.
+          # Last look at main right before merging; --match-head-commit pins the
+          # head, this pins the base.
+          if [ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$MAIN" ]; then
+            gh pr comment "$PR" --body "Not merging: main moved after the gate checked it ([run]($run)). The run started by that push re-gates this PR."
+            exit 0
+          fi
           gh pr merge "$PR" --squash --match-head-commit "$SHA"
+          # GitHub has no compare-and-swap on the base, so a push in the second
+          # between the check above and the merge is caught here: the squash must
+          # be exactly the tested tree. If not, fail loudly and don't release.
+          merged=$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid)
+          git fetch -q origin "$merged"
+          if [ "$(git rev-parse "$merged^{tree}")" != "$(git rev-parse "$SHA^{tree}")" ]; then
+            gh pr comment "$PR" --body "**Merged onto a main that moved during the merge**, so $merged isn't what regression tested ([run]($run)). Not releasing from this run; the maintainer must check the next release."
+            exit 1
+          fi
           echo "merged=true" >> "$GITHUB_OUTPUT"
 
   # Creates the release for a patch PR the gate just merged (the merge's push
