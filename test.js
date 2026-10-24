@@ -697,6 +697,51 @@ const site = {
     fs.rmSync(root, { recursive: true, force: true });
   }
 
+  // Page layouts (#169): migration, every layout renders, blog order/pagination/sitemap, theme validation.
+  {
+    const { LAYOUTS, migrateLayouts } = require("./lib/layouts");
+    const old = migrateLayouts({ pages: [{ id: "m", mirror: "/x/" }, { id: "a" }, { id: "b" }, { id: "c", layout: "legal" }, { id: "d", layout: "nope" }] });
+    assert.deepStrictEqual(old.pages.map((p) => p.layout), [undefined, "home", "standard", "legal", "standard"], "first page home, the rest standard, copied pages none");
+    const post = (n, date, extra = {}) => ({ id: `p${n}`, title: `Post ${n}`, layout: "blog-post", date, sections: [{ type: "richtext", html: `<p>Body of post ${n} &amp; more.</p>` }], ...extra });
+    const lsite = { ...site, theme: "clean", forms: site.forms, pages: [
+      ...LAYOUTS.filter((l) => l.id !== "blog-post").map((l) => ({ id: l.id.replace("-", ""), title: l.label, layout: l.id, sections: l.sections.map((x) => ({ ...x, formId: "contact" })) })),
+      post(1, "2026-01-05", { author: "Jo <b>", excerpt: "Own excerpt", featuredImage: { src: "assets/abc123.webp", alt: "Bike" } }),
+      ...Array.from({ length: 10 }, (_, i) => post(i + 2, `2025-0${(i % 9) + 1}-01`)), post(12, ""),
+    ] };
+    const lout = path.join(os.tmpdir(), "sitebuilder-test-layouts");
+    const lp = await build(lsite, siteDir, lout, { hostname: "bikes.example" });
+    const page = (href) => fs.readFileSync(path.join(lout, "public", href === "/" ? "index.html" : href.endsWith("/") ? `${href.slice(1)}index.html` : `${href.slice(1)}.html`), "utf8");
+    for (const l of LAYOUTS) assert(page(lp[l.id === "blog-post" ? "p1" : l.id.replace("-", "")]).includes(`<body class="layout-${l.id}">`), `${l.id} renders`);
+    const home = page("/");
+    assert(home.includes("<h1>A big headline</h1>") && home.includes("<h2>Ready to talk?</h2>") && !home.includes("title-band"), "home: banner is the h1, a second banner an h2, no title band");
+    assert(home.includes('<div class="cards"><div class="card"><h3>Service one</h3>'), "richtext cards");
+    assert(!home.includes('href="/post-1"') && home.includes('href="/blog"'), "posts leave the menu when there's a blog page");
+    assert(!page(lp.landing).includes('id="site-nav"') && !page(lp.landing).includes("nav-toggle"), "landing: no menu");
+    assert(page(lp.standard).includes('<header class="title-band"><div class="wrap"><h1>Standard</h1></div></header>'), "standard: title band");
+    assert(/<div class="contact-columns"><div><section class="form">[\s\S]*<\/div><div><section class="text">/.test(page(lp.contact)), "contact: form beside the details");
+    const p1 = page(lp.p1);
+    assert(p1.includes('<article class="post"><header class="title-band"><div class="wrap"><h1>Post 1</h1><p class="post-meta"><time datetime="2026-01-05">5 January 2026</time> · By Jo &lt;b&gt;</p>') && p1.includes('<meta property="og:type" content="article">'), "post meta");
+    const blog = page(lp.blogindex);
+    const order = [...blog.matchAll(/<h2><a href="\/post-(\d+)">/g)].map((m) => +m[1]);
+    assert.deepStrictEqual(order, [1, 10, 9, 8, 7, 6, 5, 4, 3, 2], "newest first, ten per page");
+    assert(blog.includes("<p>Own excerpt</p>") && blog.includes("<p>Body of post 10 &amp; more.</p>") && blog.includes('<a href="/blog/page/2/" rel="next">Older posts</a>'), "excerpts and pager");
+    const blog2 = page("/blog/page/2/");
+    assert.deepStrictEqual([...blog2.matchAll(/<h2><a href="\/post-(\d+)">/g)].map((m) => +m[1]), [11, 12], "page 2, same date keeps page order, undated last");
+    assert(blog2.includes('<link rel="canonical" href="https://bikes.example/blog/page/2/">') && blog2.includes("<title>Blog | Bob&#39;s &lt;Bikes&gt; (page 2)</title>") && blog2.includes('rel="prev"'), "page 2 canonical/title");
+    const sitemap = fs.readFileSync(path.join(lout, "public/sitemap.xml"), "utf8");
+    assert(sitemap.includes("<loc>https://bikes.example/blog</loc>") && sitemap.includes("<loc>https://bikes.example/post-12</loc>") && sitemap.includes("<loc>https://bikes.example/blog/page/2/</loc>"), "blog in the sitemap");
+    assert(page(lp.privacy).includes('<body class="layout-legal">'), "generated privacy page uses the legal layout");
+    // Validator: layout-scoped CSS and per-layout notes; unknown layouts rejected. Its own list must match lib/layouts.js.
+    assert.deepStrictEqual(require("./lib/theme-validate").LAYOUT_IDS, LAYOUTS.map((l) => l.id));
+    const vdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-layout-theme-"));
+    const vt = (name, json, css) => { const d = path.join(vdir, name); fs.mkdirSync(d); fs.writeFileSync(path.join(d, "theme.json"), JSON.stringify({ label: "L", about: "A", font: "sans", colors: { background: "#ffffff", text: "#111111", primary: "#1d4ed8", accent: "#f59e0b" }, ...json })); fs.writeFileSync(path.join(d, "theme.css"), css); return validateTheme(d); };
+    assert.deepStrictEqual(vt("ok", { layouts: { home: { notes: "Big banner" }, "blog-post": {} } }, ".layout-home .hero { padding: 0; }\n.layout-blog-post .title-band h1 { font-size: 2rem; }"), []);
+    assert.deepStrictEqual(vt("bad", { layouts: { shop: {}, home: { notes: 1 } } }, ".layout-shop main { color: red; }"), [
+      'theme.json: unknown layout "shop" (one of home, standard, landing, services, contact, blog-post, blog-index, legal)',
+      'theme.json: layouts.home may only have "notes", a string up to 500 characters',
+      "theme.css: unknown layout class .layout-shop"]);
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);

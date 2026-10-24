@@ -284,6 +284,12 @@ are not, so add them yourself.
   checks one). Videos are only the placeholder `div.video-embed[data-src]`
   for `SAFE_VIDEO` hosts; `lib/build.js` makes the player, never an
   `<iframe src>` in stored HTML.
+- Page layouts (#169) are defined only in `lib/layouts.js`, which the editor
+  loads as a plain `<script>` (no `require`, no Node APIs in it) and
+  `lib/build.js` requires. A new layout id also goes in
+  `lib/theme-validate.js`'s `LAYOUT_IDS` (and its vendored copy in the
+  themes repo); `npm test` checks the two lists match. Every layout must keep
+  passing WCAG AA text contrast and the mobile menu in all bundled themes.
 - Uploaded images are found by `usedAssets` (`lib/build.js`) searching
   site.json and the `mirror`/`mirror-original` HTML for `assets/<name>`. A
   new place that stores an image reference must be covered there, or

@@ -44,6 +44,7 @@ app.on("browser-window-created", (_e, win) => {
       }
       return v;
     };
+    const LAYOUTS_SECTIONS = Object.fromEntries(require("../lib/layouts").LAYOUTS.map((l) => [l.id, l.sections.length]));
     const saved = () => waitFor(() => run(`document.querySelector(".save-state")?.textContent === "All changes saved"`).then(async (ok) => ok && (await sleep(300), true)));
     const fieldInput = (label, tag = "input") => `[...document.querySelectorAll("label.field")].find((l) => l.firstChild.textContent === ${JSON.stringify(label)}).querySelector("${tag}")`;
     const clickButton = (text) => run(`[...document.querySelectorAll("button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
@@ -56,7 +57,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = { updateBanner, createSite, richText, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, closeWithPendingEdit };
+    const steps = { updateBanner, createSite, richText, pageLayouts, wordpressImport, elementorEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -336,6 +337,32 @@ app.on("browser-window-created", (_e, win) => {
       check("theme switch: preview CSS rebuilt", read(path.join(pub, "styles.css")).includes("#faf7f2"));
       check("theme switch: preview restyled", await waitFor(() => inFrame(`getComputedStyle(document.body).backgroundColor === "rgb(250, 247, 242)"`)), "preview background isn't Elegant's");
       await shot("designTab");
+    }
+
+    // ---------- 1c. page layouts (#169): one page per layout through "Add page", removed again afterwards ----------
+    async function pageLayouts() {
+      const id = result.sites.created;
+      if (!id) return;
+      const pub = path.join(UD, "preview", id, "public");
+      check("layouts: existing pages migrated (first home, rest standard)", await run(`site.pages[0].layout === "home" && site.pages.slice(1).every((p) => p.layout === "standard")`));
+      await run(`tab = "pages"; renderEditor()`);
+      const before = await run(`site.pages.length`), ids = await run(`LAYOUTS.map((l) => l.id)`);
+      for (const [i, lid] of ids.entries()) {
+        await clickButton("+ Add page");
+        if (!i) { await sleep(500); await shot("layout-chooser"); }
+        await run(`[...document.querySelectorAll(".layout-choice")].find((b) => b.querySelector("strong").textContent === LAYOUT[${JSON.stringify(lid)}].label).click()`);
+      }
+      await saved();
+      const added = JSON.parse(read(path.join(UD, "sites", id, "site.json"))).pages.slice(before);
+      check("layouts: one page per layout, seeded with its sections", added.map((p) => p.layout).join() === ids.join() && added.every((p) => p.sections.length === LAYOUTS_SECTIONS[p.layout]), added.map((p) => `${p.layout}:${p.sections.length}`));
+      const hrefs = await waitFor(() => run(`site.pages.slice(${before}).every((p) => paths[p.id]) && site.pages.slice(${before}).map((p) => paths[p.id])`));
+      const files = (hrefs || []).map((href) => read(path.join(pub, href === "/" ? "index.html" : `${href.slice(1)}.html`)));
+      check("layouts: every layout builds with its body class", files.length === ids.length && files.every((html, i) => html.includes(`<body class="layout-${ids[i]}">`)));
+      check("layouts: the blog page lists the post", files[ids.indexOf("blog-index")]?.includes('<article class="post-card">'));
+      check("layouts: landing page has no menu", files[ids.indexOf("landing")] && !files[ids.indexOf("landing")].includes('id="site-nav"'));
+      await shot("layouts");
+      await run(`site.pages.splice(${before}); pageId = site.pages[0].id; save(); renderTab()`);
+      await saved();
     }
 
     // ---------- 1b. rich text editor (Quill, #120) on the made-in-app site's home page ----------

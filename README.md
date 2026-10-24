@@ -300,6 +300,43 @@ Nothing loads in the in-app preview. The site then always gets the privacy
 page, which gains an "Analytics and cookies" section (and drops the form
 parts if there are no forms). Exact-copy pages don't get the banner (#45).
 
+## Page layouts (#169)
+
+Every page built from the themes has a layout (`page.layout`), defined once
+in `lib/layouts.js` (id, label, description, the sections "Add page" seeds,
+the extra fields it adds, and the chooser's wireframe thumbnail, a small
+static SVG so it needs no rendering per theme). `lib/build.js` requires it and
+`app/index.html` loads it as a plain script. Sites saved before layouts are
+migrated when read (`migrateLayouts` in main.js's `readSite`): the first page
+becomes Home, the rest Standard; copied pages have none.
+
+| Layout | Seeds | Build adds |
+|---|---|---|
+| Home | banner, cards, text & image, review cards, closing banner | nothing (the banner is the title) |
+| Standard | text | a title band |
+| Landing | banner, cards, form | no menu |
+| Services | intro, cards | a title band |
+| Contact | form, details, "find us" | a title band; forms beside text, two columns |
+| Blog post | rich text | article header: title, date, author; featured image |
+| Blog | nothing | the post list |
+| Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
+
+Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
+keeps the sections. The page is `<body class="layout-<id>">`; only its
+first heading is an `h1` (the title band, else the first banner, later
+banners get `h2`), and the title band is left out when a banner opens the
+page. Rich text sections can be "shown as cards": each Heading 3 starts a
+card. Blog post pages have `date` (YYYY-MM-DD), `author`, `featuredImage` and
+`excerpt` (else the start of the first text). A Blog page lists them newest
+first (undated last), ten to a page, at `<blog>/page/2/` and so on, all in the
+sitemap with their own canonical; with a Blog page, posts leave the menu.
+`base.css` styles every layout, and each bundled theme restyles them with
+`.layout-<id>` rules; a theme without any still looks right. A theme package
+may add `"layouts": { "<id>": { "notes": "…" } }` to theme.json, and
+`lib/theme-validate.js` rejects unknown layout ids there and in theme.css's
+`.layout-<id>` selectors (its own `LAYOUT_IDS` list, kept equal to
+`lib/layouts.js` by `npm test`).
+
 ## Search and sharing (SEO)
 
 Pages › Search and sharing sets a page's search title (`page.seoTitle`,

@@ -154,3 +154,7 @@ dialog.publish-theme .inline { margin-top: 12px; }
 .message dt { font-weight: 600; }
 .message dd { margin: 0 0 8px; white-space: pre-wrap; }
 .badge-warn { white-space: nowrap; background: #fff4e5; border: 1px solid #f3c27a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; font-size: .8rem; }
+.layout-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
+.layout-choice { display: grid; gap: 4px; align-content: start; text-align: left; padding: 10px; }
+.layout-choice img { width: 100%; aspect-ratio: 3 / 2; border: 1px solid var(--line); border-radius: 4px; }
+.layout-choice span { font-size: .85rem; font-weight: 400; color: var(--muted, #555); }

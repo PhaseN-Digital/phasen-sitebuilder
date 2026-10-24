@@ -375,7 +375,7 @@ function sectionEditor(s) {
         }) }, "Add photos…"))];
     }
     case "richtext":
-      return [richTextEditor(s)];
+      return [richTextEditor(s), check("Show as cards: each small heading (Heading 3) starts a new card", s, "cards")];
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
         h("p", { className: "hint" }, "Edit the form's questions in the Forms tab.")];
@@ -622,12 +622,12 @@ function pagesTab() {
   return [
     h("div", { className: "chips" },
       site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
-      h("button", { onclick: () => {
-        const p = { id: rid(), title: "New page", sections: [{ id: rid(), type: "text", ...SECTION_TYPES.text.make() }] };
-        site.pages.push(p); pageId = p.id; save(); renderTab();
-      } }, "+ Add page")),
+      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page")),
+    choosingLayout && layoutChooser(),
     copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
+      select("Layout", page, "layout", LAYOUTS.map((l) => [l.id, l.label]), renderTab),
+      h("p", { className: "hint" }, `${LAYOUT[page.layout]?.description || ""} Changing it keeps this page's sections.`),
       h("div", { className: "inline" },
         h("button", { disabled: index === 0, onclick: () => move(site.pages, index, -1) }, "Move left in menu"),
         h("button", { disabled: index === site.pages.length - 1, onclick: () => move(site.pages, index, 1) }, "Move right"),
@@ -636,6 +636,8 @@ function pagesTab() {
           site.pages.splice(index, 1); pageId = site.pages[0].id; save(); renderTab();
         } }, "Delete page")),
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
+    page.layout === "blog-post" && postCard(page),
+    page.layout === "blog-index" && h("p", { className: "hint" }, "Your blog posts (pages with the Blog post layout) are listed on this page automatically, newest first, ten to a page. Sections added here appear above the list."),
     seoCard(page, index),
     h("h3", { className: "section-title" }, "Sections on this page"),
     page.sections.map((s, i) =>
@@ -651,6 +653,35 @@ function pagesTab() {
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
       h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
+}
+
+// "Add page" (#169): pick a layout (lib/layouts.js); the page starts with its sections.
+let choosingLayout = false;
+function layoutChooser() {
+  const add = (layout) => {
+    if (layout.sections.some((s) => s.type === "form") && !site.forms.length) site.forms.push({ id: rid(), name: "Contact", to: "", success: "Thanks, your message has been sent.", fields: [
+      { id: rid(), label: "Your name", type: "text", required: true }, { id: rid(), label: "Email address", type: "email", required: true }, { id: rid(), label: "Message", type: "textarea", required: true }] });
+    const contact = site.pages.find((p) => p.layout === "contact")?.id || "";
+    const sections = layout.sections.map((s) => ({ id: rid(), ...SECTION_TYPES[s.type].make(), ...structuredClone(s), ...(s.buttonPage ? { buttonPage: contact } : {}) }));
+    const p = { id: rid(), title: layout.id === "standard" ? "New page" : layout.label, layout: layout.id, sections };
+    if (layout.id === "blog-post") p.date = new Date().toISOString().slice(0, 10);
+    site.pages.push(p); pageId = p.id; choosingLayout = false; save(); renderTab();
+  };
+  return h("div", { className: "card" },
+    h("strong", {}, "Choose a layout for the new page"),
+    h("div", { className: "layout-choices" }, LAYOUTS.map((l) =>
+      h("button", { className: "layout-choice", onclick: () => add(l) },
+        h("img", { src: `data:image/svg+xml,${encodeURIComponent(l.thumb)}`, alt: "" }),
+        h("strong", {}, l.label), h("span", {}, l.description)))));
+}
+
+// Blog post details (#169): shown on the post and in the blog list.
+function postCard(page) {
+  return h("div", { className: "card" },
+    h("strong", {}, "Blog post"),
+    h("div", { className: "grid2" }, text("Date", page, "date", "Posts are listed newest first.", { type: "date" }), text("Author", page, "author", "Optional.")),
+    imageField("Featured image", page, "featuredImage", 1600, "Shown at the top of the post and in the blog list."),
+    area("Excerpt", page, "excerpt", "A sentence or two for the blog list. Leave blank to use the start of the post."));
 }
 
 // Search and sharing settings for a page (#74). The share image is picked
