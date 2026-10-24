@@ -49,7 +49,7 @@ const hex = (n) => crypto.randomBytes(n).toString("hex");
 const settingsStore = config.store(app.getPath("userData"));
 const loadSettings = () => settingsStore.load();
 const saveSettings = (s) => settingsStore.save(s);
-const readSite = (id) => readJson(path.join(siteDir(id), "site.json"), null).then(config.migrateSite);
+const readSite = (id) => readJson(path.join(siteDir(id), "site.json"), null).then(config.migrateSite).then((site) => site && { ...site, domain: cf.siteDomain(site.domain) }); // pre-#135 domains migrated
 // Everything a site operation needs: the site's overrides, else the app's settings.
 // `published` is the accounts the site was last published with (lib/settings.js publishedWith).
 async function settingsFor(id, site) {
@@ -124,10 +124,14 @@ async function publish(id, log) {
   }
   state.resendKeyHash = config.keyHash(resendKey);
   // Recorded up front so "Take offline" (#71) can undo even a half-finished publish.
-  Object.assign(state, { accountId, worker: site.workerName }, site.domain && { www: { id: site.domain.id, name: site.domain.name } });
+  const labelError = site.domain && cf.labelError(site.domain.label, site.domain.zoneName);
+  if (labelError) throw new Error(`Web address: ${labelError}`);
+  const www = site.domain && !site.domain.label && { id: site.domain.zoneId, name: site.domain.zoneName }; // the www redirect is apex-only (#135)
+  Object.assign(state, { accountId, worker: site.workerName }, www && { www });
 
   log("Preparing…\n");
-  const hostname = site.domain ? site.domain.name : await cf.workersDevHostname(token, accountId, site.workerName);
+  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
+  const hostname = site.domain ? cf.domainHostname(site.domain) : await cf.workersDevHostname(token, accountId, site.workerName);
   const turnstile = await cf.ensureTurnstile(token, accountId, site.name, hostname, state.turnstile && { ...state.turnstile, secret: unseal(state.turnstile.secret) });
   state.turnstile = { ...turnstile, secret: seal(turnstile.secret) };
   await writeState(id, state);
@@ -153,7 +157,7 @@ async function publish(id, log) {
     workerName: site.workerName,
     hostname,
     sitekey: turnstile.sitekey,
-    fromAddress: site.domain ? `website@${site.domain.name}` : "onboarding@resend.dev",
+    fromAddress: site.domain ? `website@${site.domain.zoneName}` : "onboarding@resend.dev",
     d1: state.d1,
   };
   await buildSite(site, publishDir(id), options);
@@ -181,7 +185,7 @@ async function unpublish(id, log) {
     : "Connect your Cloudflare account first (Settings), so the website can be removed from it.");
   if (state.url) { // published before publish.json recorded these
     state.worker ??= site.workerName;
-    if (site.domain) state.www ??= { id: site.domain.id, name: site.domain.name };
+    if (site.domain && !site.domain.label) state.www ??= { id: site.domain.zoneId, name: site.domain.zoneName };
   }
   state.accountId ??= published.cloudflare.accountId;
   log("Taking the website offline…\n");
@@ -389,7 +393,7 @@ const handlers = {
     const out = path.join(filePaths[0], site.workerName);
     await fs.mkdir(out); // throws if it exists, so we never overwrite a user's folder
     const state = await readState(id);
-    await buildSite(site, out, { workerName: site.workerName, hostname: site.domain?.name, sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.name}` : undefined, d1: state.d1 });
+    await buildSite(site, out, { workerName: site.workerName, hostname: cf.domainHostname(site.domain), sitekey: state.turnstile?.sitekey, fromAddress: site.domain ? `website@${site.domain.zoneName}` : undefined, d1: state.d1 });
     shell.showItemInFolder(out);
     return out;
   },
@@ -453,6 +457,11 @@ const handlers = {
   zones: async (siteId) => {
     const { cloudflare } = await settingsFor(siteId);
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];
+  },
+  "domain:check": async (id, domain) => {
+    const site = await readSite(id);
+    const { cloudflare } = site ? await settingsFor(id, site) : {}; // the site's resolved account (#134)
+    return cloudflare && site ? cf.hostnameWarnings(unseal(cloudflare.token), cloudflare.accountId, cf.siteDomain(domain), site.workerName) : [];
   },
   "wp:fetch": (url, username, password) => wp.fetchWordPress(url, username, password),
   "wp:image": (url) => wp.downloadImage(url),

@@ -115,7 +115,7 @@ app.on("browser-window-created", (_e, win) => {
       await sleep(300); await shot("publish-privacy");
 
       await clickButton("Publish website");
-      const log = await waitFor(() => run(`document.querySelector("pre.log").textContent.includes("Done!") || document.querySelector(".error")?.textContent`), 30000);
+      const log = await waitFor(() => run(`document.querySelector("pre.log").textContent.includes("Done!") || [...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`), 30000);
       const d = calls.deploy[0];
       check("publish: uses the site's account and the resolved defaults", d?.token === "site" && d.accountId === "acct-site" && d.forms.contact.to === "app@example.com" && d.privacy.includes("run by Site Override Ltd") && d.privacy.includes("mailto:app@example.com"), d ? { token: d.token, accountId: d.accountId, to: d.forms.contact.to } : log);
       const state = JSON.parse(read(path.join(UD, "sites", id, "publish.json")));
@@ -126,7 +126,7 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`!siteAccounts.cloudflare`));
       await run(`window.confirm = () => true; 0`);
       await clickButton("Take website offline");
-      const err = await waitFor(() => run(`document.querySelector(".error")?.textContent`));
+      const err = await waitFor(() => run(`[...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`));
       check("unpublish: refuses another account than the one that published", /isn't connected any more/.test(err || "") && !calls.unpublish.length, err);
       await run(`[...document.querySelectorAll(".step")][0].querySelector("button:nth-child(2)").click()`);
       await connect(".step", "Paste your Cloudflare API token", "site");

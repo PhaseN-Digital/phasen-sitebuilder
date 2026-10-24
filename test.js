@@ -93,6 +93,8 @@ const site = {
 
   await build({ ...site, domain: { id: "z", name: "bobsbikes.co.uk" } }, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
   assert(read("wrangler.toml").includes('pattern = "bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"));
+  await build({ ...site, domain: { zoneId: "z", zoneName: "bobsbikes.co.uk", label: "shop" } }, siteDir, out, { workerName: "w", hostname: "shop.bobsbikes.co.uk" });
+  assert(read("wrangler.toml").includes('pattern = "shop.bobsbikes.co.uk"\ncustom_domain = true') && read("wrangler.toml").includes("workers_dev = false"), "subdomain route (#135)");
 
   // SEO (#74): per-page title/description/share image, canonical + sitemap only with a published hostname.
   const seoSite = { ...site, logo: { src: "assets/logo.webp", alt: "" }, pages: [{ ...site.pages[0], seoTitle: 'Bob\'s "best" <bikes>', seoDescription: "Fix & ride" }, { ...site.pages[2], shareImage: "assets/abc123.webp" }, site.pages[1]] };
@@ -253,14 +255,14 @@ const site = {
   // www redirect against a fake Cloudflare API: `zone` holds the existing www records and redirect rules.
   const { ensureWwwRedirect } = require("./lib/publish");
   const realFetch = globalThis.fetch;
-  const runRedirect = async (zone) => {
+  const runRedirect = async (zone, label = "") => {
     const calls = [], logs = [];
     globalThis.fetch = async (url, { method, body }) => {
       calls.push({ method, url: url.replace("https://api.cloudflare.com/client/v4", ""), body: body && JSON.parse(body) });
       const result = method !== "GET" ? {} : url.includes("dns_records") ? zone.records : zone.rules && { rules: zone.rules };
       return { status: 200, json: async () => (result ? { success: true, result } : { success: false, errors: [{ message: "not found" }] }) };
     };
-    await ensureWwwRedirect("t", { id: "z1", name: "bob.com" }, (l) => logs.push(l));
+    await ensureWwwRedirect("t", { zoneId: "z1", zoneName: "bob.com", label }, (l) => logs.push(l));
     return { writes: calls.filter((c) => c.method !== "GET"), logs: logs.join("") };
   };
   let r = await runRedirect({ records: [] });
@@ -275,6 +277,43 @@ const site = {
   assert(!r.writes.length && !r.logs, "republish is a no-op");
   r = await runRedirect({ records: [], rules: [] });
   assert(r.writes[1]?.method === "PUT", "empty entrypoint ruleset gets the rule");
+  r = await runRedirect({ records: [], rules: [] }, "shop");
+  assert(!r.writes.length && !r.logs, "subdomain sites get no www redirect (#135)");
+
+  // Subdomains (#135): hostname, migration, label validation, and the Turnstile/route/warning requests.
+  const pub135 = require("./lib/publish");
+  assert.deepStrictEqual(pub135.siteDomain({ id: "z1", name: "bob.com" }), { zoneId: "z1", zoneName: "bob.com", label: "" }, "pre-#135 domain migrated");
+  assert.deepStrictEqual(pub135.siteDomain({ zoneId: "z1", zoneName: "bob.com" }), { zoneId: "z1", zoneName: "bob.com", label: "" });
+  assert(pub135.siteDomain(null) === null);
+  assert(pub135.domainHostname({ zoneName: "bob.com", label: "" }) === "bob.com" && pub135.domainHostname({ zoneName: "bob.com", label: "shop.eu" }) === "shop.eu.bob.com");
+  for (const ok of ["", "shop", "a-b", "x1.shop", "a".repeat(63)]) assert(!pub135.labelError(ok, "bob.com"), ok);
+  for (const bad of ["Shop", "-shop", "shop-", "sh_op", "shop..eu", ".shop", "shop.", "a".repeat(64), "sh op", "*.x", `${"a".repeat(60)}.`.repeat(5) + "a"]) assert(pub135.labelError(bad, "bob.com"), bad);
+  const cfCalls = [];
+  const cfStub = (routes) => async (url, { method, body }) => {
+    url = url.replace("https://api.cloudflare.com/client/v4", "");
+    cfCalls.push({ method, url, body: body && JSON.parse(body) });
+    const hit = Object.entries(routes).find(([k]) => url.includes(k));
+    return { status: 200, json: async () => ({ success: true, result: hit ? hit[1] : {} }) };
+  };
+  globalThis.fetch = cfStub({ "/challenges/widgets": { sitekey: "sk", secret: "sec" } });
+  assert.deepStrictEqual(await pub135.ensureTurnstile("t", "a1", "Bob", "shop.bob.com"), { sitekey: "sk", secret: "sec", hostname: "shop.bob.com" });
+  assert.deepStrictEqual(cfCalls.pop(), { method: "POST", url: "/accounts/a1/challenges/widgets", body: { name: "Bob website", domains: ["shop.bob.com"], mode: "managed" } });
+  await pub135.ensureTurnstile("t", "a1", "Bob", "shop.bob.com", { sitekey: "sk", secret: "sec", hostname: "bob.com" });
+  assert.deepStrictEqual(cfCalls.pop(), { method: "PUT", url: "/accounts/a1/challenges/widgets/sk", body: { name: "Bob website", domains: ["shop.bob.com"], mode: "managed" } }, "widget follows a hostname change");
+  const shop = { zoneId: "z1", zoneName: "bob.com", label: "shop" };
+  globalThis.fetch = cfStub({ "/workers/domains": [], "/dns_records": [{ type: "A" }, { type: "A" }] });
+  cfCalls.length = 0;
+  let w = await pub135.hostnameWarnings("t", "a1", shop, "bob-1");
+  assert.deepStrictEqual(cfCalls.map((c) => c.url), ["/accounts/a1/workers/domains?hostname=shop.bob.com", "/zones/z1/dns_records?name=shop.bob.com"]);
+  assert(w.length === 1 && w[0].includes("shop.bob.com already has DNS records (A)"), w);
+  globalThis.fetch = cfStub({ "/workers/domains": [{ hostname: "shop.bob.com", service: "someone-else" }] });
+  w = await pub135.hostnameWarnings("t", "a1", shop, "bob-1");
+  assert(w.length === 1 && w[0].includes("another Cloudflare Worker (someone-else)"), w);
+  globalThis.fetch = cfStub({ "/workers/domains": [{ hostname: "shop.bob.com", service: "bob-1" }], "/dns_records": [{ type: "AAAA" }] });
+  assert.deepStrictEqual(await pub135.hostnameWarnings("t", "a1", shop, "bob-1"), [], "this site's own Custom Domain isn't a warning");
+  globalThis.fetch = async () => ({ status: 403, json: async () => ({ success: false, errors: [] }) });
+  assert.deepStrictEqual(await pub135.hostnameWarnings("t", "a1", shop, "bob-1"), [], "lookups the token can't make are skipped");
+  globalThis.fetch = realFetch;
 
   // Unpublish (#71): best-effort, only removes what publishing made, keeps failures for a retry.
   const writes = [];
