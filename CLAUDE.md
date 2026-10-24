@@ -92,10 +92,13 @@ are not, so add them yourself.
   move the issue to Testing, and stop. Never merge a PR yourself unless you
   are the `release-manager` agent and the maintainer has authorised merging
   for the current session.
-- **No agent ever merges release-please's release PR.** Patch releases are
-  merged automatically by `release-please.yml`'s gate once the regression
-  suite passes; minor/major releases (`needs-approval` label) are the
-  maintainer's to merge.
+- **Release PRs:** patch releases are merged automatically by
+  `release-please.yml`'s gate once the regression suite passes; no agent
+  merges them. A minor/major release PR (`needs-approval` label) is merged
+  either by the maintainer, or by the `release-manager` agent **only** when the
+  maintainer has explicitly told it to release that version in the current
+  session (e.g. "release 0.8.0") and the gate has passed on the latest head.
+  General merge approvals never cover a release PR.
 - **Agents** (`.claude/agents/`): when working through issues, run one fresh
   `issue-worker` per issue (it implements, tests and opens a PR, but never
   merges) and hand ready PRs to the `release-manager`. The release manager
