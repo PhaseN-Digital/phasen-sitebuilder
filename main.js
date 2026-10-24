@@ -13,11 +13,14 @@ const { loadTheme } = require("./lib/themes");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
 const json = require("./lib/json-store");
+const github = require("./lib/github");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
 // Same for the fake GitHub API (theme sources, #58).
 const GITHUB_API = (!app.isPackaged && process.env.SITEBUILDER_GITHUB_API) || themeSources.GITHUB_API;
+const GITHUB_LOGIN = (!app.isPackaged && process.env.SITEBUILDER_GITHUB_API) || github.LOGIN; // the fake serves both
+const GITHUB_CLIENT_ID = github.clientId({ packaged: app.isPackaged });
 
 // preview://<site-id>/... serves the last preview build so the editor can
 // show the real generated site in an iframe, no local web server needed.
@@ -264,7 +267,8 @@ const findSource = async (spec) => {
   if (!source) throw new Error(`${spec} isn't one of your theme sources.`);
   return source;
 };
-const fetchSource = (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token), api: GITHUB_API });
+// A source without its own token uses the GitHub sign-in (#60), if any.
+const fetchSource = async (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token) || unseal((await loadSettings()).github?.token), api: GITHUB_API });
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
   const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };
@@ -292,6 +296,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
+  github: s.github ? { login: s.github.login, privateRepos: s.github.privateRepos } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
 });
 // Account changes apply to the app's accounts, or to one site's own when siteId is given (#134).
@@ -339,6 +344,19 @@ async function capturePreview() {
     win.destroy();
   }
 }
+
+// GitHub sign-in (device flow) and publishing Theme Builder themes (#60). The
+// token is app-wide (settings.github, sealed) and never reaches the renderer.
+let deviceFlow = null;
+async function githubToken() {
+  const s = await loadSettings();
+  if (!s.github) throw new Error("Sign in with GitHub in Settings first.");
+  return unseal(s.github.token);
+}
+const publishable = (id) => {
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");
+  return github.themeFiles(path.join(localThemes(), id)); // validated; only theme.json/theme.css/preview.png
+};
 
 const handlers = {
   themes: () => ({ themes, fonts }),
@@ -467,7 +485,44 @@ const handlers = {
     await cf.checkResendKey(key);
     return editAccounts(siteId, (a) => { a.resendKey = seal(key); });
   },
-  "settings:disconnect": (which, siteId) => editAccounts(siteId, (a) => { delete a[which === "cloudflare" ? "cloudflare" : "resendKey"]; }),
+  "settings:disconnect": (which, siteId) => editAccounts(siteId, (a) => { delete a[{ cloudflare: "cloudflare", github: "github" }[which] || "resendKey"]; }),
+  "github:start": async (privateRepos) => {
+    if (!GITHUB_CLIENT_ID) throw new Error("GitHub sign-in isn't configured in this copy of the app.");
+    const flow = await github.startDeviceFlow({ clientId: GITHUB_CLIENT_ID, scope: privateRepos ? "public_repo repo" : "public_repo", login: GITHUB_LOGIN });
+    deviceFlow = { ...flow, privateRepos: Boolean(privateRepos) };
+    return { userCode: flow.userCode, verificationUri: flow.verificationUri };
+  },
+  // Waits for the user to approve the code on GitHub, then stores the token.
+  "github:finish": async () => {
+    const flow = deviceFlow;
+    if (!flow) throw new Error("Sign-in cancelled.");
+    try {
+      const { token } = await github.pollDeviceFlow({ ...flow, clientId: GITHUB_CLIENT_ID, login: GITHUB_LOGIN, cancelled: () => deviceFlow !== flow });
+      const { login } = await github.user(GITHUB_API, token);
+      return publicSettings(await updateSettings((s) => { s.github = { token: seal(token), login, privateRepos: flow.privateRepos }; }));
+    } finally {
+      if (deviceFlow === flow) deviceFlow = null;
+    }
+  },
+  "github:cancel": () => { deviceFlow = null; },
+  // The last repo pushed to, else PhaseN's private themes repo if the user can write to it.
+  "github:push-target": async () => {
+    const s = await loadSettings();
+    if (!s.github) return "";
+    return s.github.pushRepo || ((await github.canPush(GITHUB_API, unseal(s.github.token), github.PRIVATE_DEFAULT)) ? github.PRIVATE_DEFAULT : "");
+  },
+  "github:push": async (id, target) => {
+    const token = await githubToken();
+    const { files, json: theme } = await publishable(id);
+    const r = await github.pushTheme({ api: GITHUB_API, token, target, id, files, version: theme.version || "1.0.0" });
+    await updateSettings((s) => { if (s.github) s.github.pushRepo = themeSources.parseSource(target).spec; });
+    return r;
+  },
+  "github:submit": async (id) => {
+    const token = await githubToken();
+    const { files, json: theme } = await publishable(id);
+    return github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" });
+  },
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
     return publicSettings(await updateSettings((s) => { s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim(); }));

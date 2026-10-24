@@ -562,6 +562,53 @@ const site = {
     assert.strictEqual((await tb.fromSite({ ...site, mirror: {} }, siteDir, themes)).css, "", "exact copies: colours and font only");
     const sample = tb.sampleSite({});
     assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
+
+    // Publishing a theme to GitHub (#60), against the fake GitHub in test/fakes.js.
+    const gh = require("./lib/github");
+    assert.strictEqual(gh.clientId({ env: { SITEBUILDER_GITHUB_CLIENT_ID: " abc " }, dir: root }), "abc");
+    assert.strictEqual(gh.clientId({ env: { SITEBUILDER_GITHUB_CLIENT_ID: "abc" }, packaged: true, dir: root }), "", "env ignored when packaged; no config file");
+    fs.writeFileSync(path.join(root, "github-config.json"), '{"clientId":"Ov23x"}');
+    assert.strictEqual(gh.clientId({ env: {}, packaged: true, dir: root }), "Ov23x");
+    const fake = await require("./test/fakes").startGitHub();
+    try {
+      const opts = { api: fake.url, login: fake.url };
+      await assert.rejects(gh.startDeviceFlow({ ...opts, clientId: "wrong", scope: "public_repo" }), /sign-in failed \(unauthorized_client\)/);
+      const flow = await gh.startDeviceFlow({ ...opts, clientId: fake.clientId, scope: "public_repo repo" });
+      assert.strictEqual(flow.userCode, "WDJB-MJHT");
+      await assert.rejects(gh.pollDeviceFlow({ ...opts, ...flow, clientId: fake.clientId, cancelled: () => true }), /cancelled/);
+      const { token } = await gh.pollDeviceFlow({ ...opts, ...flow, clientId: fake.clientId, wait: async () => {} });
+      assert.strictEqual(token, fake.token);
+      assert.strictEqual((await gh.user(fake.url, token)).login, "octo");
+      assert(await gh.canPush(fake.url, token, gh.PRIVATE_DEFAULT) && !(await gh.canPush(fake.url, "nope", gh.PRIVATE_DEFAULT)));
+
+      fs.mkdirSync(path.join(lroot, "bad-one"));
+      fs.cpSync(path.join(lroot, "sunny-days"), path.join(lroot, "bad-one"), { recursive: true });
+      fs.writeFileSync(path.join(lroot, "bad-one", "notes.txt"), "secret");
+      await assert.rejects(gh.themeFiles(path.join(lroot, "bad-one")), /can't be published: unexpected file notes.txt/);
+      fs.writeFileSync(path.join(lroot, "sunny-days", "preview.png"), require("./test/fakes").PNG);
+      const { files, json } = await gh.themeFiles(path.join(lroot, "sunny-days"));
+      assert.deepStrictEqual(Object.keys(files), gh.FILES);
+      const theme = { id: "sunny-days", files, version: json.version };
+
+      const pushed = await gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, ...theme });
+      assert.strictEqual(pushed.url, "https://github.com/PhaseN-Digital/phasen-themes-private/tree/main/themes/sunny-days");
+      const repoFiles = fake.files(gh.PRIVATE_DEFAULT);
+      assert.deepStrictEqual(Object.keys(repoFiles).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      assert(repoFiles["themes/sunny-days/preview.png"].equals(files["preview.png"]), "binary preview intact");
+      await assert.rejects(gh.pushTheme({ api: fake.url, token, target: "octo/readonly", ...theme }), /can't write to octo\/readonly/);
+      await assert.rejects(gh.pushTheme({ api: fake.url, token, target: "octo/missing", ...theme }), /Couldn't find octo\/missing/);
+
+      const pr = await gh.submitTheme({ api: fake.url, token, ...theme, label: json.label, about: json.about, wait: async () => {} });
+      assert.strictEqual(pr.url, "https://github.com/PhaseN-Digital/phasen-sitebuilder-themes/pull/1");
+      const [p] = fake.pulls;
+      assert(p.title === "Add theme: Sunny" && p.base === "main" && p.head.startsWith("octo:theme-sunny-days-1-0-1-") && p.body.startsWith(json.about), p);
+      assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
+      assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+      assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
+    } finally {
+      await fake.close();
+    }
   }
 
   // Update check (#37): version compare and installer pick.

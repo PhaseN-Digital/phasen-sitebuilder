@@ -221,6 +221,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # GitHub sign-in (#60): the OAuth App's client ID is public by design
+      # (device flow, no client secret), so it's a repository variable, written
+      # where lib/github.js reads it. Without one the app says sign-in isn't configured.
+      - name: GitHub sign-in config
+        env:
+          SITEBUILDER_GITHUB_CLIENT_ID: ${{ vars.SITEBUILDER_GITHUB_CLIENT_ID }}
+        run: |
+          [ -n "$SITEBUILDER_GITHUB_CLIENT_ID" ] || echo "::warning::SITEBUILDER_GITHUB_CLIENT_ID isn't set: GitHub sign-in will be off in these installers"
+          node -e 'require("fs").writeFileSync("lib/github-config.json", JSON.stringify({ clientId: process.env.SITEBUILDER_GITHUB_CLIENT_ID || "" }) + "\n")'
       # Signing switches on by itself once the secrets exist (see README).
       # A missing secret expands to "", which electron-builder doesn't treat as
       # unset (an empty CSC_LINK is still imported on macOS), so empty ones are

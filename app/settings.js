@@ -13,6 +13,47 @@ async function openSettings() {
 }
 $("#open-settings").addEventListener("click", openSettings);
 
+// GitHub sign-in (#60): device flow. main.js shows no browser itself; the
+// user copies the code and opens github.com from here while main polls.
+let ghFlow = null, ghError = "";
+function githubAccount() {
+  const g = settings.github;
+  if (g) return [
+    h("p", {}, `Signed in as ${g.login}${g.privateRepos ? ", including private repositories" : ""}.`),
+    h("p", { className: "hint" }, "Used to publish themes from Themes… and to read private theme sources. To revoke the app's access completely, also remove it in GitHub's ", link("Applications settings", "https://github.com/settings/applications"), "."),
+    h("button", { onclick: () => accountCall(null, "settings:disconnect", "github") }, "Sign out"),
+  ];
+  if (!settings.githubConfigured) return h("p", { className: "hint" }, "GitHub sign-in isn't configured in this copy of the app.");
+  if (ghFlow) return [
+    h("p", {}, "Enter this code on GitHub:"),
+    h("p", { className: "device-code" }, ghFlow.userCode),
+    h("div", { className: "inline" },
+      h("button", { className: "primary", onclick: () => { navigator.clipboard.writeText(ghFlow.userCode).catch(() => {}); call("open", ghFlow.verificationUri); } }, "Copy code and open GitHub"),
+      h("button", { onclick: () => { ghFlow = null; call("github:cancel"); renderSettings(); } }, "Cancel")),
+    h("p", { className: "hint", role: "status" }, "Waiting for you to approve the sign-in on GitHub…"),
+  ];
+  const priv = h("input", { type: "checkbox" });
+  return [
+    h("p", { className: "hint" }, "Sign in to publish your themes to GitHub, and to use private theme sources without an access token."),
+    h("label", { className: "field", style: "display:flex;gap:8px;align-items:center" }, priv, "Also allow private repositories"),
+    h("button", { className: "primary", onclick: () => githubSignIn(priv.checked) }, "Sign in with GitHub"),
+    h("p", { className: "error" }, ghError),
+  ];
+}
+async function githubSignIn(privateRepos) {
+  ghError = "";
+  let flow;
+  try {
+    flow = ghFlow = await call("github:start", privateRepos);
+    renderSettings();
+    settings = await call("github:finish");
+  } catch (e) {
+    if (!flow || ghFlow === flow) ghError = errorText(e); // not when the user cancelled
+  }
+  if (!flow || ghFlow === flow) ghFlow = null;
+  if ($("#settings-page")) renderSettings();
+}
+
 const LICENCES = [
   ["Electron", "MIT", "https://github.com/electron/electron/blob/main/LICENSE"],
   ["Quill", "BSD-3-Clause", "https://github.com/slab/quill/blob/main/LICENSE"],
@@ -47,7 +88,7 @@ function renderSettings() {
     h("h2", { className: "section-title" }, "Accounts"),
     step("Cloudflare (hosting)", Boolean(settings.cloudflare), cloudflareAccount()),
     step("Resend (sends your form emails)", settings.resend, resendAccount()),
-    step("GitHub", false, soon("Sign in with GitHub (coming)"), h("p", { className: "hint" }, "For private theme sources. Until then, add an access token with the repository below.")),
+    step("GitHub (publishing themes)", Boolean(settings.github), githubAccount()),
 
     h("h2", { className: "section-title" }, "Defaults for websites"),
     h("p", { className: "hint" }, "Every website uses these unless you override them for that website. Changing one here changes it for every website that hasn't."),
