@@ -4,14 +4,14 @@
 // "Your themes". Uses app.js's helpers (h, call, labelled, loadSites…).
 // Valid themes can be published to GitHub (#60, publishDialog).
 
-let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer, tbPicking = false;
+let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer, tbPicking = false, tbTpl = "header", tbTplInfo = null;
 
 async function openThemes() {
   await flushSave();
   site = null;
   tbEdit = null;
   loadSites();
-  [tbThemes, tbSites, settings] = await Promise.all([call("builder:list"), call("sites:list"), call("settings:get")]);
+  [tbThemes, tbSites, settings, tbTplInfo] = await Promise.all([call("builder:list"), call("sites:list"), call("settings:get"), call("builder:templates")]);
   renderThemes();
 }
 $("#open-themes").addEventListener("click", openThemes);
@@ -30,7 +30,7 @@ function renderThemes() {
       h("strong", {}, t.label || id),
       t.errors.length ? h("p", { className: "error" }, t.errors.join("; ")) : [
         h("div", { className: "swatches" }, Object.values(t.colors).map((c) => h("i", { style: `background:${c}` }))),
-        h("small", {}, t.about, t.version ? ` Version ${t.version}.` : "")],
+        h("small", {}, t.about, t.version ? ` Version ${t.version}.` : "", t.templates ? " Uses HTML templates." : "")],
       h("div", { className: "inline", style: "margin-top:8px;flex-wrap:wrap" },
         t.controls && h("button", { onclick: () => editTheme({ ...t.controls, id }) }, "Edit"),
         !t.errors.length && h("button", { onclick: () => publishDialog(id, t, "push") }, "Push to repo…"),
@@ -58,7 +58,7 @@ function previewThemeDraft(delay = 0) {
     try {
       const r = await call("builder:preview", tbEdit, tbOn || null);
       $("#tb-warnings").textContent = r.warnings.join(" ");
-      $("#tb-errors").textContent = r.errors.length ? `Advanced CSS can't be used: ${r.errors.join("; ")}` : "";
+      $("#tb-errors").textContent = r.errors.length ? `This theme can't be used until these are fixed: ${r.errors.join("; ")}` : "";
       if (!r.errors.length) $("#preview").src = `preview://${r.id}/?sb-theme&t=${Date.now()}`;
     } catch (e) {
       $("#tb-errors").textContent = errorText(e);
@@ -114,7 +114,8 @@ function renderThemeEditor() {
           h("summary", {}, "Advanced CSS"),
           labelled("", h("textarea", { id: "tb-css", style: "font-family:monospace;min-height:160px", value: c.css, spellcheck: false, oninput: changed((v) => { c.css = v; }) }),
             "Added after the controls above. Plain CSS only: no @import, scripts or HTML. Right-click an element in the preview (or use Pick element) to add or find its rule.")),
-        h("p", { className: "error", id: "tb-errors" }))),
+        templateEditor(changed),
+        h("p", { className: "error", id: "tb-errors", role: "alert" }))),
     h("section", { className: `preview${previewMobile ? " mobile" : ""}` },
       h("div", { className: "preview-bar" },
         h("span", {}, "Preview with"),
@@ -125,6 +126,34 @@ function renderThemeEditor() {
         h("button", { className: previewMobile ? "" : "primary", onclick: () => { previewMobile = false; renderThemes(); previewThemeDraft(); } }, "Desktop"),
         h("button", { className: previewMobile ? "primary" : "", onclick: () => { previewMobile = true; renderThemes(); previewThemeDraft(); } }, "Mobile")),
       h("div", { className: "preview-stage" }, h("iframe", { id: "preview", title: "Theme preview" }))));
+}
+
+// Advanced HTML (#200): one template at a time in a plain textarea with line
+// numbers (no editor library: offline, no dependency). Validated in main on
+// every preview and save (lib/theme-validate.js); errors show in #tb-errors.
+function templateEditor(changed) {
+  const { defaults, placeholders } = tbTplInfo;
+  const label = (name) => ({ header: "Header", footer: "Footer", section: "Section wrapper" })[name] || `Page layout: ${LAYOUTS.find((l) => `layout-${l.id}` === name)?.label}`;
+  const lines = h("pre", { "aria-hidden": "true",
+    style: "margin:0;padding:8px 6px;text-align:right;color:#94a3b8;user-select:none;overflow:hidden;font:13px/1.5 monospace;background:#f1f5f9;border-radius:6px 0 0 6px" });
+  const box = h("textarea", { id: "tb-html", wrap: "off", spellcheck: false, "aria-label": "Template HTML", value: tbEdit.templates[tbTpl] ?? defaults[tbTpl],
+    style: "flex:1;margin:0;min-height:220px;padding:8px;font:13px/1.5 monospace;white-space:pre;overflow:auto;border-radius:0 6px 6px 0;resize:vertical",
+    onscroll: () => { lines.scrollTop = box.scrollTop; },
+    oninput: changed((v) => { tbEdit.templates[tbTpl] = v; numberLines(); }) });
+  const numberLines = () => { lines.textContent = Array.from({ length: box.value.split("\n").length }, (_, i) => i + 1).join("\n"); lines.scrollTop = box.scrollTop; };
+  const insert = (p) => { box.focus(); box.setRangeText(`{{${p}}}`, box.selectionStart, box.selectionEnd, "end"); box.dispatchEvent(new Event("input")); };
+  const reopen = () => { renderThemes(); $("#tb-html").closest("details").open = true; };
+  numberLines();
+  return h("details", { className: "sources", open: Object.keys(tbEdit.templates).length > 0 },
+    h("summary", {}, "Advanced HTML"),
+    h("p", { className: "hint" }, "Change the HTML of the header, footer, each page layout and the wrapper around every section. Placeholders like {{site.name}} are filled in when the site is built; {{#if name}} … {{/if}} shows its contents only when that placeholder isn't empty. No scripts, forms, event handlers or external files; videos only from YouTube or Vimeo."),
+    labelled("Template", h("select", { onchange: (e) => { tbTpl = e.target.value; reopen(); } },
+      Object.keys(defaults).map((name) => h("option", { value: name, selected: name === tbTpl }, label(name) + (tbEdit.templates[name] !== undefined ? " (changed)" : ""))))),
+    h("div", { className: "inline", style: "flex-wrap:wrap;gap:4px;margin:4px 0 8px", role: "group", "aria-label": "Insert a placeholder" },
+      placeholders[tbTpl].map((p) => h("button", { type: "button", title: "Insert at the cursor", onclick: () => insert(p) }, h("code", {}, `{{${p}}}`)))),
+    h("div", { style: "display:flex;align-items:stretch" }, lines, box),
+    h("div", { className: "inline", style: "margin-top:8px" },
+      h("button", { type: "button", onclick: () => { delete tbEdit.templates[tbTpl]; reopen(); previewThemeDraft(); } }, "Reset to default template")));
 }
 
 // Right-click menu for the preview (#156). app/theme-builder-frame.js, injected

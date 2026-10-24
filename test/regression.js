@@ -62,9 +62,9 @@ async function driveApp(wp, el, updates, gh, plain, phase = "main") {
   checks.push(...appChecks); // already printed by drive.js
   // Theme publishing (#60): what the app sent to the fake GitHub.
   const only = (files) => Object.keys(files).filter((f) => f.startsWith("themes/regression-bikes-theme/"));
-  const ok = (list) => list.length >= 2 && list.every((f) => /\/(theme\.json|theme\.css|preview\.png)$/.test(f));
+  const ok = (list) => list.length >= 2 && list.every((f) => /\/(theme\.json|theme\.css|preview\.png|header\.html)$/.test(f));
   const pushed = only(gh.files("PhaseN-Digital/phasen-themes-private"));
-  check("theme push: only theme.json/theme.css/preview.png committed", ok(pushed) && pushed.includes("themes/regression-bikes-theme/theme.json"), pushed);
+  check("theme push: only the theme's own files committed (with its header template, #200)", ok(pushed) && pushed.includes("themes/regression-bikes-theme/theme.json") && pushed.includes("themes/regression-bikes-theme/header.html"), pushed);
   check("theme submit: PR titled with the theme name, only its files", gh.pulls.length === 1 && gh.pulls[0].title === "Add theme: Regression Bikes theme" && ok(only(gh.pulls[0].files)), gh.pulls.map((p) => [p.title, only(p.files)]));
   check("github sign-in: asked for private repos when ticked", gh.logins.at(-1)?.scope === "public_repo repo", gh.logins);
   if (closeEdit) {
@@ -251,6 +251,7 @@ async function workerChecks(sites) {
     const siteDir = siteDirOf(sites.created), localOut = path.join(OUT, "built", "local-theme");
     await build(JSON.parse(fs.readFileSync(path.join(siteDir, "site.json"), "utf8")), siteDir, localOut, { workerName: "local-theme" });
     check("build (made in app): with a Theme Builder theme", fs.readFileSync(path.join(localOut, "public", "styles.css"), "utf8").includes("/* theme-builder "));
+    check("build (made in app): with its header template (#200)", fs.readFileSync(path.join(localOut, "public", "index.html"), "utf8").includes('<p class="tb-tagline">Hand-made at Regression Bikes</p>'));
     const s = await serve("created", sites.created, { analyticsId: "G-REGRESSION1", ...(await sourceTheme(sites.created)) });
     try {
       const home = await get(s.base, "/");

@@ -212,13 +212,19 @@ are not, so add them yourself.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
+  HTML templates (#200, `lib/templates.js`): never add expressions, loops or
+  raw output to the engine; new markup goes in as an app-built `{ html }`
+  placeholder listed in `TEMPLATES` in `lib/theme-validate.js`. Widening
+  that file's allowlists is a security change: add a rejecting test for
+  anything it still forbids. `templates.DEFAULTS` must keep building the
+  same markup as before (test.js and the regression suite check it).
   The preview's right-click menu (#156, `app/theme-builder-frame.js`) may
   only offer selectors built from its `STABLE` classes, which test.js
   requires to equal the classes `lib/build.js` generates: when you add or
   rename a class in `renderPage`/`renderSection`, update `STABLE` too.
-- GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
-  and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
-  be sent (`themeFiles`). The sign-in token stays in the main process
+- GitHub publishing (#60, `lib/github.js`): only the files of a theme that
+  passes `lib/theme-validate.js` (so only the names it allows) may ever be
+  sent (`themeFiles`). The sign-in token stays in the main process
   (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is

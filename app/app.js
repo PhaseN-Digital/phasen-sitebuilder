@@ -260,7 +260,7 @@ function themeButton(t, active, choose) {
     t.preview && h("img", { className: "theme-preview", src: t.preview, alt: "" }),
     h("strong", {}, t.label),
     h("div", { className: "swatches" }, Object.values(t.colors).map((c) => h("i", { style: `background:${c}` }))),
-    h("small", {}, t.about));
+    h("small", {}, t.about, t.templates ? " Uses HTML templates." : ""));
 }
 
 // Themes from theme sources (#58, main.js listSources). Choosing one copies it

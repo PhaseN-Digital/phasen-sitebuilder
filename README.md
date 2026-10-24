@@ -111,9 +111,11 @@ checks the whole app end to end with no accounts, against fake sites in
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
   a site's design, contrast hint, preview on that site, right-click the hero
   heading to add a rule and again to select it, edit it and see the preview
-  change, Pick element + Enter, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
+  change, Pick element + Enter, an Advanced HTML header template refused with
+  a script, reset, then edited with a placeholder and seen in the preview and
+  the site's build, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
   publishing that theme (push to PhaseN's private themes repo, PR to the
-  public one; the suite checks only the theme's three files arrived) (theme sources point at a fake
+  public one; the suite checks only the theme's own files arrived, header template included) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
@@ -253,6 +255,21 @@ published always-pass test secret, so that one step needs internet access.
   repo for its CI, so **keep the two copies in sync**: change both together
   (`cp lib/theme-validate.js ../phasen-sitebuilder-themes/scripts/theme-validate.js`,
   then a PR there; it inlines `LAYOUT_IDS`, so it needs no other file).
+  A package may also carry HTML templates (#200): `header.html`,
+  `footer.html`, `section.html` (wraps every section) and `layout-<id>.html`
+  (the inside of `<main>` for that layout). `lib/templates.js` renders them:
+  `{{name}}` placeholders (escaped, except the app-built `{{brand}}`,
+  `{{menu}}`, `{{content}}`, `{{footer.links}}`) and `{{#if name}} … {{/if}}`,
+  nothing else; its `DEFAULTS` reproduce the built-in markup, so a theme
+  without templates builds exactly as before. `validateTemplate` in
+  `lib/theme-validate.js` is an allowlist (elements, attributes, URL schemes,
+  placeholders per template; no scripts, styles, event handlers,
+  javascript:/data: URLs, forms, external resources except https images
+  from `IMAGE_HOSTS`, iframes only for YouTube-nocookie/Vimeo), and
+  `{{menu}}`, `{{content}}` and `{{footer.links}}` are required. It runs on
+  install, on save in the Theme Builder and at every build; a build falls
+  back to the built-in templates if any fail (`console.warn` only for now, #225).
+  The Design tab and Theme Builder label themes that use templates.
 - Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
   (Cloudflare, Resend, GitHub), defaults for every website
   (form-message email, business name, message retention days and wording,
@@ -321,6 +338,11 @@ published always-pass test secret, so that one step needs internet access.
   checked against built output by test.js); rules are found and added by
   `cssRule` in `lib/theme-builder.js`, which splits top-level rules
   properly (comments, strings, `@media` blocks).
+  "Advanced HTML" edits the theme's templates (#200): pick a template, edit it
+  in a monospace textarea with line numbers (no highlighting yet, #226),
+  insert placeholders from the palette, or "Reset to default template".
+  Only templates that differ from the defaults are saved, as `<name>.html`.
+  The sample preview has a page per main layout (home, standard, services, contact).
   Each valid theme in the list can be published to GitHub (#60):
 - GitHub sign-in and theme publishing (`lib/github.js`, Settings › Accounts,
   Themes… › "Push to repo…"/"Submit to public repo…", #60). Sign-in is the
@@ -329,8 +351,8 @@ published always-pass test secret, so that one step needs internet access.
   "Also allow private repositories" is ticked. The token is app-wide,
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
-  `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
-  `preview.png`, as one commit through the git data API. "Push to repo"
+  `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -757,6 +779,11 @@ site's local files until taking it offline has fully worked.
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
+- HTML templates (#200): the editor has no syntax highlighting (#226); a
+  build that falls back to the built-in templates only logs why (#225); the
+  public themes repo's CI rejects template files until its vendored
+  validator is re-synced (#224). External images in templates are allowed
+  only from images.unsplash.com (`IMAGE_HOSTS`).
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
   repo. Sources are only downloaded when first listed, on "Refresh" and on
