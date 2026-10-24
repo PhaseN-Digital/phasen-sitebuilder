@@ -122,7 +122,7 @@ app.on("browser-window-created", (_e, win) => {
       check("docs: sidebar button and About link open the docs (#165)", await waitFor(() => opened.filter((u) => u === DOCS).length === 2), opened);
       check("settings: theme sources, updates, data and about sections", await run(`["Theme sources", "Check now", "Open data folder", "Find sites", "Turn on portable secrets", "Wrangler"].every((t) => document.querySelector("#settings-page").textContent.includes(t))`));
 
-      await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector('#site-list [data-id="${id}"]').click()`);
       await siteOpened(`site?.id === ${JSON.stringify(id)}`);
       await run(`tab = "publish"; renderEditor(); 0`);
       const owner = `.overridable[data-key="owner"]`;
@@ -230,7 +230,7 @@ app.on("browser-window-created", (_e, win) => {
       const png = fs.existsSync(path.join(dir, "preview.png")) && fs.readFileSync(path.join(dir, "preview.png"));
       if (png) check("theme builder: preview.png is 640x400", png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 400);
       else console.log("preview.png not captured (capturePage unavailable here, #87)");
-      await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector('#site-list [data-id="${id}"]').click()`);
       await siteOpened(`site?.id === ${JSON.stringify(id)}`);
       await run(`tab = "design"; renderEditor(); 0`);
       const btn = await waitFor(() => run(`[...document.querySelectorAll("button.theme")].some((b) => b.querySelector("strong").textContent === "Regression Bikes theme")`));
@@ -289,7 +289,7 @@ app.on("browser-window-created", (_e, win) => {
       const { created, wordpress, mirror } = result.sites;
       const editButton = (text) => `{ const i = ${fieldInput("Button text")}; i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); }`;
       const leave = { "switching site": `openSite(${JSON.stringify(wordpress)})`, "opening Settings": "openSettings()", "opening Themes": "openThemes()",
-        "opening Import": `document.querySelector("#import-wp").click()` };
+        "opening Import": `document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()` };
       for (const [way, js] of Object.entries(leave)) {
         await run(`openSite(${JSON.stringify(created)})`);
         await run(`tab = "pages"; pageId = site.pages[0].id; renderEditor(); ${editButton(`Book now, then ${way}`)} ${js}`);
@@ -438,7 +438,7 @@ app.on("browser-window-created", (_e, win) => {
 
     // ---------- 1. a site made in the app ----------
     async function createSite() {
-      await run(`document.querySelector("#new-site input").value = "Regression Bikes"; document.querySelector("#new-site").requestSubmit()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector("#new-site input").value = "Regression Bikes"; document.querySelector("#new-site").requestSubmit()`);
       const id = await siteOpened(`site?.name === "Regression Bikes"`);
       check("create site: editor opens", id, "no site after submitting the new-site form");
       result.sites.created = id;
@@ -570,7 +570,7 @@ app.on("browser-window-created", (_e, win) => {
     async function wordpressImport() {
       // The declaring user's name and email (#141): recorded in site.json, never published.
       fs.writeFileSync(path.join(SITES, ".phasen", "settings.json"), JSON.stringify({ name: "Jo Declarer", email: "jo.declarer@example.org" }));
-      await run(`document.querySelector("#import-wp").click()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       check("import: renamed for any website", await run(`document.querySelector("#import-wp").textContent === "Import a website…" && document.querySelector(".import h1").textContent === "Import a website"`));
       const before = siteDirs().length;
@@ -630,7 +630,7 @@ app.on("browser-window-created", (_e, win) => {
 
     // ---------- 2b. editable import of an Elementor site: kit colours/font, site-logo widget ----------
     async function elementorEditable() {
-      await run(`document.querySelector("#import-wp").click()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.querySelector('[value="editable"]').checked = true; f.requestSubmit() }`);
       await declare();
@@ -672,7 +672,7 @@ app.on("browser-window-created", (_e, win) => {
     // ---------- editable import of any website (#161): review, adjust one page, import ----------
     async function anyEditable() {
       const start = async (url, mode) => {
-        await run(`document.querySelector("#import-wp").click()`);
+        await run(`document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()`);
         await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
         await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(url)}; f.querySelector('[value="${mode}"]').checked = true; f.requestSubmit() }`);
         await declare();
@@ -727,7 +727,7 @@ app.on("browser-window-created", (_e, win) => {
 
     // ---------- 3. exact copy of an Elementor site ----------
     async function exactCopy() {
-      await run(`document.querySelector("#import-wp").click()`);
+      await run(`document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()`);
       await waitFor(() => run(`Boolean(document.querySelector("form.import"))`));
       await run(`{ const f = document.querySelector("form.import"); f.url.value = ${JSON.stringify(SB_EL)}; f.requestSubmit() }`); // "auto" picks exact for Elementor
       await declare();

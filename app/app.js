@@ -2,10 +2,13 @@
 // (so typing never loses focus), structural changes call renderTab().
 const { call, onPublishLog, onImportLog } = window.cms;
 
-let THEMES, site, publishedUrl, canUnpublish, paths = {}, settings, siteAccounts = {};
-let tab = "design", pageId = null, formId = null, previewMobile = false, publishing = false, publishLog = "";
+let THEMES, site, publishedUrl, publishedAt, canUnpublish, paths = {}, settings, siteAccounts = {};
+let tab = "dashboard", pageId = null, formId = null, previewMobile = false, publishing = false, publishLog = "";
 const $ = (sel) => document.querySelector(sel);
 const rid = () => Math.random().toString(16).slice(2, 10);
+// Per-computer UI memory (#185: menu state, recent sites, last section, seen messages). Never site data.
+const recall = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+const remember = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 const errorText = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 
 function h(tag, props = {}, ...kids) {
@@ -127,7 +130,8 @@ function flushSave() {
         paths = saved;
         $(".save-state").textContent = "All changes saved";
         refreshPreview();
-        document.querySelector(`#site-list [data-id="${s.id}"]`).textContent = s.name || "Untitled";
+        const listed = SITES.find((x) => x.id === s.id);
+        if (listed) { listed.name = s.name; renderSwitcher(); }
       } catch (e) {
         if (site === s) $(".save-state").textContent = `Not saved: ${errorText(e)}`;
       }
@@ -142,26 +146,83 @@ function refreshPreview() {
   if (frame) frame.src = `preview://${site.id}${paths[pageId] || "/"}?t=${Date.now()}${editingCopy ? "&sb-edit" : ""}`;
 }
 
-// ---------- sites ----------
-async function loadSites(activeId) {
-  const sites = await call("sites:list");
-  $("#site-list").replaceChildren(
-    ...sites.map((s) => h("button", { className: s.id === activeId ? "active" : "", "data-id": s.id, onclick: () => openSite(s.id) }, s.name || "Untitled"))
-  );
+// ---------- sites and the top bar's site switcher (#185) ----------
+let SITES = [];
+async function loadSites() {
+  SITES = await call("sites:list");
+  renderSwitcher();
+  renderSideMenu();
 }
+
+// Up/Down/Home/End move focus between a menu's items.
+function arrowKeys(container, selector) {
+  container.addEventListener("keydown", (e) => {
+    const items = [...container.querySelectorAll(selector)].filter((b) => !b.disabled);
+    const i = items.indexOf(document.activeElement);
+    const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+    if (i < 0 || to === undefined) return;
+    e.preventDefault();
+    items[(to + items.length) % items.length].focus();
+  });
+}
+
+const switcherPanel = $("#switcher-panel"), siteSearch = $("#site-search");
+function renderSwitcher() {
+  $("#switcher-label").textContent = site ? site.name || "Untitled" : "Choose a website";
+  const q = siteSearch.value.trim().toLowerCase();
+  const item = (s) => h("button", { className: s.id === site?.id ? "active" : "", ariaCurrent: s.id === site?.id ? "page" : null, "data-id": s.id, onclick: () => openSite(s.id) }, s.name || "Untitled");
+  const recent = recall("sb-recent", []).map((id) => SITES.find((s) => s.id === id)).filter(Boolean).slice(0, 5);
+  $("#recent-sites").replaceChildren(...(!q && SITES.length > 6 && recent.length ? [h("h2", {}, "Recent"), ...recent.map(item)] : []));
+  const found = SITES.filter((s) => (s.name || "Untitled").toLowerCase().includes(q));
+  $("#site-list").replaceChildren(...(found.length ? found.map(item) : [h("p", { className: "hint" }, SITES.length ? "No websites match." : "No websites yet.")]));
+}
+function toggleSwitcher(open = switcherPanel.hidden) {
+  if (open === !switcherPanel.hidden) return;
+  switcherPanel.hidden = !open;
+  $("#site-switcher").ariaExpanded = String(open);
+  if (!open) return;
+  siteSearch.value = "";
+  renderSwitcher();
+  siteSearch.focus();
+}
+$("#site-switcher").addEventListener("click", () => toggleSwitcher());
+switcherPanel.addEventListener("keydown", (e) => { if (e.key === "Escape") { toggleSwitcher(false); $("#site-switcher").focus(); } });
+document.addEventListener("click", (e) => { if (!e.target.closest(".switcher")) toggleSwitcher(false); });
+$(".switcher").addEventListener("focusout", (e) => { if (e.relatedTarget && !e.relatedTarget.closest(".switcher")) toggleSwitcher(false); });
+siteSearch.addEventListener("input", renderSwitcher);
+siteSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("#site-list button")?.click();
+  if (e.key === "ArrowDown") { e.preventDefault(); switcherPanel.querySelector("#recent-sites button, #site-list button")?.focus(); }
+});
+arrowKeys(switcherPanel, "#recent-sites button, #site-list button");
 
 async function openSite(id) {
   await flushSave();
+  toggleSwitcher(false);
   publishLog = "";
   overriding = {};
-  ({ site, url: publishedUrl, canUnpublish, accounts: siteAccounts } = await call("sites:get", id));
+  ({ site, url: publishedUrl, publishedAt, canUnpublish, accounts: siteAccounts } = await call("sites:get", id));
   pageId = site.pages[0].id;
   formId = site.forms[0]?.id;
+  const last = recall("sb-sections", {})[id];
+  tab = SECTIONS.some((s) => s.id === last) ? last : "dashboard";
+  remember("sb-recent", [id, ...recall("sb-recent", []).filter((x) => x !== id)].slice(0, 10));
+  unread = null;
+  if (publishedUrl) countUnread(id);
   paths = await call("sites:save", site);
   THEMES = await call("themes"); // the build registers a theme source's font
-  await loadSites(id);
+  await loadSites();
   renderEditor();
   askDeclaration(); // imported before #141 (app/wordpress.js)
+}
+
+// Leaving the current website for an app-wide screen (Settings, Themes, Import): button is its top bar entry.
+async function leaveSite(button) {
+  await flushSave();
+  site = null;
+  toggleSwitcher(false);
+  for (const b of document.querySelectorAll(".app-nav button")) b.ariaCurrent = b === button ? "page" : null;
+  loadSites();
 }
 
 $("#new-site").addEventListener("submit", async (e) => {
@@ -172,23 +233,72 @@ $("#new-site").addEventListener("submit", async (e) => {
   await openSite(created.id);
 });
 
-// ---------- layout ----------
+// ---------- layout: the current website's menu (#185) ----------
+// WordPress-style and data-driven: a new screen is one entry here (render returns the panel's content).
+const SECTIONS = [
+  { id: "dashboard", label: "Dashboard", icon: "⌂", render: dashboardTab },
+  { id: "pages", label: "Pages", icon: "▤", render: pagesTab },
+  { id: "design", label: "Design", icon: "◐", render: designTab },
+  { id: "forms", label: "Forms", icon: "☑", render: formsTab },
+  { id: "inbox", label: "Inbox", icon: "✉", render: inboxTab, count: () => unread },
+  { id: "seo", label: "SEO", icon: "⌕", render: seoTab },
+  { id: "publish", label: "Publish", icon: "⇪", render: publishTab },
+  { id: "history", label: "History", icon: "↺", render: historyTab },
+  { id: "site-settings", label: "Site settings", icon: "⚙", render: siteSettingsTab },
+];
+let menuCollapsed = recall("sb-menu-collapsed", innerWidth < 1100), previewHidden = recall("sb-preview-hidden", false);
+const menu = $("#side-menu");
+arrowKeys(menu, "button");
+
+function renderSideMenu() {
+  menu.hidden = !site;
+  if (!site) return;
+  const focused = document.activeElement?.dataset?.section;
+  menu.classList.toggle("collapsed", menuCollapsed);
+  menu.replaceChildren(
+    h("ul", {}, SECTIONS.map((s) => {
+      const n = s.count?.();
+      return h("li", {}, h("button", { "data-section": s.id, ariaCurrent: tab === s.id ? "page" : null, title: menuCollapsed ? s.label : "", onclick: () => showSection(s.id) },
+        h("span", { className: "icon", ariaHidden: "true" }, s.icon), h("span", { className: "label" }, s.label),
+        n > 0 && h("span", { className: "count" }, String(n), h("span", { className: "sr" }, " unread"))));
+    })),
+    h("button", { className: "collapse", "data-section": "collapse", ariaExpanded: String(!menuCollapsed), title: menuCollapsed ? "Expand menu" : "", onclick: () => {
+      menuCollapsed = !menuCollapsed;
+      remember("sb-menu-collapsed", menuCollapsed);
+      renderSideMenu();
+    } }, h("span", { className: "icon", ariaHidden: "true" }, menuCollapsed ? "»" : "«"), h("span", { className: "label" }, "Collapse menu")));
+  if (focused) menu.querySelector(`[data-section="${focused}"]`)?.focus();
+}
+
+function showSection(id) {
+  tab = id;
+  selectedCopyImage = null;
+  remember("sb-sections", { ...recall("sb-sections", {}), [site.id]: id });
+  renderEditor();
+}
+
 function renderEditor() {
-  const tabs = [["design", "Design"], ["pages", "Pages"], ["forms", "Forms"], ["inbox", "Inbox"], ["publish", "Publish"], ["history", "History"]];
+  for (const b of document.querySelectorAll(".app-nav button")) b.ariaCurrent = null;
+  const section = SECTIONS.find((s) => s.id === tab);
   $("#main").replaceChildren(
-    h("section", { className: "editor-panel" },
+    h("section", { className: `editor-panel${previewHidden ? " wide" : ""}`, ariaLabel: section.label },
       h("header", { className: "panel-head" },
-        h("div", { className: "row" }, h("h1", {}, site.name), h("span", { className: "save-state" }, "All changes saved")),
-        h("div", { className: "tabs" }, tabs.map(([id, label]) =>
-          h("button", { className: tab === id ? "active" : "", onclick: () => { tab = id; selectedCopyImage = null; renderEditor(); } }, label)))),
+        h("div", { className: "row" }, h("h1", {}, section.label), h("span", { className: "save-state" }, "All changes saved"),
+          h("button", { className: "preview-toggle", "aria-controls": "preview-section", ariaExpanded: String(!previewHidden), onclick: () => {
+            previewHidden = !previewHidden;
+            remember("sb-preview-hidden", previewHidden);
+            renderEditor();
+            $(".preview-toggle").focus();
+          } }, previewHidden ? "Show preview" : "Hide preview"))),
       h("div", { className: "panel-body", id: "tab" })),
-    h("section", { className: `preview${previewMobile ? " mobile" : ""}` },
+    h("section", { id: "preview-section", className: `preview${previewMobile ? " mobile" : ""}`, hidden: previewHidden, ariaLabel: "Preview" },
       h("div", { className: "preview-bar" },
         h("span", {}, "Preview (forms send once published)"),
-        h("button", { className: previewMobile ? "" : "primary", onclick: () => { previewMobile = false; renderEditor(); } }, "Desktop"),
-        h("button", { className: previewMobile ? "primary" : "", onclick: () => { previewMobile = true; renderEditor(); } }, "Mobile")),
+        h("button", { className: previewMobile ? "" : "primary", ariaPressed: String(!previewMobile), onclick: () => { previewMobile = false; renderEditor(); } }, "Desktop"),
+        h("button", { className: previewMobile ? "primary" : "", ariaPressed: String(previewMobile), onclick: () => { previewMobile = true; renderEditor(); } }, "Mobile")),
       h("div", { className: "preview-stage" }, h("iframe", { id: "preview", title: "Website preview" })))
   );
+  renderSideMenu();
   renderTab();
   refreshPreview();
 }
@@ -197,9 +307,62 @@ function renderTab() {
   if (!site) return $("#settings-page") && renderSettings(); // theme sources and accounts on the Settings page
   const body = $("#tab");
   const scroll = body.scrollTop;
-  const content = { design: designTab, pages: pagesTab, forms: formsTab, inbox: inboxTab, publish: publishTab, history: historyTab }[tab]();
+  const content = SECTIONS.find((s) => s.id === tab).render();
   body.replaceChildren(...content.flat(Infinity).filter((k) => k != null && k !== false));
   body.scrollTop = scroll;
+}
+
+// ---------- Dashboard (#185) ----------
+// Unread = messages newer than the newest one shown in the Inbox on this computer (there's no read flag in D1).
+let unread = null;
+const seenMessages = () => recall("sb-inbox-seen", {});
+function countUnread(id) {
+  call("inbox:list", id).then((rows) => {
+    if (site?.id !== id) return;
+    unread = (rows || []).filter((m) => m.id > (seenMessages()[id] || 0)).length;
+    renderSideMenu();
+    if (tab === "dashboard" && $("#tab")) renderTab();
+  }).catch(() => {}); // the Inbox itself shows the error
+}
+
+function dashboardTab() {
+  const when = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return [
+    h("dl", { className: "dash" },
+      h("dt", {}, "Live address"), h("dd", {}, publishedUrl ? link(publishedUrl, publishedUrl) : "Not published yet"),
+      h("dt", {}, "Last published"), h("dd", {}, publishedAt ? when(publishedAt) : publishedUrl ? "Unknown" : "Never"),
+      h("dt", {}, "Unread messages"), h("dd", {}, !publishedUrl ? "Your inbox starts once the website is published."
+        : unread == null ? "Checking…" : h("button", { className: "linkish", onclick: () => showSection("inbox") }, unread ? `${unread} unread` : "None, open the Inbox"))),
+    h("h3", { className: "section-title" }, "Quick actions"),
+    h("div", { className: "adders" },
+      [["pages", "Edit pages"], ["design", "Change the design"], ["publish", publishedUrl ? "Publish changes" : "Publish website"]].map(([id, label]) => h("button", { onclick: () => showSection(id) }, label)),
+      publishedUrl && h("button", { onclick: () => call("open", publishedUrl) }, "Open the live website")),
+  ];
+}
+
+// ---------- SEO (#74): search and sharing for each page ----------
+function seoTab() {
+  const page = site.pages.find((p) => p.id === pageId) || site.pages[0];
+  return [
+    h("div", { className: "chips" }, site.pages.map((p) => h("button", { className: p === page ? "active" : "", ariaPressed: String(p === page), onclick: () => { pageId = p.id; renderTab(); refreshPreview(); } }, p.title || "Untitled"))),
+    seoCard(page, site.pages.indexOf(page)),
+  ];
+}
+
+// ---------- Site settings (#134): everything this website can override, in one place ----------
+// The same fields also sit where they're used (Design, Inbox, Publish).
+function siteSettingsTab() {
+  return [
+    h("p", { className: "hint" }, "Settings for this website only. Anything left on the app default follows ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); openSettings(); } }, "Settings"), "."),
+    h("h3", { className: "section-title" }, "Cloudflare (hosting)"), siteAccount("cloudflare"),
+    h("h3", { className: "section-title" }, "Resend (form emails)"), siteAccount("resend"),
+    h("h3", { className: "section-title" }, "Defaults"),
+    overridable("Send form messages to", "email", "", { type: "email", placeholder: "you@example.com" }),
+    overridable("Business or legal name", "owner", "Shown on the privacy page.", { placeholder: site.name }),
+    overridable("How long you keep messages", "retention", "Shown on the privacy page.", {}, "textarea"),
+    overridable("Delete messages after (days)", "inboxDays", "", { type: "number", min: 1 }),
+    overridable("Google Analytics measurement ID (optional)", "analyticsId", "", { placeholder: "G-XXXXXXXXXX" }),
+  ];
 }
 
 // ---------- Design ----------
@@ -378,7 +541,7 @@ function sectionEditor(s) {
       return [richTextEditor(s), check("Show as cards: each small heading (Heading 3) starts a new card", s, "cards")];
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
-        h("p", { className: "hint" }, "Edit the form's questions in the Forms tab.")];
+        h("p", { className: "hint" }, "Edit the form's questions under Forms.")];
   }
 }
 
@@ -638,7 +801,7 @@ function pagesTab() {
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
     page.layout === "blog-post" && postCard(page),
     page.layout === "blog-index" && h("p", { className: "hint" }, "Your blog posts (pages with the Blog post layout) are listed on this page automatically, newest first, ten to a page. Sections added here appear above the list."),
-    seoCard(page, index),
+    h("p", { className: "hint" }, "Search and sharing settings for this page are under SEO."),
     h("h3", { className: "section-title" }, "Sections on this page"),
     page.sections.map((s, i) =>
       h("div", { className: "card" },
@@ -693,7 +856,7 @@ function seoCard(page, index) {
   return h("div", { className: "card" },
     h("strong", {}, "Search and sharing"),
     text("Title in search results", page, "seoTitle", "Leave blank to use the page name and website name.", { placeholder: fallbackTitle }),
-    area("Description in search results", page, "seoDescription", "Leave blank to use the website's short description (Design tab)."),
+    area("Description in search results", page, "seoDescription", "Leave blank to use the website's short description (Design)."),
     h("div", { className: "field" },
       h("span", {}, "Image when shared on social media"),
       h("div", { className: "chips" },
@@ -721,7 +884,7 @@ function formsTab() {
   const used = [...(form.shownOn || []), ...site.pages.filter((p) => p.sections.some((s) => s.type === "form" && s.formId === form.id)).map((p) => p.title)];
   return [
     chips,
-    h("p", { className: "hint" }, used.length ? `Shown on: ${used.join(", ")}` : "Not on any page yet. Add a Form section in the Pages tab to show it."),
+    h("p", { className: "hint" }, used.length ? `Shown on: ${used.join(", ")}` : "Not on any page yet. Add a Form section under Pages to show it."),
     text("Form name", form, "name", "Used in the email subject so you know which form was filled in."),
     text("Send messages to", form, "to", "Leave blank to use the address in Publish › Form messages.", { type: "email", placeholder: effective("email") || "you@example.com" }),
     text("Thank-you message", form, "success"),
@@ -759,6 +922,9 @@ function inboxTab() {
   call("inbox:list", site.id).then((rows) => {
     if (!rows) return list.replaceChildren(h("p", {}, "Your inbox starts once the website is published. Every message sent through your forms is kept here as well as emailed to you."));
     exportBtn.disabled = !rows.length;
+    if (rows.length) remember("sb-inbox-seen", { ...seenMessages(), [site.id]: Math.max(...rows.map((m) => m.id)) });
+    unread = 0;
+    renderSideMenu();
     list.replaceChildren(...(rows.length ? rows.map((m) => {
       const fields = JSON.parse(m.fields);
       const item = h("details", { className: "message" },
@@ -893,7 +1059,7 @@ function siteAccount(which) {
   ];
 }
 
-const link = (label, url) => h("a", { onclick: () => call("open", url) }, label);
+const link = (label, url) => h("a", { href: url, onclick: (e) => { e.preventDefault(); call("open", url); } }, label);
 const DOCS_URL = "https://sitebuilder.phasen.digital/docs"; // #165: the one place the docs address lives
 $("#open-docs").addEventListener("click", () => call("open", DOCS_URL));
 
@@ -932,7 +1098,7 @@ function publishTab() {
     try { await fn(); } catch (e) { ok = false; status.textContent = errorText(e); btn.disabled = false; }
     publishing = false;
     if (!site) return; // deleted
-    ({ url: publishedUrl, canUnpublish } = await call("sites:get", site.id));
+    ({ url: publishedUrl, publishedAt, canUnpublish } = await call("sites:get", site.id));
     if (ok) renderTab();
   };
   // Imported sites (#141): told about the provenance marker; ones imported before it must declare ownership first.
@@ -1021,7 +1187,7 @@ async function checkForUpdate() {
 function showUpdate(u) {
   if (!u?.newer || u.version === dismissedUpdate) return;
   $("#update-banner")?.remove();
-  $(".sidebar").append(h("div", { id: "update-banner", className: "update-banner", role: "status" },
+  $(".topbar").append(h("div", { id: "update-banner", className: "update-banner", role: "status" },
     h("span", {}, `Version ${u.version} is available`),
     h("div", { className: "inline" },
       h("button", { className: "primary", onclick: () => call("open", u.url) }, "Download"),
@@ -1041,7 +1207,7 @@ setInterval(checkForUpdate, 6 * 3600e3);
 function showNotice(n) {
   const text = [n?.moved, n?.locked ? "Your saved passwords and keys are protected with a passphrase. Enter it in Settings › Data to unlock them." : n?.secrets].filter(Boolean);
   if (!text.length) return;
-  $(".sidebar").append(h("div", { id: "notice-banner", className: "update-banner", role: "status" },
+  $("#notices").append(h("div", { id: "notice-banner", className: "update-banner", role: "status" },
     ...text.map((t) => h("span", {}, t)),
     h("div", { className: "inline" },
       (n.locked || n.secrets) && h("button", { className: "primary", onclick: async () => { await openSettings(); $("#data-status")?.scrollIntoView(); } }, "Open Settings"),

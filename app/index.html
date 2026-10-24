@@ -8,25 +8,40 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<aside class="sidebar">
+<!-- App shell (#185): top bar (site switcher, app-wide screens), the current site's menu (app.js SECTIONS), main area. -->
+<header class="topbar">
   <div class="brand"><img src="logo-wide.png" alt="PhaseN Digital"><span>Site Builder</span></div>
-  <h2>Your websites</h2>
-  <nav id="site-list"></nav>
-  <form id="new-site" class="new-site">
-    <input name="name" placeholder="New website name" required>
-    <button class="primary">Create website</button>
-  </form>
-  <button id="import-wp" class="import-button">Import a website…</button>
-  <button id="open-themes" class="import-button">Themes…</button>
-  <button id="open-settings" class="import-button">Settings</button>
-  <button id="open-docs" class="import-button">Documentation</button>
-</aside>
-<main id="main">
-  <div class="welcome">
-    <h1>Welcome</h1>
-    <p>Create a website on the left to get started. You can change everything later.</p>
+  <div class="switcher">
+    <button id="site-switcher" aria-haspopup="true" aria-expanded="false" aria-controls="switcher-panel"><span id="switcher-label">Choose a website</span> <span aria-hidden="true">▾</span></button>
+    <div id="switcher-panel" class="switcher-panel" role="dialog" aria-label="Websites" hidden>
+      <input id="site-search" type="search" placeholder="Find a website" aria-label="Find a website" autocomplete="off">
+      <div id="recent-sites"></div>
+      <h2 id="all-sites-title">All websites</h2>
+      <nav id="site-list" aria-labelledby="all-sites-title"></nav>
+      <form id="new-site" class="new-site">
+        <input name="name" placeholder="New website name" aria-label="New website name" required>
+        <button class="primary">Create website</button>
+      </form>
+      <button id="import-wp">Import a website…</button>
+      <button disabled title="Coming soon (#164)">Archive (coming soon)</button>
+    </div>
   </div>
-</main>
+  <nav class="app-nav" aria-label="App">
+    <button id="open-themes">Themes…</button>
+    <button id="open-settings">Settings</button>
+    <button id="open-docs">Documentation</button>
+  </nav>
+</header>
+<div id="notices" class="notices"></div>
+<div class="shell">
+  <nav id="side-menu" class="side-menu" aria-label="Website" hidden></nav>
+  <main id="main">
+    <div class="welcome">
+      <h1>Welcome</h1>
+      <p>Choose or create a website from the menu at the top left to get started. You can change everything later.</p>
+    </div>
+  </main>
+</div>
 <script src="../node_modules/quill/dist/quill.js"></script>
 <script src="../node_modules/@mozilla/readability/Readability.js"></script>
 <script src="../lib/layouts.js"></script>

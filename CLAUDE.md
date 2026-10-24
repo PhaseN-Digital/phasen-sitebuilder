@@ -306,6 +306,12 @@ are not, so add them yourself.
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
+- App layout (#185): a website's screens are entries in `SECTIONS` in
+  `app/app.js` (the left menu is built from it); add new ones there. App-wide
+  screens (Settings, Themes, Import, and any new one) are entered through
+  `leaveSite()`, which does the `flushSave()` above, clears `site` and marks
+  the top bar entry `aria-current`. `localStorage` holds only per-computer UI
+  memory (`recall`/`remember`), never site data or secrets.
 - Rich text is Quill 2 (`richTextEditor` in `app/app.js`), loaded from
   `node_modules/quill/dist` by `app/index.html`. Everything it saves goes
   through the same sanitizer, so a new Quill format needs a matching

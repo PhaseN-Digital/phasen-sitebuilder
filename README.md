@@ -76,7 +76,7 @@ use `scripts/check-commit.js`.
   that repo only). The app fetches
   `releases/latest/download/latest.json` from it at startup, at most once a
   day (`updateCheck` in settings.json), and if that version is newer shows a
-  dismissible "Version X is available" banner in the sidebar whose Download
+  dismissible "Version X is available" notice in the top bar whose Download
   button opens the installer for this platform in the browser (only https
   github.com URLs). Offline or any error, it stays silent and tries again
   next time. `SITEBUILDER_UPDATE_URL` overrides the URL in unpackaged runs
@@ -251,7 +251,23 @@ published always-pass test secret, so that one step needs internet access.
   themes`); an identical copy is vendored into the public
   [phasen-sitebuilder-themes](https://github.com/PhaseN-Digital/phasen-sitebuilder-themes)
   repo for its CI, so **keep the two copies in sync**: change both together.
-- Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
+- App layout (#185, `app/index.html`, `app/app.js`): a top bar with the
+  site switcher (search, recent sites once there are more than six, New
+  website, Import a website…, a disabled Archive placeholder for #164),
+  Themes…, Settings, Documentation and the update notice; a WordPress-style
+  left menu for the open website (`SECTIONS` in `app/app.js`: one entry per
+  screen, so new screens like a media library or menu editor are one line;
+  collapsible to icons); and the main area with the preview beside it
+  (hideable). The Dashboard shows the live address, last publish time
+  (`publishedAt` in publish.json), unread messages and quick actions. SEO
+  holds each page's search and sharing settings, and Site settings gathers
+  the website's accounts and overrides (they also stay where they're used).
+  Menu state, recent sites, the last section per site and which Inbox
+  messages count as read are remembered per computer in the window's
+  `localStorage`, never in the site. Menus and the switcher work from the
+  keyboard (Tab, arrow keys, Escape, Enter in the search opens the first
+  match), mark the current item with `aria-current` and show a focus ring.
+- Settings (`app/settings.js`, top bar › Settings, #134): app-wide accounts
   (Cloudflare, Resend, GitHub), defaults for every website
   (form-message email, business name, message retention days and wording,
   analytics ID), theme sources, updates, data and about. A website can
@@ -261,7 +277,7 @@ published always-pass test secret, so that one step needs internet access.
   and use its own Cloudflare/Resend accounts (Publish tab; in
   `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
   never in `site.json`).
-- Documentation (#165): the sidebar's Documentation button and a link in
+- Documentation (#165): the top bar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
   in `app/app.js`, its only copy.
@@ -293,7 +309,7 @@ published always-pass test secret, so that one step needs internet access.
   `site.themeSource`, so builds and publishes never need the repo or the
   cache; "Update theme" downloads the source again and replaces the copy
   (colours and font stay as the user set them).
-- Theme Builder (`lib/theme-builder.js`, `app/theme-builder.js`, sidebar ›
+- Theme Builder (`lib/theme-builder.js`, `app/theme-builder.js`, top bar ›
   Themes…, #130): makes theme packages from controls (colours, font, corner
   radius, header/button/link style, section spacing, plus Advanced CSS) and
   keeps them in `userData/themes-local/<id>/`, apart from any website. The
@@ -714,7 +730,9 @@ site's local files until taking it offline has fully worked.
   against a stubbed API in test.js, and the Worker's storage only under
   `wrangler dev`'s local D1, not yet against real Cloudflare. A changed
   "Delete messages after" value reaches the Worker only on the next publish.
-  The Inbox loads every message at once.
+  The Inbox loads every message at once. Its unread count (#185) is per
+  computer: a message counts as read once the Inbox has been opened on
+  this computer after it arrived.
 - Rich text (#120): Quill has no header cells or line breaks inside a
   paragraph, so imported `<th>`s become ordinary cells and `<br>` starts a
   new paragraph; a quote with several paragraphs becomes several quotes, and
