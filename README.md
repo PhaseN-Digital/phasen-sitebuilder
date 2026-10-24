@@ -424,6 +424,9 @@ skipping any whose HTML has a `noindex` meta tag. Copied pages keep their own
 another host keeps just its path) and `build()`'s `absolutise()` puts the
 published hostname back in front, in those tags and in the copied
 robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
+The import log warns that search engines are blocked only when robots.txt
+disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
+groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
 
 ## Importing a website
 

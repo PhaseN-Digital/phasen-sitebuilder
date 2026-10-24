@@ -182,6 +182,14 @@ const site = {
   await build(site, siteDir, out, {});
   assert(!fs.existsSync(path.join(out, "public/_redirects")), "no _redirects for app-made pages");
 
+  // Exact copy warns about robots.txt only when search engines are shut out, not AI crawlers (#167).
+  const { robotsBlocked } = require("./lib/mirror");
+  assert.deepStrictEqual(robotsBlocked("User-agent: *\nDisallow: /\n"), { search: true, others: [] });
+  assert.deepStrictEqual(robotsBlocked("User-agent: GPTBot\nDisallow: /\n"), { search: false, others: ["GPTBot"] });
+  assert.deepStrictEqual(robotsBlocked("User-agent: Googlebot\nDisallow: /\n\nUser-agent: *\nAllow: /\n"), { search: true, others: [] });
+  assert.deepStrictEqual(robotsBlocked("User-agent: *\nDisallow: /wp-admin/\nAllow: /\n\nUser-agent: GPTBot\nUser-agent: CCBot\nDisallow: /\n\nUser-agent: bingbot\nDisallow:\n"), { search: false, others: ["GPTBot", "CCBot"] });
+  assert.deepStrictEqual(robotsBlocked("# Disallow: /\n\nuser-agent: ClaudeBot # AI\r\n\r\ndisallow: / # all\r\nUser-agent: *\nDisallow: /private\n"), { search: false, others: ["ClaudeBot"] });
+
   // Exact-copy import reads WordPress forms' questions from their markup.
   const { formFields } = require("./lib/mirror");
   assert.deepStrictEqual(formFields(`<input type="hidden" name="post_id"><label for="n">Name</label><input id="n" name="f[name]" required>
