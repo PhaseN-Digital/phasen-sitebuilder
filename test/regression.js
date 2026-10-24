@@ -307,6 +307,8 @@ async function workerChecks(sites) {
       check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
       check("worker (exact copy): edited menu link on every page", [home, about].every((r) => (r.text.match(/<a href="https:\/\/example\.com\/about-acme">About<\/a>/g) || []).length === 2));
       check("worker (exact copy): edited logo link", [home, about].every((r) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(r.text)));
+      const logo = await get(s.base, "/assets/logo-wide.png"), bg = await get(s.base, "/assets/brand-bg.png");
+      check("worker (exact copy): copied /assets/ logo and CSS background served (#163)", logo.status === 200 && bg.status === 200 && home.text.includes('src="/assets/logo-wide.png"'), [logo.status, bg.status]);
       check("worker (exact copy): copied CSS", (await get(s.base, "/wp-content/uploads/elementor/css/post-5.css")).status === 200);
       const redirect = await get(s.base, "/contact/");
       check("worker (exact copy): old address redirects", redirect.status === 301 && /\/contact-us\/$/.test(redirect.location || ""), redirect);

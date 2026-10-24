@@ -122,6 +122,16 @@ const site = {
   fs.writeFileSync(path.join(copyDir, "mirror/sitemap.xml"), "<urlset>own</urlset>");
   await build(copySite, copyDir, out, { hostname: "copy.example" });
   assert(read("public/sitemap.xml") === "<urlset>own</urlset>" && read("public/robots.txt") === "User-agent: *\nDisallow:\n", "an exact copy keeps its own sitemap/robots");
+  // A copied site's own /assets/ (#163): published next to the app's uploads, never pruned as one.
+  for (const d of ["assets", "mirror/assets"]) fs.mkdirSync(path.join(copyDir, d), { recursive: true });
+  fs.writeFileSync(path.join(copyDir, "mirror/assets/logo.png"), "LOGO");
+  fs.writeFileSync(path.join(copyDir, "assets/0123456789ab.webp"), "UPLOAD");
+  fs.writeFileSync(path.join(copyDir, "mirror/index.html"), '<img src="/assets/logo.png"><img src="/assets/0123456789ab.webp">');
+  await build(copySite, copyDir, out, { hostname: "copy.example" });
+  assert(read("public/assets/logo.png") === "LOGO" && read("public/assets/0123456789ab.webp") === "UPLOAD", "copied /assets/ files and uploads both published");
+  fs.writeFileSync(path.join(copyDir, "mirror/index.html"), "<p>home</p>");
+  await pruneAssets(copySite, copyDir, 0);
+  assert(fs.existsSync(path.join(copyDir, "mirror/assets/logo.png")) && !fs.existsSync(path.join(copyDir, "assets/0123456789ab.webp")), "prune removes the unused upload only, never a copied file");
 
   // Import provenance marker (#141): every built page, theme-built and copied, plus the
   // well-known file; the declaring user's name and email never reach the output.

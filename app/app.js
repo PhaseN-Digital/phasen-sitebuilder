@@ -863,6 +863,8 @@ function siteAccount(which) {
 }
 
 const link = (label, url) => h("a", { onclick: () => call("open", url) }, label);
+const DOCS_URL = "https://sitebuilder.phasen.digital/docs"; // #165: the one place the docs address lives
+$("#open-docs").addEventListener("click", () => call("open", DOCS_URL));
 
 function publishTab() {
   const cfDone = Boolean(siteAccounts.cloudflare || settings.cloudflare);

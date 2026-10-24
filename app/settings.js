@@ -120,7 +120,7 @@ function renderSettings() {
       soon("Backup/restore (coming)"), soon("Diagnostics (coming)")),
 
     h("h2", { className: "section-title" }, "About"),
-    h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), "."),
+    h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), ". ", link("Documentation", DOCS_URL)),
     h("p", { className: "hint" }, "Built with open-source software, including:"),
     h("ul", { className: "licences" }, LICENCES.map(([name, licence, url]) => h("li", {}, `${name} (${licence}) `, link("licence", url)))),
   );

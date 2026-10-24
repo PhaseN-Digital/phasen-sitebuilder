@@ -17,6 +17,9 @@ const PASSPHRASE = "regression passphrase";
 // Linux CI has no keyring: an in-memory key keeps safeStorage working so accounts can be connected (#134).
 app.whenReady().then(() => require("electron").safeStorage.setUsePlainTextEncryption(true));
 const elHost = new URL(SB_EL).host;
+// Never open a real browser: record what main.js's "open" handler would have opened.
+const opened = [];
+require("electron").shell.openExternal = async (url) => { opened.push(url); };
 
 const checks = [];
 const result = { checks, sites: {} };
@@ -107,6 +110,9 @@ app.on("browser-window-created", (_e, win) => {
       const saved1 = JSON.parse(read(path.join(SITES, ".phasen", "settings.json")));
       check("settings: defaults and accounts saved in the sites folder, secrets only in secrets.enc (#136)", saved1.defaults?.email === "app@example.com" && saved1.defaults.owner === "App Default Ltd" && saved1.cloudflare?.accountId === "acct-app" && !("token" in saved1.cloudflare) && !("resendKey" in saved1)
         && !read(path.join(SITES, ".phasen", "secrets.enc")).includes("re_app") && !fs.existsSync(path.join(UD, "settings.json")), saved1);
+      const DOCS = "https://sitebuilder.phasen.digital/docs";
+      await run(`document.querySelector("#open-docs").click(); [...document.querySelectorAll("#settings-page a")].find((a) => a.textContent === "Documentation").click(); 0`);
+      check("docs: sidebar button and About link open the docs (#165)", await waitFor(() => opened.filter((u) => u === DOCS).length === 2), opened);
       check("settings: theme sources, updates, data and about sections", await run(`["Theme sources", "Check now", "Open data folder", "Find sites", "Turn on portable secrets", "Wrangler"].every((t) => document.querySelector("#settings-page").textContent.includes(t))`));
 
       await run(`document.querySelector('#site-list [data-id="${id}"]').click()`);
@@ -577,13 +583,15 @@ app.on("browser-window-created", (_e, win) => {
       const previewed = await Promise.all(["/", "/about/", "/nope/"].map((p) => require("electron").net.fetch(`preview://${id}${p}`).then((r) => r.text())));
       check("exact copy: in-app preview shows the provenance marker (#145)", previewed.every((h) => h.includes(`<meta name="phasen:imported-from" content="${new URL(SB_EL).origin}">`) && (h.match(/name="generator"/g) || []).length === 1)
         && !read(path.join(M, "index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
+      const escape = await require("electron").net.fetch(`preview://${id}/assets/..%2Fsite.json`).then((r) => r.text());
+      check("exact copy: preview /assets/ can't reach the site folder", !escape.includes("importProvenance"), escape.slice(0, 200));
       check("exact copy: pages", JSON.stringify(s.pages.map((p) => p.mirror).sort()) === JSON.stringify(["/", "/about/", "/contact-us/"]), s.pages.map((p) => p.mirror));
 
       const files = [];
       (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) f.isDirectory() ? walk(path.join(d, f.name)) : files.push(path.join(d, f.name)); })(M);
       const leftovers = files.filter((f) => /\.(html|css|js|json|txt)$|_redirects$/.test(f) && read(f).includes(elHost)).map((f) => path.relative(M, f));
       check("exact copy: no leftover origin URLs", !leftovers.length, leftovers);
-      for (const f of ["wp-content/uploads/2024/01/bg.png", "wp-content/uploads/elementor/css/extra.css", "wp-content/themes/hello/fonts/acme.woff2", "wp-content/plugins/elementor/assets/js/frontend.min.js", "404.html"])
+      for (const f of ["wp-content/uploads/2024/01/bg.png", "wp-content/uploads/elementor/css/extra.css", "wp-content/themes/hello/fonts/acme.woff2", "wp-content/plugins/elementor/assets/js/frontend.min.js", "assets/logo-wide.png", "assets/brand-bg.png", "404.html"])
         check(`exact copy: copied ${f}`, fs.existsSync(path.join(M, f)));
       check("exact copy: redirect kept", /^\/contact\/ \/contact-us\/ 301$/m.test(read(path.join(M, "_redirects"))));
 
@@ -613,6 +621,10 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => inFrame(`+new URLSearchParams(location.search).get("t") >= ${since} && typeof onTurnstileLoad === "function" && Boolean(document.querySelector(".elementor-form"))`));
       await inFrame(`document.querySelector("#form-field-name").value = "A"; document.querySelector('[name="form_fields[email]"]').value = "a@b.co"; document.querySelector(".elementor-form").requestSubmit()`).catch(() => {});
       const status = await waitFor(() => inFrame(`document.querySelector(".form-status").textContent`), 3000);
+      // The copied site's own /assets/ folder, which the app also uses for uploads (#163).
+      const loads = (expr) => `new Promise((r) => { const i = new Image(); i.onload = () => r(i.naturalWidth > 0); i.onerror = () => r(false); i.src = ${expr}; })`;
+      check("exact copy: preview shows the /assets/ logo and CSS background (#163)", await inFrame(loads(`document.querySelector(".brand-logo").src`))
+        && await inFrame(loads(`getComputedStyle(document.querySelector(".brand")).backgroundImage.slice(5, -2)`)), await inFrame(`document.querySelector(".brand-logo")?.src`).catch(() => null));
       check("exact copy: preview form doesn't post to WordPress", /once your website is published/.test(status || "") && !(await inFrame("window.__elementorPosted || false")), status);
 
       // Editing: page edit, site-wide edit, image, undo, revert.
@@ -640,6 +652,7 @@ app.on("browser-window-created", (_e, win) => {
       await fakePick(120, 80, "#0a0");
       await clickButton("Replace image…");
       const img = await waitFor(() => read(path.join(M, "index.html")).match(/<img src="(\/assets\/[a-f0-9]+\.webp)"[^>]*alt="Hero"/)?.[1], 8000); await settle();
+      check("copy image: new upload shows in the preview (#163)", await waitFor(() => inFrame(`document.querySelector('img[alt="Hero"]').src.endsWith(${JSON.stringify(img)}) && document.querySelector('img[alt="Hero"]').naturalWidth > 0`), 5000));
       check("copy image: replaced and srcset dropped", img && fs.existsSync(path.join(S(id), img)) && !/alt="Hero"[^>]*srcset|srcset[^>]*alt="Hero"/.test(read(path.join(M, "index.html"))), img);
 
       await clickButton("Undo last change"); await settle(); // the image
