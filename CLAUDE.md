@@ -281,3 +281,8 @@ are not, so add them yourself.
   new place that stores an image reference must be covered there, or
   publishing drops the image and startup deletes it. Never prune while the
   editor is running: copied-page undo history lives in its memory.
+- `/assets/` is shared: the app's uploads (`sites/<id>/assets/<hex>.webp`)
+  and an exact copy's own files (`mirror/assets/…`, e.g. a logo, #163). The
+  preview serves uploads first, then `mirror/`; `build()` copies uploads, then
+  `mirror/` over them. Pruning and `usedAssets` only ever look at
+  `sites/<id>/assets`, never `mirror/`.
