@@ -130,6 +130,9 @@ async function workerChecks(sites) {
       const css = (await get(s.base, "/styles.css")).text;
       check("worker (made in app): theme from a theme source", css.includes("retro-theme-css") && css.includes('--font: "Courier New"'), css.slice(0, 300));
       check("worker (made in app): uploaded image served", img && (await get(s.base, img)).status === 200, img);
+      const figure = home.text.match(/<figure><img src="(\/assets\/[a-f0-9]+\.webp)" alt="A red box">/)?.[1];
+      check("worker (made in app): rich text with its image, table and click-to-load video (#120)", figure && (await get(s.base, figure)).status === 200 && home.text.includes("<td>Cell A1</td>")
+        && home.text.includes('<div class="video-embed"><iframe title="Video from YouTube" srcdoc=') && !home.text.includes("<iframe src="), figure);
       const contact = await get(s.base, "/contact");
       check("worker (made in app): contact page with form", contact.status === 200 && contact.text.includes('data-form="contact"') && contact.text.includes('data-sitekey="REAL_SITEKEY"'), contact.status);
       check("worker (made in app): cookie banner, no gtag before consent", home.text.includes('id="cookie-banner"') && !home.text.includes("googletagmanager")

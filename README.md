@@ -127,6 +127,22 @@ published always-pass test secret, so that one step needs internet access.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the WordPress import screen and HTML sanitizer; `app/copied.js` and
   `app/copy-edit-frame.js` edit exact-copy pages.
+- Rich text sections (`richTextEditor` in `app/app.js`) use
+  [Quill 2](https://quilljs.com) (BSD-3-Clause licence), an npm dependency
+  loaded from `node_modules/quill/dist` (prebuilt `quill.js` and the snow
+  theme CSS; electron-builder packages it, so it works offline, no build
+  step). Storage stays sanitized HTML in the section's `html`: it's loaded
+  into Quill, written back with `getSemanticHTML()` and passed through the
+  `app/wordpress.js` sanitizer. Headings H2–H4, bold/italic/underline/strike,
+  alignment (`align-*` classes, never styles), quotes, nested lists, links
+  (http(s), mailto, tel or one of the site's pages, optionally styled as a
+  button: `a.button`), images through the normal upload/resize pipeline
+  (stored as `assets/…`, never `data:` URLs) with alt text, caption and
+  position, tables, horizontal rules and YouTube/Vimeo videos. Videos are
+  stored as `<div class="video-embed" data-src="…">` (YouTube rewritten to
+  youtube-nocookie) and `lib/build.js` renders them as a click-to-load player:
+  a `srcdoc` frame with a play link, so nothing loads from YouTube or Vimeo
+  until the visitor clicks.
 - `lib/build.js`: `site.json` → `public/`, `worker/`, `wrangler.toml`. The
   preview, publish and "Save as package" all use it.
 - `lib/publish.js`: Cloudflare and Resend API calls, plus the bundled
@@ -381,6 +397,14 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Rich text (#120): Quill has no header cells or line breaks inside a
+  paragraph, so imported `<th>`s become ordinary cells and `<br>` starts a
+  new paragraph; a quote with several paragraphs becomes several quotes, and
+  image captions are plain text (links in them are lost). The text itself is
+  always kept. Videos can't play in the in-app preview (YouTube refuses
+  players without an http(s) referrer); they play on the published site.
+  Vimeo's player was only checked to load in Electron, not played in a real
+  browser.
 - Taking a site offline (#71) leaves the domain registered with Resend and
   Resend's DNS records in the zone, since they may predate the app or be
   shared. Sites published before 0.5 didn't record their Resend key's id, so
