@@ -1,8 +1,9 @@
 name: regression
 
 # End-to-end suite (npm run test:regression, see test/regression.js). Too slow
-# for every PR, so it runs on release-please's release PRs, by hand, and from
-# other workflows via workflow_call (the release gate, #47).
+# for every PR, so it runs on release-please's release PRs, on PRs that touch
+# test/ (the suite itself, so a broken suite can't merge green, #228), by hand,
+# and from other workflows via workflow_call (the release gate, #47).
 on:
   pull_request:
   workflow_dispatch:
@@ -17,8 +18,31 @@ permissions:
   contents: read
 
 jobs:
+  # Does this PR touch test/? git diff rather than the API, so it needs no
+  # permission beyond contents: read (the release gate calls this workflow).
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.diff.outputs.test }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if git diff --name-only "$BASE...$HEAD" | grep -q '^test/'; then echo test=true; else echo test=false; fi >> "$GITHUB_OUTPUT"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+
   regression:
-    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--')
+    needs: changes
+    # !cancelled(): changes is skipped outside pull_request, which would otherwise skip this too.
+    if: >-
+      !cancelled() && (github.event_name != 'pull_request'
+        || startsWith(github.head_ref, 'release-please--')
+        || needs.changes.outputs.test == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

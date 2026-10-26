@@ -1,0 +1,17 @@
+{
+  "defaults": {
+    "email": "owner@example.com"
+  },
+  "cloudflare": {
+    "token": "djEwBprdZhOrd1YRSzaHpCdxcA==",
+    "accountId": "acct-1",
+    "accounts": [
+      {
+        "id": "acct-1",
+        "name": "Acct"
+      }
+    ],
+    "warnings": []
+  },
+  "resendKey": "djEwgsoCIBtGsJlxlDNrf+YGVg=="
+}

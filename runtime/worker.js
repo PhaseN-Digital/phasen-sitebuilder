@@ -81,13 +81,18 @@ export default {
         text,
       }),
     });
-    await setStatus(env, messageId, sent.ok ? "sent" : `failed (${sent.status})`);
     if (!sent.ok) {
-      console.error("Resend send failed", sent.status, await sent.text());
+      // Resend's own reason goes in the Inbox (#218), e.g. "failed (401): API key is invalid".
+      const reason = await sent.text();
+      let message = "";
+      try { message = String(JSON.parse(reason).message || "").slice(0, 200); } catch {}
+      await setStatus(env, messageId, `failed (${sent.status})${message ? `: ${message}` : ""}`);
+      console.error("Resend send failed", sent.status, reason);
       // Kept in the Inbox, so the visitor doesn't need to send it again.
       if (messageId) return json({ ok: true }, 200);
       return json({ ok: false, error: "Sorry, something went wrong sending your message. Please try again later." }, 502);
     }
+    await setStatus(env, messageId, "sent");
     return json({ ok: true }, 200);
   },
 };

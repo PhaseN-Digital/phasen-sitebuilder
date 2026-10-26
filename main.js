@@ -61,6 +61,9 @@ const publishDir = (id) => data("publish", id);
 // mark which values are secrets.
 const seal = (v) => v;
 const unseal = (v) => v || "";
+// A value still in the pre-#136 sealed format: safeStorage output ("v10"/"v11" + ciphertext) in base64.
+const looksSealed = (v) => /^djE[wx][A-Za-z0-9+/]{16,}={0,2}$/.test(v || "");
+const validSecrets = (s) => /^re_\w+$/.test(s.RESEND_API_KEY || "") && Boolean(s.TURNSTILE_SECRET_KEY) && !looksSealed(s.TURNSTILE_SECRET_KEY);
 const hex = (n) => crypto.randomBytes(n).toString("hex");
 
 // App-wide settings. Site operations go through settingsFor() instead (#134).
@@ -104,7 +107,15 @@ async function openSitesFolder() {
   try {
     // Before #136, every secret was sealed on its own with safeStorage (base64).
     let lost = false;
-    const unsealLegacy = (v) => { try { return safeStorage.decryptString(Buffer.from(v, "base64")); } catch { lost = true; return null; } };
+    // A "decrypted" value with control or replacement characters is garbage (#218): dropped like an unreadable one.
+    const unsealLegacy = (v) => {
+      try {
+        const plain = safeStorage.decryptString(Buffer.from(v, "base64"));
+        if (plain && !/[\x00-\x1f\x7f\ufffd]/.test(plain)) return plain;
+      } catch {}
+      lost = true;
+      return null;
+    };
     await folder.migrateLegacySettings({ legacyFile: data("settings.json"), newFile: path.join(SITES, ".phasen", "settings.json"), store: settingsStore, unsealLegacy });
     const moved = await folder.migrateLegacy({ legacyRoot: data("sites"), root: SITES, store: settingsStore, unsealLegacy, author: await author(), skip: (id) => id === SAMPLE_ID });
     if (moved) notice = `${moved === 1 ? "Your website has" : `Your ${moved} websites have`} moved to ${SITES}. Each one now keeps a history of its changes (History tab). You can choose another folder in Settings › Data.`;
@@ -275,6 +286,16 @@ async function publish(id, log) {
   log("Preparing…\n");
   if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
   const hostname = site.domain ? cf.domainHostname(site.domain) : await cf.workersDevHostname(token, accountId, site.workerName);
+  // A secret that isn't a real one (still sealed the pre-#136 way, or empty) is never uploaded (#218):
+  // the Turnstile secret is rotated and the sending key re-created instead.
+  if (state.turnstile?.secret && looksSealed(state.turnstile.secret)) {
+    log("This site's Turnstile secret couldn't be read, so it's being replaced.\n");
+    delete state.turnstile.secret;
+  }
+  if (state.sendingKey && !/^re_\w+$/.test(state.sendingKey)) {
+    log("This site's Resend sending key couldn't be read, so a new one is being made.\n");
+    delete state.sendingKey;
+  }
   const turnstile = await cf.ensureTurnstile(token, accountId, site.name, hostname, state.turnstile && { ...state.turnstile, secret: unseal(state.turnstile.secret) });
   state.turnstile = { ...turnstile, secret: seal(turnstile.secret) };
   await writeState(id, state);
@@ -305,7 +326,9 @@ async function publish(id, log) {
   };
   await buildSite(site, publishDir(id), options);
   log("Uploading website…\n");
-  await cf.deployWorker(publishDir(id), { token, accountId }, { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) }, log);
+  const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
+  if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
+  await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
 
   // The site is already live by now, so a missing token permission only costs the www redirect.
   if (site.domain) await cf.ensureWwwRedirect(token, site.domain, log).catch((e) =>
