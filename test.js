@@ -431,6 +431,24 @@ const site = {
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  // Exact copy lists pages in crawl order with home first (#95), even when home finishes after pages fetched
+  // alongside it (the 404 page's links join home's batch) and later pages finish out of order.
+  {
+    const delay = { "/": 150, "/b/": 150 };
+    const html = (body) => `<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`;
+    const srv = require("node:http").createServer((req, res) => {
+      const known = { "/": '<a href="/b/">b</a><a href="/c/">c</a>', "/a/": "a", "/b/": "b", "/c/": "c" }[req.url];
+      setTimeout(() => {
+        res.writeHead(known === undefined ? 404 : 200, { "content-type": "text/html" });
+        res.end(html(known ?? '<a href="/a/">a</a>'));
+      }, delay[req.url] || 0);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-order-"));
+    const r = await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    assert.deepStrictEqual(r.pages.map((p) => p.path), ["/", "/a/", "/b/", "/c/"], "exact copy pages in crawl order, home first");
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
@@ -524,6 +542,20 @@ const site = {
     "DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/challenges/widgets/s1", "DELETE /api-keys/k1"]);
   assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
+  globalThis.fetch = realFetch;
+
+  // Replaced sending key (#176): deleting it never throws, and never logs a key value.
+  for (const [status, said] of [[200, /Deleted this site's old/], [404, /^$/], [401, /Couldn't delete this site's old Resend sending key \(Resend: nope\)/], [0, /Couldn't delete .*offline/]]) {
+    const seen = [], said176 = [];
+    globalThis.fetch = async (url, { method, headers }) => {
+      seen.push(`${method} ${url} ${headers.Authorization}`);
+      if (!status) throw new Error("offline");
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    await pub135.deleteSendingKey("re_account", "old-1", (l) => said176.push(l));
+    assert.deepStrictEqual(seen, ["DELETE https://api.resend.com/api-keys/old-1 Bearer re_account"]);
+    assert(said.test(said176.join("")) && !said176.join("").includes("re_account"), `${status}: ${said176}`);
+  }
   globalThis.fetch = realFetch;
 
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
@@ -711,6 +743,16 @@ const site = {
     await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
     const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
     assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+
+    // #258: a rejected token is reported (so main.js can mark the sign-in expired); a working one isn't.
+    let rejected = 0;
+    const tick = async () => rejected++;
+    const cache258 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themecache-"));
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick });
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick }));
+    await ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: fakeGh.token, rejected: tick });
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, rejected: tick });
+    assert.strictEqual(rejected, 2, "rejected() runs once per 401, never for a good or absent token");
   } finally {
     await fakeGh.close();
   }
@@ -827,6 +869,18 @@ const site = {
       assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
       assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
       assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+
+      // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
+      const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
+      const x = Buffer.from("x");
+      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days/sub", { "preview.png": x }); // a subfolder
+      await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });
+      assert.deepStrictEqual(Object.keys(fake.files(gh.PRIVATE_DEFAULT)).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days-old/preview.png",
+        "themes/sunny-days/notes.md", "themes/sunny-days/sub/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] }); // nothing left to delete: no error
+      for (const id of ["..", "a/../b", "", "a//b"]) await assert.rejects(push(id, files), /Bad theme folder/);
       assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
     } finally {
       await fake.close();
@@ -1044,6 +1098,23 @@ const site = {
     assert.deepStrictEqual(tb.clean({ templates: { header: tpl.DEFAULTS.header, evil: "x", footer: 1 } }).templates, {}, "only changed, known templates are kept");
   }
 
+  // {{footer.business}} (#249): a footer template can place the business details; then they aren't also above it.
+  {
+    const tb = require("./lib/theme-builder");
+    const sample = { ...tb.sampleSite({}, "tpl"), business: { town: "Leeds", phone: "0113 496 0000" } };
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-site-")), tout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-built-"));
+    const footer = '<footer class="site-footer"><div class="wrap">{{#if footer.business}}<div class="mine">{{footer.business}}</div>{{/if}}{{footer.links}}</div></footer>';
+    assert.deepStrictEqual(await tb.writeTheme(path.join(sdir, "theme"), { templates: { footer } }), [], "footer.business is a valid placeholder");
+    await build(sample, sdir, tout);
+    const home = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert.strictEqual(home.split('class="site-business"').length, 2, "business details once");
+    assert(home.includes('<div class="mine"><div class="site-business"><div class="business-grid">') && home.includes("0113 496 0000"), "inside the theme's footer");
+    await build({ ...sample, business: {} }, sdir, tout);
+    const none = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert(!none.includes("mine") && !none.includes("site-business"), "no details: the {{#if}} drops the wrapper");
+    assert.match(require("./lib/theme-validate").validateTemplate("header", "<header>{{menu}}{{footer.business}}</header>").join(), /unknown placeholder \{\{footer\.business\}\}/, "footer only");
+  }
+
   // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
   {
     const sec = require("./lib/secrets");
@@ -1119,6 +1190,20 @@ const site = {
     env.data = Buffer.from("x" + Buffer.from(env.data, "base64").toString("latin1").slice(1), "latin1").toString("base64");
     assert.throws(() => sec.decrypt(env, portable), /couldn't be unlocked/);
     fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  // A deleted site folder's secrets problem leaves Settings with it, no restart needed (#275).
+  {
+    const sec = require("./lib/secrets");
+    const gone = fs.mkdtempSync(path.join(os.tmpdir(), "sb-gone-"));
+    const file = path.join(gone, ".secrets", "secrets.enc");
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ v: 1, mode: "portable", iv: "", tag: "", data: "" }));
+    await sec.readVault(file, { portable: true, key: null });
+    const locked = (m) => /Enter it in Settings/.test(m);
+    assert(sec.problems().some(locked), "a locked site vault is reported");
+    fs.rmSync(gone, { recursive: true });
+    assert(!sec.problems().some(locked), "and forgotten once its site folder is deleted");
   }
 
   // Site history (#136): one repo per site, readable batched commits, tags, page-level changes, revert as a new commit.
@@ -1220,6 +1305,12 @@ const site = {
       const has = () => false;
       await assert.rejects(sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has: () => true }), /already in your sites folder/);
       await assert.rejects(sync.clone({ root: rootB, ...o, spec: "PhaseN-Digital/site-shop", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/);
+      const C = path.join(base, "c");
+      w(C, "site.json", { id: "../escape", name: "Bad" });
+      await repo.ensure(C, who);
+      await sync.connect(C, host.url, await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "bad-id" }));
+      await sync.sync(C, o);
+      await assert.rejects(sync.clone({ root: rootB, ...o, spec: "octo/bad-id", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/, "a site id the app can't use is refused (#235)");
       const { id: got, dir: B } = await sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has });
       assert(got === id && B === path.join(rootB, "shop") && site(B).name === "Shop");
       assert.deepStrictEqual([...(await folder.scan(rootB)).keys()], [id], "a restored site is found by the scan; no clone leftovers");
