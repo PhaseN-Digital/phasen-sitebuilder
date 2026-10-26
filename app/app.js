@@ -1345,7 +1345,7 @@ function publishTab() {
       labelErr, domainWarn),
     paths.privacy && step("5. Privacy page", Boolean(effective("owner")),
       h("p", {}, "Because your site has a form or analytics, it gets a privacy page at ", h("b", {}, `${publishedUrl || ""}${paths.privacy}`), ". ",
-        site.mirror ? "Copied pages keep their own footer, so add a link to it there if you can." : "It's linked from the footer of every page.",
+        site.mirror ? "Published copied pages get a small link to it in their footer, unless they already link to it." : "It's linked from the footer of every page.",
         " It uses the email address form messages are sent to."),
       h("div", { className: "warn" }, "This is a starting point, not legal advice. Read it and check it matches how you handle people's information.",
         site.mirror ? " Copied pages may also load other services (analytics, maps, videos) that it doesn't mention." : ""),

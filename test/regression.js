@@ -306,6 +306,8 @@ async function workerChecks(sites) {
       check("worker (exact copy): old site's tracking and Google Fonts hosts gone", !/googletagmanager|facebook\.com\/tr|fonts\.googleapis/.test(home.text));
       const about = await get(s.base, "/about/");
       check("worker (exact copy): copied page", about.status === 200);
+      const privacyLink = (r) => (r.text.match(/class="sb-privacy-link"[^>]*><a href="\/privacy">Privacy<\/a>/g) || []).length;
+      check("worker (exact copy): one Privacy link on copied pages (#28)", [home, about].every((r) => privacyLink(r) === 1) && (await get(s.base, "/privacy")).status === 200, [home, about].map(privacyLink));
       const copySitemap = (await get(s.base, "/sitemap.xml")).text;
       check("worker (exact copy): original sitemap, copied pages only (#74, #115)", copySitemap.includes("<loc>https://regression.workers.dev/about/</loc>") && !copySitemap.includes("old-post"), copySitemap);
       check("worker (exact copy): canonical/og:url on the published hostname (#115)", about.text.includes('<link rel="canonical" href="https://regression.workers.dev/">') && about.text.includes('content="https://regression.workers.dev/about/"'));
