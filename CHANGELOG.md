@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.4...phasen-sitebuilder-v0.9.0) (2026-10-26)
+
+
+### Features
+
+* **import:** WordPress posts become blog-post pages plus a Blog page ([#180](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/180)) ([#231](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/231)) ([1fbd654](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/1fbd6546673272740d66568372c3739ec8a8e395))
+* **sites:** rename a site's folder when the site is renamed ([#177](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/177)) ([#223](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/223)) ([6b0b961](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6b0b9615c7cad99d2f9b1b864cf42c7c9f7b4544))
+* **sync:** sync sites and shared settings with GitHub ([#137](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/137)) ([#236](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/236)) ([f0ea651](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/f0ea65121792d773d701d458b1961dddaf645050))
+* **themes:** HTML templates, allowlisted and validated ([#200](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/200)) ([#227](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/227)) ([e7b2120](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e7b2120cd831ad6a365c676c0a232fdfa8a1215d))
+* **ui:** top bar with site switcher, left menu for the current site, Dashboard ([#185](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/185)) ([#216](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/216)) ([328d1ce](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/328d1cea1a3df4a36bc8fc80d32e305a2d4ab2e7))
+
 ## [0.8.4](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.3...phasen-sitebuilder-v0.8.4) (2026-10-26)
 
 
