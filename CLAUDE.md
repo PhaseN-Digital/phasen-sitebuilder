@@ -145,7 +145,11 @@ are not, so add them yourself.
   moved, the PR's base isn't that main, its head isn't the tested sha or
   doesn't contain main; it re-classifies the bump from the current versions,
   checks main once more just before `gh pr merge`, and fails without
-  releasing if the squash isn't exactly the tested tree. A `regate` PR is
+  releasing if the squash isn't exactly the tested tree. release-please
+  leaves its PR on an old main when only non-releasable commits landed
+  ("remained the same"), so the `pr` step merges the run's recorded main
+  (never a later one) into a head that's behind it before gating (#113);
+  the checks above then apply to that merge unchanged. A `regate` PR is
   re-gated by the next run of any kind (a push, the daily `schedule`, or a
   dispatch), so a refusal never strands it; the label goes once a gate
   reaches a verdict. **Release manager: to re-gate a stuck release PR now

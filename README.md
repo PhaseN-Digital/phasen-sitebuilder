@@ -61,7 +61,11 @@ use `scripts/check-commit.js`.
   only merges if `main` is still exactly what the regression run tested
   against (#97); if anything landed on `main` meanwhile it comments, labels
   the PR `regate` and leaves it to the next run (a push, the daily schedule,
-  or `gh workflow run release-please.yml`), which re-gates it. This all
+  or `gh workflow run release-please.yml`), which re-gates it.
+  release-please doesn't rebuild its PR when only non-releasable commits
+  (chore/docs/test) landed, so before gating, a head that's behind the
+  run's main gets that main merged into it (#113) and regression tests the
+  merge; if that conflicts the PR stays labelled `regate`. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
