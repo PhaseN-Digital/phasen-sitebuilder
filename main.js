@@ -449,7 +449,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired) } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
   sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
@@ -505,8 +505,15 @@ let deviceFlow = null;
 async function githubToken() {
   const s = await loadSettings();
   if (!s.github) throw new Error("Sign in with GitHub in Settings first.");
+  if (s.github.expired) throw new Error(github.SIGNED_OUT);
   return unseal(s.github.token);
 }
+// Rethrows e, first marking the sign-in as no longer working if GitHub
+// rejected that token (401), so Settings asks to sign in again (#253).
+const signedOut = (token) => async (e) => {
+  if (e.status === 401) await updateSettings((s) => { if (s.github && unseal(s.github.token) === token) s.github.expired = true; });
+  throw e;
+};
 const syncAuth = async () => ({ login: GITHUB_LOGIN, token: await githubToken(), author: await author() });
 // Commits pending edits, runs fn(dir, auth), and rebuilds the preview if files came in from GitHub.
 async function syncSite(id, fn) {
@@ -787,19 +794,27 @@ const handlers = {
   "github:push-target": async () => {
     const s = await loadSettings();
     if (!s.github) return "";
-    return s.github.pushRepo || ((await github.canPush(GITHUB_API, unseal(s.github.token), github.PRIVATE_DEFAULT)) ? github.PRIVATE_DEFAULT : "");
+    const token = unseal(s.github.token);
+    return s.github.pushRepo || ((await github.canPush(GITHUB_API, token, github.PRIVATE_DEFAULT).catch(signedOut(token))) ? github.PRIVATE_DEFAULT : "");
+  },
+  // Settings asks GitHub whether the sign-in still works; offline is not an answer.
+  "github:check": async () => {
+    const s = await loadSettings();
+    const token = s.github && !s.github.expired && unseal(s.github.token);
+    if (token) await github.user(GITHUB_API, token).catch(signedOut(token)).catch(() => {});
+    return publicSettings(await loadSettings());
   },
   "github:push": async (id, target) => {
     const token = await githubToken();
     const { files, json: theme } = await publishable(id);
-    const r = await github.pushTheme({ api: GITHUB_API, token, target, id, files, version: theme.version || "1.0.0" });
+    const r = await github.pushTheme({ api: GITHUB_API, token, target, id, files, version: theme.version || "1.0.0" }).catch(signedOut(token));
     await updateSettings((s) => { if (s.github) s.github.pushRepo = themeSources.parseSource(target).spec; });
     return r;
   },
   "github:submit": async (id) => {
     const token = await githubToken();
     const { files, json: theme } = await publishable(id);
-    return github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" });
+    return github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" }).catch(signedOut(token));
   },
 
   // GitHub sync (#137, lib/sync.js). id null means the shared settings, kept locally in userData/settings-sync.

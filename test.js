@@ -745,6 +745,7 @@ const site = {
       assert.strictEqual(token, fake.token);
       assert.strictEqual((await gh.user(fake.url, token)).login, "octo");
       assert(await gh.canPush(fake.url, token, gh.PRIVATE_DEFAULT) && !(await gh.canPush(fake.url, "nope", gh.PRIVATE_DEFAULT)));
+      await assert.rejects(gh.user(fake.url, "revoked"), (e) => e.status === 401 && e.message === gh.SIGNED_OUT, "a rejected sign-in says to sign in again (#253)");
 
       fs.mkdirSync(path.join(lroot, "bad-one"));
       fs.cpSync(path.join(lroot, "sunny-days"), path.join(lroot, "bad-one"), { recursive: true });

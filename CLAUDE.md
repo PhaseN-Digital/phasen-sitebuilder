@@ -231,6 +231,9 @@ are not, so add them yourself.
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
   ignored when `app.isPackaged` (packaged apps read
   `lib/github-config.json`, written by `release-please.yml`'s build job).
+  A new call made with the sign-in token should end in `.catch(signedOut(token))`
+  (main.js), so a 401 marks the sign-in expired and Settings asks to sign in
+  again (#253).
 - Settings (#134, README "How it fits together"): site operations (build,
   publish, unpublish, inbox, import) get settings only through
   `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
