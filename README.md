@@ -145,7 +145,10 @@ checks the whole app end to end with no accounts, against fake sites in
   one page's block re-chosen in the frame, one page left out, built pages
   checked for content and no copied chrome); the ownership declaration
   (modal, main-process refusal, provenance recorded, verification file, a
-  pre-#141 import asked to declare before publishing); exact copy of a fake
+  pre-#141 import asked to declare before publishing); Markdown import of
+  `test/fixtures/markdown` (new site, titles, order, front matter address,
+  links between files, local image, hostile HTML, editor round trip, then one
+  file added to that site from the Pages tab); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -399,7 +402,8 @@ published always-pass test secret, so that one step needs internet access.
   `cssRule` in `lib/theme-builder.js`, which splits top-level rules
   properly (comments, strings, `@media` blocks).
   "Advanced HTML" edits the theme's templates (#200): pick a template, edit it
-  in a monospace textarea with line numbers (no highlighting yet, #226),
+  in a monospace textarea with line numbers and syntax highlighting (#226: a
+  `<pre>` behind the transparent textarea, no editor library),
   insert placeholders from the palette, or "Reset to default template".
   Only templates that differ from the defaults are saved, as `<name>.html`.
   The sample preview has a page per main layout (home, standard, services, contact).
@@ -520,6 +524,20 @@ robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 The import log warns that search engines are blocked only when robots.txt
 disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
 groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
+
+## Business details and local SEO
+
+Site settings › Business details (#80, `site.business`: street, town,
+postcode, country, phone, email, opening hours, social links) feed three
+things in `lib/build.js` (`businessOf`): a `.site-business` block just above
+the theme's footer on every built page (outside the footer template, so it
+shows with every theme), the "Contact details" section type (the same details
+plus a "View on a map" link to Google Maps; no embedded map, so nothing loads
+from Google), and LocalBusiness JSON-LD in the home page's `<head>`
+(`businessJsonLd`, only with an address, phone or email). Social links must be
+https, the email must look like one, and `tel:` keeps only digits and `+`.
+Nothing shows when everything is blank. Exact-copy pages keep their own
+footer and don't get the block.
 
 ## Importing a website
 
@@ -730,6 +748,41 @@ When the address isn't a WordPress site, the site is first copied exactly
   mapped to the closest built-in theme as for WordPress. The copied files are
   then deleted (`mirror:discard`).
 
+### Markdown import (#255)
+
+"Import a folder of Markdown files…" on the Import screen makes a new website
+from a folder, named after it, with one page per `.md`/`.markdown` file in
+it and its subfolders (hidden folders and `node_modules` skipped, up to 500
+files of 2 MB). "Import Markdown…" on the Pages tab adds the chosen files to
+the open website. Both ask for the ownership declaration first (without the
+website verification, there's no address to check), and main.js's `md:open`
+refuses without one.
+
+- Reading and rendering is `lib/markdown.js` (main process, `marked`, MIT):
+  code blocks become a paragraph with line breaks and h5/h6 become h4, since
+  rich text has neither. Raw HTML in the Markdown passes through marked and
+  is then removed or cleaned by the allowlist sanitizer
+  (`cleanFragment` in `app/wordpress.js`), like every editable import, in
+  `app/markdown.js`.
+- Title: front matter `title:`, else the first `# heading`, else the file
+  name. Front matter `path:` (or `slug:`, as `/<slug>/`) sets
+  `page.path`, kept or 301'd by `pagePaths` like an imported page's old
+  address; without one the address comes from the title, so subfolders are
+  flattened (until page hierarchy, #190) and clashes are numbered.
+  Front matter is `key: value` lines only, not full YAML.
+- Menu order: a top-level `index.md` (else `README.md`) is the home page,
+  then front matter `order:`, then the file's path.
+- Links between the imported files become links to their pages (`#page:<id>`,
+  any `#anchor` dropped); links to other local files (a PDF) are removed,
+  keeping their text. Web links are kept.
+- Images: ones next to the files (relative paths, only inside the chosen
+  folder: `md:image` checks, with symlinks resolved) are re-encoded like
+  uploads, and web images downloaded, as for WordPress (`imageFetcher`);
+  ones that can't be read are dropped and counted in the log.
+- Provenance: source `Markdown files` (no file paths are recorded or
+  published), verification `unverified`. Pages added to a site that was
+  already imported from a website keep that site's provenance.
+
 ## What publishing does
 
 1. Uses the workers.dev subdomain, or the chosen Cloudflare zone (plus an
@@ -820,6 +873,17 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Markdown import (#255): front matter is read as `key: value` lines, not
+  YAML; tables, task lists and footnotes come through only as far as the
+  rich text allowlist allows (task list checkboxes are dropped). Code blocks
+  are plain text, and Quill splits their lines into paragraphs once edited.
+  Tested on Linux only; the file and folder pickers are stubbed in
+  `test/drive.js`, so the real dialogs haven't been tried on Windows/macOS.
+- Business details (#80): opening hours are free text, so they're left out
+  of the LocalBusiness JSON-LD (#247); the Contact details section links to a
+  map instead of embedding one (#248); theme footer templates can't place the
+  details themselves (#249). Checked in the built HTML and the app's preview
+  headlessly, not yet with Google's Rich Results Test on a published site.
 - GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
   Tested against real git smart HTTP (`git http-backend` in test/fakes.js
   `startGitHost`) and the IPC channels driven in the app headlessly once,
@@ -875,7 +939,7 @@ site's local files until taking it offline has fully worked.
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
-- HTML templates (#200): the editor has no syntax highlighting (#226); a
+- HTML templates (#200): a
   build that falls back to the built-in templates only logs why (#225); the
   public themes repo's CI rejects template files until its vendored
   validator is re-synced (#224). External images in templates are allowed

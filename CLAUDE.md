@@ -316,7 +316,7 @@ are not, so add them yourself.
   rather than adding special cases) and self-host Google Fonts.
 - Imports need the ownership declaration (#141, README "Ownership
   declaration and provenance"): main.js's import handlers (`wp:fetch`,
-  `wp:mirror`) refuse without one, and `publish()` and `sites:export` refuse
+  `wp:mirror`, `md:open`) refuse without one, and `publish()` and `sites:export` refuse
   an imported site without `site.importProvenance` (`requireProvenance`; any
   new way of producing a deployable build must call it too). A new import path must go through
   `requireDeclaration`/`importProvenance` too. `stampProvenance` in
@@ -324,7 +324,7 @@ are not, so add them yourself.
   user's name and email) must never reach the build output (test.js and the
   regression suite check).
 - Anything imported is untrusted: editable imports (WordPress or any site,
-  #161) go through the allowlist sanitizer in `app/wordpress.js`, and
+  #161, and Markdown, #255, `app/markdown.js`) go through the allowlist sanitizer in `app/wordpress.js`, and
   copied-page edits through `cleanEdit` in `app/copied.js`. The review
   step's preview (`?sb-pick`) must keep the page's own scripts blocked (main.js's
   nonce CSP): `app/content-detect.js`'s CSS paths only match the frame

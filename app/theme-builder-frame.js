@@ -9,7 +9,7 @@
 // The body's layout-<id> classes (#184) are known too but deliberately not
 // suggested: a "this layout only" scope is #171.
 const STABLE = ["site-header", "title-band", "brand", "nav-toggle", "site-footer", "hero", "has-image", "text", "image-left", "wrap", "split",
-  "richtext", "gallery", "gallery-grid", "form", "hp", "cf-turnstile", "form-status", "button", "video-embed", "notfound",
+  "richtext", "gallery", "gallery-grid", "contact-details", "site-business", "business-grid", "form", "hp", "cf-turnstile", "form-status", "button", "video-embed", "notfound",
   "cookie-banner", "cookie-banner-actions"];
 const LANDMARKS = ["header", "nav", "main", "footer"];
 

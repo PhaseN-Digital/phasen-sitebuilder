@@ -174,6 +174,20 @@ function linkTarget(value) {
   return null;
 }
 
+// The preview's load event records which address it finished loading. If
+// refreshPreview() has since pointed it somewhere else, that reload may have
+// read the page before this edit was written and its edit script isn't
+// listening yet, so a message would be lost: reload again instead (#202).
+document.addEventListener("load", (e) => {
+  if (e.target.id === "preview") e.target.dataset.loaded = e.target.getAttribute("src");
+}, true);
+function tellPreview(message) {
+  const frame = $("#preview");
+  if (!frame) return;
+  if (frame.dataset.loaded === frame.getAttribute("src")) frame.contentWindow.postMessage(message, "*");
+  else refreshPreview();
+}
+
 function setCopyLink(value) {
   const target = linkTarget(value);
   selectedCopyLink.error = target ? "" : "Use a web address (https://…), mailto:, tel: or one of your copied pages, like /";
@@ -182,7 +196,7 @@ function setCopyLink(value) {
   selectedCopyLink.href = target;
   renderTab();
   return applyCopyEdit(key, (el) => linkOf(el)?.setAttribute("href", target)).then(() =>
-    $("#preview")?.contentWindow.postMessage({ sb: true, type: "link-updated", key, href: target }, "*"));
+    tellPreview({ sb: true, type: "link-updated", key, href: target }));
 }
 
 function copiedPageCard(page) {
@@ -215,7 +229,7 @@ function copiedPageCard(page) {
             for (const a of ["srcset", "sizes", "data-src", "data-srcset", "data-lazy-src", "data-lazy-srcset", "height"]) el.removeAttribute(a);
           });
           selectedCopyImage.src = `preview://${site.id}/${src}`;
-          $("#preview").contentWindow.postMessage({ sb: true, type: "image-updated", key, src: `/${src}` }, "*");
+          tellPreview({ sb: true, type: "image-updated", key, src: `/${src}` });
           renderTab();
         }) }, "Replace image…"))));
   return [
