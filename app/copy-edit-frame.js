@@ -61,4 +61,5 @@
       img.src = event.data.src;
     });
   });
+  send({ type: "ready", href: location.href }); // the editor's tellPreview (app/copied.js) posts only once this arrives
 })();

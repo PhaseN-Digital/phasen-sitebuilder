@@ -174,17 +174,16 @@ function linkTarget(value) {
   return null;
 }
 
-// The preview's load event records which address it finished loading. If
-// refreshPreview() has since pointed it somewhere else, that reload may have
-// read the page before this edit was written and its edit script isn't
-// listening yet, so a message would be lost: reload again instead (#202).
-document.addEventListener("load", (e) => {
-  if (e.target.id === "preview") e.target.dataset.loaded = e.target.getAttribute("src");
-}, true);
+// The preview's edit script reports its own address once it's listening
+// ("ready" below; not the load event, which can arrive after src has moved on
+// and so name a reload that hasn't happened, #284). If refreshPreview() has
+// since pointed it somewhere else, that reload may have read the page before
+// this edit was written and its script isn't listening yet, so a message
+// would be lost: reload again instead (#202).
 function tellPreview(message) {
   const frame = $("#preview");
   if (!frame) return;
-  if (frame.dataset.loaded === frame.getAttribute("src")) frame.contentWindow.postMessage(message, "*");
+  if (frame.dataset.loaded === frame.src) frame.contentWindow.postMessage(message, "*");
   else refreshPreview();
 }
 
@@ -253,6 +252,7 @@ window.addEventListener("message", (event) => {
   const frame = $("#preview");
   if (!frame || event.source !== frame.contentWindow || !event.data?.sb || !site) return;
   const { type, key, html, alt, src } = event.data;
+  if (type === "ready") return void (frame.dataset.loaded = String(event.data.href));
   if (typeof key !== "string" || !/^[ps]-[a-z0-9-]+$/.test(key)) return;
   if (type === "text" && typeof html === "string") {
     const clean = cleanEdit(html);
