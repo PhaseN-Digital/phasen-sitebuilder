@@ -418,6 +418,63 @@ const site = {
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
+  // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
+  const moveStub = (routes, writes) => async (url, { method, body }) => {
+    url = url.replace("https://api.cloudflare.com/client/v4", "");
+    if (method !== "GET") { writes.push([`${method} ${url}`, body && JSON.parse(body)]); return { status: 200, json: async () => ({ success: true, result: {} }) }; }
+    const hit = Object.entries(routes).find(([k]) => url.includes(k));
+    if (hit?.[1] === 403) return { status: 403, json: async () => ({ success: false, errors: [{ message: "denied" }] }) };
+    return { status: 200, json: async () => ({ success: true, result: hit ? hit[1] : [] }) };
+  };
+  const move = async (state, to, www, redirect, routes) => {
+    const writes = [], logs = [];
+    globalThis.fetch = moveStub(routes, writes);
+    await pub135.leaveHostname("t", state, to, www, redirect, (l) => logs.push(l));
+    return { writes, logs: logs.join(""), state };
+  };
+  const apexRoutes = {
+    "/workers/domains?service=bob-1": [{ id: "d1", hostname: "bob.com" }, { id: "d2", hostname: "shop.bob.com" }],
+    "/zones?account.id=a1": [{ id: "z0", name: "com.example" }, { id: "z1", name: "bob.com" }],
+    "dns_records?name=www.bob.com": [{ id: "r1", comment: "PhaseN Site Builder: redirects to the apex" }, { id: "r2", comment: "theirs" }],
+    "dns_records?name=bob.com": [],
+    "/entrypoint": { id: "rs1", rules: [{ id: "x1", ref: "sitebuilder_www_to_apex" }] },
+  };
+  let mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "shop.bob.com", null, true, apexRoutes);
+  assert.deepStrictEqual(mv.writes.map((w) => w[0]), ["DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/workers/domains/d1",
+    "POST /zones/z1/rulesets/rs1/rules", "POST /zones/z1/dns_records"], mv.logs);
+  assert.deepStrictEqual(mv.writes[3][1].ref, "sitebuilder_moved_bob_com");
+  assert.deepStrictEqual(mv.writes[3][1].action_parameters.from_value.target_url, { expression: 'concat("https://shop.bob.com", http.request.uri.path)' });
+  assert.deepStrictEqual(mv.writes[4][1], { type: "AAAA", name: "bob.com", content: "100::", ttl: 1, proxied: true, comment: "PhaseN Site Builder: redirects to the website's new address" });
+  assert.deepStrictEqual(mv.state, { accountId: "a1", worker: "bob-1", url: "https://bob.com", moved: [{ zoneId: "z1", hostname: "bob.com" }] }, "old www dropped, redirect recorded");
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "bob.com", { id: "z1", name: "bob.com" }, true, apexRoutes);
+  assert(!mv.writes.length && mv.state.www.id === "z1", "same hostname: nothing removed");
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://shop.bob.com" }, "bob.com", { id: "z1", name: "bob.com" }, false, apexRoutes);
+  assert.deepStrictEqual(mv.writes.map((w) => w[0]), ["DELETE /accounts/a1/workers/domains/d2"]);
+  assert(mv.state.www.id === "z1" && !mv.state.moved && mv.logs.includes("redirecting it is turned off"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob-1.x.workers.dev" }, "bob.com", null, true, apexRoutes);
+  assert(!mv.writes.length && mv.logs.includes("workers.dev address, which can't redirect"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://old.gone.com" }, "bob.com", null, true, apexRoutes);
+  assert(!mv.writes.length && !mv.state.moved && mv.logs.includes("old.gone.com isn't on this Cloudflare account"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com" }, "shop.bob.com", null, true, { ...apexRoutes, "dns_records?name=bob.com": [{ id: "r9", comment: "" }] });
+  assert(mv.writes.length === 1 && !mv.state.moved && mv.logs.includes("still has other DNS records"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com" }, "shop.bob.com", null, true, { ...apexRoutes, "/entrypoint": { id: "rs1", rules: [{ id: "y", ref: "theirs" }] } });
+  assert(mv.writes.length === 1 && !mv.state.moved && mv.logs.includes("already has redirect rules"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "shop.bob.com", null, true, { ...apexRoutes, "dns_records?name=www.bob.com": 403, "/workers/domains?service=bob-1": 403 });
+  assert(mv.logs.includes("Couldn't remove the www redirect for bob.com (Cloudflare: denied)") && mv.logs.includes("Couldn't detach bob.com") && mv.state.moved, "failures are logged, not thrown");
+  // Moving back to a hostname that redirects: the redirect goes first. Taking offline removes any left.
+  const movedBack = { moved: [{ zoneId: "z1", hostname: "bob.com" }, { zoneId: "z2", hostname: "old.net" }] }, mvWrites = [];
+  globalThis.fetch = moveStub({ "dns_records?name=bob.com": [{ id: "m1", comment: "PhaseN Site Builder: redirects to the website's new address" }],
+    "/entrypoint": { id: "rs1", rules: [{ id: "x1", ref: "sitebuilder_www_to_apex" }, { id: "x2", ref: "sitebuilder_moved_bob_com" }] } }, mvWrites);
+  await pub135.reclaimHostname("t", movedBack, "bob.com", () => {});
+  assert.deepStrictEqual(mvWrites.map((w) => w[0]), ["DELETE /zones/z1/dns_records/m1", "DELETE /zones/z1/rulesets/rs1/rules/x2"]);
+  assert.deepStrictEqual(movedBack.moved, [{ zoneId: "z2", hostname: "old.net" }]);
+  mvWrites.length = 0;
+  globalThis.fetch = moveStub({ "/entrypoint": { id: "rs2", rules: [{ id: "x3", ref: "sitebuilder_moved_old_net" }] } }, mvWrites);
+  const offMoved = await pub135.unpublish("t", "k", { accountId: "a1", ...movedBack }, () => {});
+  assert.deepStrictEqual(mvWrites.map((w) => w[0]), ["DELETE /zones/z2/rulesets/rs2/rules/x3"]);
+  assert.deepStrictEqual(offMoved, { state: { accountId: "a1" }, failed: [] });
+  globalThis.fetch = realFetch;
+
   // Form inbox D1 API (#75), against a stub: reuse by name, create otherwise, table made either way.
   const pub = require("./lib/publish");
   const d1Calls = [];
