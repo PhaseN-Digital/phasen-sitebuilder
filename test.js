@@ -428,6 +428,27 @@ const site = {
     assert.deepStrictEqual(r.pages.map((p) => p.title), ["Home", "About", "Blog"], "exact copy titles lose the site name whatever order they finish in");
   }
 
+  // Exact copy fetches the scripts Elementor only loads at runtime (#11): 3.x webpack chunks named in its
+  // runtime, 4.x `__elementorLoadChunk` chunks and the lib/ addresses it builds.
+  {
+    const js = "/wp-content/plugins/elementor/assets/js/", pro = "/wp-content/plugins/elementor-pro/assets/js/";
+    const files = {
+      "/": `<!doctype html><html><head><title>T</title></head><body><script src="${js}webpack.runtime.min.js"></script><script src="${pro}frontend.min.js"></script></body></html>`,
+      [`${js}webpack.runtime.min.js`]: 'r.u=e=>723===e?"lightbox.1b6e05e0607040eb8929.bundle.min.js":48===e?"text-path.b50b3e74488a4e302613.bundle.min.js":void 0',
+      [`${pro}frontend.min.js`]: "__elementorLoadChunk('nav-menu');t=`${e}lib/dialog/dialog${s}.js`",
+    };
+    const srv = require("node:http").createServer((req, res) => {
+      const known = files[req.url] ?? (/\.js$/.test(req.url) ? `/*${req.url}*/` : undefined);
+      res.writeHead(known === undefined ? 404 : 200, { "content-type": req.url.endsWith(".js") ? "text/javascript" : "text/html" });
+      res.end(known ?? "");
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-chunks-"));
+    await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    for (const f of [`${js}lightbox.1b6e05e0607040eb8929.bundle.min.js`, `${js}text-path.b50b3e74488a4e302613.bundle.min.js`, `${pro}chunks/nav-menu.min.js`, "/wp-content/plugins/elementor-pro/assets/lib/dialog/dialog.min.js"])
+      assert(fs.existsSync(path.join(out, f)), `runtime-loaded script copied: ${f}`);
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
