@@ -326,7 +326,7 @@ published always-pass test secret, so that one step needs internet access.
   `footer.html`, `section.html` (wraps every section) and `layout-<id>.html`
   (the inside of `<main>` for that layout). `lib/templates.js` renders them:
   `{{name}}` placeholders (escaped, except the app-built `{{brand}}`,
-  `{{menu}}`, `{{content}}`, `{{footer.links}}`) and `{{#if name}} … {{/if}}`,
+  `{{menu}}`, `{{content}}`, `{{footer.links}}`, `{{footer.business}}`) and `{{#if name}} … {{/if}}`,
   nothing else; its `DEFAULTS` reproduce the built-in markup, so a theme
   without templates builds exactly as before. `validateTemplate` in
   `lib/theme-validate.js` is an allowlist (elements, attributes, URL schemes,
@@ -334,7 +334,9 @@ published always-pass test secret, so that one step needs internet access.
   javascript:/data: URLs, forms, external resources except https images
   from `IMAGE_HOSTS`, iframes only for YouTube-nocookie/Vimeo), and
   `{{menu}}`, `{{content}}` and `{{footer.links}}` are required. It runs on
-  install, on save in the Theme Builder and at every build; a build falls
+  install, on save in the Theme Builder and at every build;
+  `{{footer.business}}` (optional, #249) puts the business details inside
+  the footer, and then they aren't also shown above it; a build falls
   back to the built-in templates if any fail (`console.warn` only for now, #225).
   The Design tab and Theme Builder label themes that use templates.
 - App layout (#185, `app/index.html`, `app/app.js`): a top bar with the

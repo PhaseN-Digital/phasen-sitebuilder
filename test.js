@@ -1061,6 +1061,23 @@ const site = {
     assert.deepStrictEqual(tb.clean({ templates: { header: tpl.DEFAULTS.header, evil: "x", footer: 1 } }).templates, {}, "only changed, known templates are kept");
   }
 
+  // {{footer.business}} (#249): a footer template can place the business details; then they aren't also above it.
+  {
+    const tb = require("./lib/theme-builder");
+    const sample = { ...tb.sampleSite({}, "tpl"), business: { town: "Leeds", phone: "0113 496 0000" } };
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-site-")), tout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-built-"));
+    const footer = '<footer class="site-footer"><div class="wrap">{{#if footer.business}}<div class="mine">{{footer.business}}</div>{{/if}}{{footer.links}}</div></footer>';
+    assert.deepStrictEqual(await tb.writeTheme(path.join(sdir, "theme"), { templates: { footer } }), [], "footer.business is a valid placeholder");
+    await build(sample, sdir, tout);
+    const home = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert.strictEqual(home.split('class="site-business"').length, 2, "business details once");
+    assert(home.includes('<div class="mine"><div class="site-business"><div class="business-grid">') && home.includes("0113 496 0000"), "inside the theme's footer");
+    await build({ ...sample, business: {} }, sdir, tout);
+    const none = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert(!none.includes("mine") && !none.includes("site-business"), "no details: the {{#if}} drops the wrapper");
+    assert.match(require("./lib/theme-validate").validateTemplate("header", "<header>{{menu}}{{footer.business}}</header>").join(), /unknown placeholder \{\{footer\.business\}\}/, "footer only");
+  }
+
   // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
   {
     const sec = require("./lib/secrets");
