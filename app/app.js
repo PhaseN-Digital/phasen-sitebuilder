@@ -337,7 +337,97 @@ function dashboardTab() {
     h("div", { className: "adders" },
       [["pages", "Edit pages"], ["design", "Change the design"], ["publish", publishedUrl ? "Publish changes" : "Publish website"]].map(([id, label]) => h("button", { onclick: () => showSection(id) }, label)),
       publishedUrl && h("button", { onclick: () => call("open", publishedUrl) }, "Open the live website")),
+    h("h3", { className: "section-title" }, "GitHub sync"),
+    syncCard(),
   ];
+}
+
+// ---------- GitHub sync (#235; main.js sync:*, lib/sync.js) ----------
+// The renderer only names repositories: the sign-in token stays in main.js.
+// key is a site id, or "settings" for the shared settings (Settings page).
+const syncState = {}; // key -> { remote, note, error, conflict (GitHub's branch), busy }
+const redrawSync = () => { if (site ? tab === "dashboard" && $("#tab") : $("#settings-page")) renderTab(); };
+
+// What to do first when sync can't work yet (not signed in, signed out #253, no private repos), else null.
+function githubNeeded(what) {
+  const g = settings.github;
+  const signIn = (label) => h("button", { className: "primary", onclick: async () => { await openSettings(); githubSignIn(true); } }, label);
+  if (g?.expired) return [h("p", { className: "error", role: "alert" }, `You've been signed out of GitHub (${g.login}). Sign in again to ${what}.`), signIn("Sign in to GitHub again")];
+  if (!g) return [h("p", { className: "hint" }, `Sign in with GitHub to ${what}.`), settings.githubConfigured && signIn("Sign in with GitHub")];
+  if (!g.privateRepos) return [h("p", { className: "hint" }, `To ${what}, sign in to GitHub again with private repositories allowed.`), signIn("Sign in to GitHub again")];
+  return null;
+}
+
+// Runs fn() (sync:* calls) for key and records the outcome. Every sync commits and may
+// rewrite the site's files, so the last edit is saved first (#143).
+async function runSync(key, fn) {
+  const st = (syncState[key] ||= {});
+  if (st.busy) return;
+  Object.assign(st, { busy: true, note: "Syncing with GitHub…", error: "" });
+  redrawSync();
+  try {
+    await flushSave();
+    const r = await fn();
+    st.conflict = r?.status === "conflict" ? r.branch : null;
+    st.note = { "up to date": "Up to date with GitHub.", pushed: "Your changes are on GitHub.", pulled: "Brought in the changes from GitHub." }[r?.status] || "";
+    if (r?.status === "pulled" && site?.id === key) await openSite(key); // the files changed under the editor
+  } catch (e) {
+    st.note = "";
+    st.error = errorText(e);
+  }
+  settings = await call("settings:get"); // a rejected sign-in marks it expired (#253); settingsRepo may have changed
+  if (key !== "settings") st.remote = await call("sync:remote", key).catch(() => null);
+  st.busy = false;
+  redrawSync();
+}
+
+// A repository field with "Create private repository" and "Use an existing repository".
+function repoPicker(suggested, busy, create, use) {
+  const input = h("input", { value: suggested, spellcheck: false, placeholder: "owner/name" });
+  const parts = () => { const v = input.value.trim(); return v.includes("/") ? v.split("/") : [settings.github.login, v]; };
+  return [
+    labelled("GitHub repository", input, "Your GitHub name (or an organisation's) and a name for the repository. A new one is private."),
+    h("div", { className: "inline", style: "flex-wrap:wrap" },
+      h("button", { className: "primary", disabled: busy, onclick: () => { const [owner, name] = parts(); create(owner, name); } }, "Create private repository"),
+      h("button", { disabled: busy, onclick: () => use(parts().join("/")) }, "Use an existing repository")),
+  ];
+}
+
+// Shown after a sync found changes both here and on GitHub: resolve(keep) with "mine" or "theirs".
+const conflictChoice = (busy, resolve) => [
+  h("div", { className: "warn", role: "alert" }, "This changed both on this computer and on GitHub since the last sync. Which version do you want to keep? Nothing is lost: both stay in the history."),
+  h("div", { className: "inline", style: "flex-wrap:wrap" },
+    h("button", { disabled: busy, onclick: () => resolve("mine") }, "Keep this computer's version"),
+    h("button", { disabled: busy, onclick: () => resolve("theirs") }, "Keep GitHub's version")),
+];
+const syncStatus = (st) => h("p", { className: st.error ? "error" : "hint", role: "status" }, st.error || st.note || "");
+const repoLink = (spec) => link(spec, `https://github.com/${spec}`);
+
+// Dashboard: back this website up to its own GitHub repository and sync it between computers.
+function syncCard() {
+  const id = site.id, st = (syncState[id] ||= {});
+  if (!("remote" in st)) {
+    st.remote = undefined;
+    call("sync:remote", id).catch(() => null).then((r) => { st.remote = r; if (site?.id === id) redrawSync(); });
+  }
+  const needed = githubNeeded("back up this website to GitHub and work on it from other computers");
+  const run = (fn) => runSync(id, fn);
+  const slug = (site.name || "website").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "website";
+  return h("div", { className: "sync-card" },
+    st.remote === undefined ? h("p", { className: "hint" }, "Checking…")
+      : st.remote ? h("p", {}, "Synced with ", repoLink(st.remote), ".")
+      : h("p", { className: "hint" }, "Keep a copy of this website and its history in a private GitHub repository, and sync it to work on it from another computer. Passwords and keys never leave this computer."),
+    needed || (st.remote === undefined ? null
+      : st.conflict ? conflictChoice(st.busy, (keep) => run(() => call("sync:resolve", id, st.conflict, keep)))
+      : st.remote ? h("div", { className: "inline", style: "flex-wrap:wrap" },
+        h("button", { className: "primary", disabled: st.busy, onclick: () => run(() => call("sync:now", id)) }, "Sync now"),
+        h("button", { disabled: st.busy, onclick: () => {
+          if (confirm(`Stop syncing with ${st.remote}? The repository stays on GitHub.`)) run(() => call("sync:disconnect", id));
+        } }, "Disconnect"))
+      : repoPicker(`${settings.github.login}/site-${slug}`, st.busy,
+        (owner, name) => run(async () => call("sync:connect", id, await call("sync:create", owner, name))),
+        (spec) => run(() => call("sync:connect", id, spec)))),
+    syncStatus(st));
 }
 
 // ---------- SEO (#74): search and sharing for each page ----------

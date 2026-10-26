@@ -471,7 +471,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired) } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired), settingsRepo: s.github.settingsRepo || null } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
   sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
@@ -852,6 +852,8 @@ const handlers = {
     sites.set(id, dir);
     return readSite(id);
   },
+  "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
+  "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");

@@ -72,7 +72,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -300,6 +300,86 @@ app.on("browser-window-created", (_e, win) => {
       check("theme submit: pull request opened", Boolean(opened), await status());
       await shot("theme-submitted");
       await inDialog(`d.close()`);
+    }
+
+    // ---------- GitHub sync (#235): connect, pull, conflict, restore and shared settings, against the fake GitHub ----------
+    // Runs after themePublish, which signs in with private repositories allowed. "Elsewhere" is
+    // another computer: a clone made here with isomorphic-git, pushing straight to the fake.
+    async function githubSync() {
+      const gh = process.env.SITEBUILDER_GITHUB_API;
+      const { id } = await run(`call("sites:create", "Sync Test", "clean")`); // a site of its own: renaming it must not disturb later steps
+      const auth = { onAuth: () => ({ username: "x-access-token", password: require("./fakes").GITHUB_TOKEN }) }, http = require("isomorphic-git/http/node");
+      const author = { name: "Elsewhere", email: "elsewhere@example.com" };
+      const elsewhere = async (spec, change, pushTo = spec) => {
+        const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "sb-elsewhere-"));
+        try {
+          await git.clone({ fs, http, dir, url: `${gh}/${spec}.git`, ref: "main", singleBranch: true, ...auth });
+          const f = path.join(dir, "site.json");
+          fs.writeFileSync(f, JSON.stringify(change(JSON.parse(read(f))), null, 2));
+          await git.add({ fs, dir, filepath: "site.json" });
+          await git.commit({ fs, dir, message: "Changed elsewhere", author });
+          await git.push({ fs, http, dir, url: `${gh}/${pushTo}.git`, ref: "main", ...auth });
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      };
+      const syncText = () => run(`document.querySelector(".sync-card [role=status]")?.textContent`);
+      const idle = () => run(`!syncState[site.id]?.busy`);
+      const done = (text) => waitFor(async () => (await idle()) && (await syncText()) === text);
+      const editorName = () => run(`site.name`);
+
+      await run(`openSite(${JSON.stringify(id)})`);
+      await siteOpened(`true`);
+      await run(`showSection("dashboard")`);
+      const suggested = await waitFor(() => run(`document.querySelector(".sync-card input")?.value`));
+      const name = await editorName(), slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      check("github sync: suggests a private repo named after the site", suggested === `octo/site-${slug}`, suggested);
+      await shot("sync-connect");
+      await clickButton("Create private repository");
+      check("github sync: new repo created and pushed", await done("Your changes are on GitHub."), await syncText());
+      const spec = await run(`syncState[site.id].remote`);
+      check("github sync: dashboard shows the connected repo", spec === `octo/site-${slug}` && (await run(`document.querySelector(".sync-card").textContent.includes("Synced with octo/site-${slug}")`)), spec);
+      await shot("sync-connected");
+
+      await elsewhere(spec, (s) => ({ ...s, name: "Changed on another computer" }));
+      await clickButton("Sync now");
+      check("github sync: pulls GitHub's changes and reloads the editor", (await done("Brought in the changes from GitHub.")) && (await editorName()) === "Changed on another computer", await editorName());
+
+      await elsewhere(spec, (s) => ({ ...s, name: "Theirs" }));
+      await run(`site.name = "Mine"; save(); 0`); // still in save()'s debounce when Sync now is clicked: runSync must flush it (#143)
+      await clickButton("Sync now");
+      const conflict = await waitFor(async () => (await idle()) && run(`Boolean(syncState[site.id].conflict) && [...document.querySelectorAll(".sync-card button")].some((b) => b.textContent === "Keep GitHub's version")`));
+      check("github sync: edits on both sides ask which to keep", conflict, await syncText());
+      await shot("sync-conflict");
+      await clickButton("Keep GitHub's version");
+      check("github sync: keeping GitHub's version reloads it", (await done("Brought in the changes from GitHub.")) && (await editorName()) === "Theirs", await editorName());
+      const log = await git.log({ fs, dir: S(id), ref: "main", depth: 1 });
+      check("github sync: the choice is a merge of both versions", log[0].commit.parent.length === 2, log[0].commit);
+
+      // Signed out (#253): the card asks to sign in again instead of offering a sync that would fail.
+      await run(`settings.github.expired = true; renderTab(); 0`);
+      check("github sync: signed out asks to sign in again", await run(`[...document.querySelectorAll(".sync-card button")].map((b) => b.textContent).join() === "Sign in to GitHub again"`));
+      await run(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`); // painted before the shot
+      await shot("sync-signed-out");
+      await run(`call("settings:get").then((s) => { settings = s; renderTab(); }); 0`);
+
+      // Restore on "a new computer": a copy of this site under another id, in a repo of its own.
+      const restoredId = "44444444-4444-4444-8444-444444444444";
+      await run(`call("sync:create", "octo", "site-restore-me")`);
+      await elsewhere(spec, (s) => ({ ...s, id: restoredId, name: "Restored site" }), "octo/site-restore-me");
+      await run(`openSettings()`);
+      await waitFor(() => run(`Boolean(document.querySelector(".sync-settings"))`));
+      await run(`{ const i = [...document.querySelectorAll(".sync-settings label.field")].at(-1).querySelector("input"); i.value = "octo/site-restore-me"; } 0`);
+      await shot("sync-settings");
+      await clickButton("Restore website");
+      check("github sync: restores a website from GitHub and opens it", await siteOpened(`site?.id === ${JSON.stringify(restoredId)} && site.name === "Restored site"`) && Boolean(S(restoredId)));
+
+      await run(`openSettings()`);
+      await waitFor(() => run(`Boolean(document.querySelector(".sync-settings"))`));
+      await run(`document.querySelector(".sync-settings").querySelectorAll("button")[0].click(); 0`); // Create private repository
+      check("github sync: shared settings repo created and pushed", await waitFor(async () => (await run(`!syncState.settings?.busy && settings.github.settingsRepo`)) === "octo/sitebuilder-settings"
+        && (await run(`document.querySelector(".sync-settings [role=status]").textContent`)) === "Your changes are on GitHub."), await run(`document.querySelector(".sync-settings").textContent`));
+      await clickButton("Sync now");
+      check("github sync: shared settings up to date", await waitFor(() => run(`!syncState.settings.busy && document.querySelector(".sync-settings [role=status]").textContent === "Up to date with GitHub."`)));
+      await shot("sync-settings-synced");
     }
 
     // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------
