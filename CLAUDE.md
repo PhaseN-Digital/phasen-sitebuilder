@@ -216,7 +216,9 @@ are not, so add them yourself.
   own copy in its folder's `theme/` (`site.themeSource`), never from the cache.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
-  `lib/theme-validate.js` (test.js checks every control combination).
+  `lib/theme-validate.js` (test.js checks every control combination,
+  including every per-layout control in `LAYOUT_CHOICES`, #171, whose CSS is
+  always scoped to `.layout-<id>`).
   HTML templates (#200, `lib/templates.js`): never add expressions, loops or
   raw output to the engine; new markup goes in as an app-built `{ html }`
   placeholder listed in `TEMPLATES` in `lib/theme-validate.js`. Widening

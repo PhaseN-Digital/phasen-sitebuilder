@@ -5,6 +5,9 @@
 // Valid themes can be published to GitHub (#60, publishDialog).
 
 let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer, tbPicking = false, tbTpl = "header", tbTplInfo = null;
+// Page layouts (#171): the layout shown in the preview (and styled by the
+// layout controls), and each layout's first page in the previewed site.
+let tbLayout = "home", tbHrefs = {}, tbPreviewId = "";
 
 async function openThemes() {
   await leaveSite($("#open-themes"));
@@ -45,6 +48,7 @@ function editTheme(controls) {
   tbEdit = controls;
   tbOn = "";
   tbPicking = false;
+  tbLayout = "home";
   renderThemes();
   previewThemeDraft();
 }
@@ -57,7 +61,11 @@ function previewThemeDraft(delay = 0) {
       const r = await call("builder:preview", tbEdit, tbOn || null);
       $("#tb-warnings").textContent = r.warnings.join(" ");
       $("#tb-errors").textContent = r.errors.length ? `This theme can't be used until these are fixed: ${r.errors.join("; ")}` : "";
-      if (!r.errors.length) $("#preview").src = `preview://${r.id}/?sb-theme&t=${Date.now()}`;
+      if (r.errors.length) return;
+      [tbHrefs, tbPreviewId] = [r.layouts, r.id];
+      if (!tbHrefs[tbLayout]) tbLayout = Object.keys(tbHrefs)[0] || "home";
+      layoutPanel();
+      $("#preview").src = `preview://${r.id}${tbHrefs[tbLayout] || "/"}?sb-theme&t=${Date.now()}`;
     } catch (e) {
       $("#tb-errors").textContent = errorText(e);
     }
@@ -108,10 +116,12 @@ function renderThemeEditor() {
           choice("Button style", "button", [["filled", "Filled"], ["outline", "Outline"], ["pill", "Pill"]]),
           choice("Section spacing", "spacing", [["compact", "Compact"], ["normal", "Normal"], ["roomy", "Roomy"]]),
           choice("Links", "links", [["underlined", "Underlined"], ["plain", "Underlined on hover"]])),
+        h("h3", { className: "section-title" }, "Page layout"),
+        h("div", { id: "tb-layout-controls" }),
         h("details", { className: "sources", open: Boolean(c.css) },
           h("summary", {}, "Advanced CSS"),
           labelled("", h("textarea", { id: "tb-css", style: "font-family:monospace;min-height:160px", value: c.css, spellcheck: false, oninput: changed((v) => { c.css = v; }) }),
-            "Added after the controls above. Plain CSS only: no @import, scripts or HTML. Right-click an element in the preview (or use Pick element) to add or find its rule.")),
+            "Added after the controls above. Plain CSS only: no @import, scripts or HTML. Right-click an element in the preview (or use Pick element) to add or find its rule, for every layout or that page's layout only. Rules starting with .layout-<id> (for example .layout-services .card) apply to one layout.")),
         templateEditor(changed),
         h("p", { className: "error", id: "tb-errors", role: "alert" }))),
     h("section", { className: `preview${previewMobile ? " mobile" : ""}` },
@@ -119,11 +129,37 @@ function renderThemeEditor() {
         h("span", {}, "Preview with"),
         h("select", { style: "width:auto", onchange: (e) => { tbOn = e.target.value; previewThemeDraft(); } },
           h("option", { value: "" }, "Sample content"), tbSites.map((s) => h("option", { value: s.id, selected: tbOn === s.id }, s.name || "Untitled"))),
+        h("select", { id: "tb-layout", "aria-label": "Page layout to preview", style: "width:auto", onchange: (e) => showLayout(e.target.value) }),
         h("button", { id: "tb-pick", className: tbPicking ? "primary" : "", "aria-pressed": String(tbPicking), onclick: () => setPicking(!tbPicking, true),
           title: "Then click an element, or use the arrow keys and Enter. Esc stops. Right-click or Alt+click works any time." }, "Pick element"),
         h("button", { className: previewMobile ? "" : "primary", onclick: () => { previewMobile = false; renderThemes(); previewThemeDraft(); } }, "Desktop"),
         h("button", { className: previewMobile ? "primary" : "", onclick: () => { previewMobile = true; renderThemes(); previewThemeDraft(); } }, "Mobile")),
       h("div", { className: "preview-stage" }, h("iframe", { id: "preview", title: "Theme preview" }))));
+  layoutPanel();
+}
+
+// Page layouts (#171): the preview's layout switcher and the shown layout's
+// controls (which ones apply to which layout comes from lib/theme-builder.js).
+const LAYOUT_CONTROLS = {
+  band: ["Title band", { plain: "Plain", tinted: "Tinted", coloured: "Main colour", centred: "Centred" }],
+  width: ["Column width", { normal: "Normal", narrow: "Narrow", wide: "Wide" }],
+  cards: ["Cards", { bordered: "Bordered", shadow: "Shadow", tinted: "Tinted", plain: "No box" }],
+  meta: ["Post date and author", { plain: "Plain", caps: "Small capitals", coloured: "Main colour" }],
+};
+function showLayout(id) {
+  tbLayout = id;
+  layoutPanel();
+  if (tbHrefs[id]) $("#preview").src = `preview://${tbPreviewId}${tbHrefs[id]}?sb-theme&t=${Date.now()}`;
+}
+function layoutPanel() {
+  const label = LAYOUTS.find((l) => l.id === tbLayout)?.label;
+  $("#tb-layout")?.replaceChildren(...LAYOUTS.map((l) => h("option", { value: l.id, selected: l.id === tbLayout, disabled: !tbHrefs[l.id] },
+    l.label + (Object.keys(tbEdit.layouts[l.id] || {}).length ? " (changed)" : "") + (tbHrefs[l.id] ? "" : " (not on this site)"))));
+  $("#tb-layout-controls")?.replaceChildren(
+    h("p", { className: "hint", style: "margin-bottom:8px" }, `For ${label} pages only. Choose another layout above the preview.`),
+    h("div", { className: "grid2" }, Object.entries(tbTplInfo.layoutControls[tbLayout] || {}).map(([k, options]) => labelled(LAYOUT_CONTROLS[k][0],
+      h("select", { "data-layout-control": k, onchange: (e) => { (tbEdit.layouts[tbLayout] ||= {})[k] = e.target.value; layoutPanel(); previewThemeDraft(300); } },
+        options.map((v) => h("option", { value: v, selected: (tbEdit.layouts[tbLayout]?.[k] ?? options[0]) === v }, LAYOUT_CONTROLS[k][1][v])))))));
 }
 
 // Advanced HTML (#200): one template at a time in a plain textarea with line
@@ -199,11 +235,12 @@ window.addEventListener("message", (event) => {
   if (!tbEdit || !tbFrame() || event.source !== tbFrame() || event.data?.sbTheme !== true) return;
   const d = event.data;
   if (d.type === "ready" && tbPicking) setPicking(true);
+  if (d.type === "ready" && d.layout && d.layout !== tbLayout && tbHrefs[d.layout]) { tbLayout = d.layout; layoutPanel(); } // followed a link
   if (d.type === "pick-off") { setPicking(false); $("#tb-pick")?.focus(); }
   if (d.type === "element" && Array.isArray(d.selectors) && d.selectors.length) ruleMenu(d);
 });
 
-function ruleMenu({ selectors, styles, x, y }) {
+function ruleMenu({ selectors, styles, x, y, layout }) {
   $(".tb-menu")?.remove();
   const back = document.activeElement;
   const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); };
@@ -222,6 +259,8 @@ function ruleMenu({ selectors, styles, x, y }) {
       e.preventDefault();
     } },
     h("button", { role: "menuitem", onclick: pick(selectors) }, "Style this element…"),
+    LAYOUTS.some((l) => l.id === layout) && h("button", { role: "menuitem", onclick: pick(selectors.map((s) => (s === "body" ? `.layout-${layout}` : `.layout-${layout} ${s}`))) },
+      `Style it on ${LAYOUTS.find((l) => l.id === layout).label} pages only…`),
     h("button", { role: "menuitem", "aria-expanded": "false", onclick: toggle(choices) }, "Choose selector…"), choices,
     h("button", { role: "menuitem", "aria-expanded": "false", onclick: toggle(current) }, "Show current styles"), current);
   document.body.append(menu);
@@ -251,7 +290,7 @@ async function styleRule(selectors) {
 
 // "Push to repo" commits the theme to a repo the user can write to; "Submit to
 // public repo" opens a PR to the public themes repo from the user's fork.
-// main.js validates the theme and sends only theme.json, theme.css and preview.png.
+// main.js validates the theme and sends only theme.json, theme.css, its previews and templates.
 async function publishDialog(id, t, kind) {
   const status = h("p", { role: "status" }), error = h("p", { className: "error" });
   const close = h("button", { onclick: () => dialog.close() }, "Close");
@@ -275,12 +314,12 @@ async function publishDialog(id, t, kind) {
       h("div", { className: "inline" }, h("button", { className: "primary", onclick: () => { dialog.close(); openSettings(); } }, "Settings"), close),
     ] : [
       push ? [
-        h("p", { className: "hint" }, `Commits theme.json, theme.css and preview.png to themes/${id}/ in a GitHub repository you can write to.`),
+        h("p", { className: "hint" }, `Commits theme.json, theme.css, its preview images and any HTML templates to themes/${id}/ in a GitHub repository you can write to.`),
         labelled("Repository", repo, "owner/repo, or owner/repo/folder@branch. Add it as a theme source in Settings to use the theme in other copies of the app."),
         !settings.github.privateRepos && h("p", { className: "hint" }, "For a private repository, sign out and sign in again in Settings with private repositories allowed."),
       ] : [
         h("p", { className: "hint" }, "Opens a pull request to PhaseN-Digital/phasen-sitebuilder-themes from your own copy (fork) of it on GitHub, with this theme's name and description. Once PhaseN accepts it, everyone can choose it under Design."),
-        h("p", { className: "hint" }, "Only theme.json, theme.css and preview.png are sent."),
+        h("p", { className: "hint" }, "Only theme.json, theme.css, its preview images and any HTML templates are sent."),
       ],
       h("div", { className: "inline" }, go, close),
     ],

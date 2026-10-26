@@ -60,9 +60,9 @@ async function driveApp(wp, el, updates, gh, plain, phase = "main") {
   if (!fs.existsSync(result)) { check("app run produced results", false, "see the log above"); return {}; }
   const { checks: appChecks, sites, closeEdit } = JSON.parse(fs.readFileSync(result, "utf8"));
   checks.push(...appChecks); // already printed by drive.js
-  // Theme publishing (#60): what the app sent to the fake GitHub.
+  // Theme publishing (#60): what the app sent to the fake GitHub (previews include preview-<layout>.png, #171).
   const only = (files) => Object.keys(files).filter((f) => f.startsWith("themes/regression-bikes-theme/"));
-  const ok = (list) => list.length >= 2 && list.every((f) => /\/(theme\.json|theme\.css|preview\.png|header\.html)$/.test(f));
+  const ok = (list) => list.length >= 2 && list.every((f) => /\/(theme\.json|theme\.css|preview(-[a-z-]+)?\.png|header\.html)$/.test(f));
   const pushed = only(gh.files("PhaseN-Digital/phasen-themes-private"));
   check("theme push: only the theme's own files committed (with its header template, #200)", ok(pushed) && pushed.includes("themes/regression-bikes-theme/theme.json") && pushed.includes("themes/regression-bikes-theme/header.html"), pushed);
   check("theme submit: PR titled with the theme name, only its files", gh.pulls.length === 1 && gh.pulls[0].title === "Add theme: Regression Bikes theme" && ok(only(gh.pulls[0].files)), gh.pulls.map((p) => [p.title, only(p.files)]));
