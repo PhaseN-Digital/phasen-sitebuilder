@@ -124,7 +124,8 @@ are not, so add them yourself.
   `--no-verify`.
 - `ci.yml` runs `npm test` on PRs and pushes to `main`.
 - `regression.yml` runs `npm run test:regression` on release-please PRs
-  (`release-please--` branches), on "Run workflow" and via `workflow_call`.
+  (`release-please--` branches), on PRs that touch `test/` (so a broken suite
+  can't merge green, #228), on "Run workflow" and via `workflow_call`.
 - `release-please.yml` keeps a release PR open. Merging it creates the GitHub
   release, and its `build` job builds and attaches the Windows/macOS
   installers. Builds deliberately live in that workflow, not an
@@ -242,7 +243,10 @@ are not, so add them yourself.
   `token`/`resendKey`/`secret`/`sendingKey`/`password` value into an
   encrypted `secrets.enc`); a new secret field needs one of those key names,
   or it'd be written in plain text and committed. `seal`/`unseal` in main.js
-  are no-ops kept as markers. `lib/site-repo.js` must keep refusing to stage
+  are no-ops kept as markers. `publish()` must never upload a secret that
+  isn't real (#218): keep its repair (re-create a non-`re_` sending key,
+  rotate an old-format Turnstile secret) and the `validSecrets` guard before
+  `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. `lib/site-repo.js` must keep refusing to stage
   `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
   it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
   so they can be interrupted: keep that order. A channel that changes files

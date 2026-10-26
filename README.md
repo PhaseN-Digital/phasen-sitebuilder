@@ -39,8 +39,8 @@ use `scripts/check-commit.js`.
 - `ci.yml`: `npm test` on every PR and push to `main`, plus the commit check
   on PRs.
 - `regression.yml`: `npm run test:regression` on release-please's release
-  PRs (branches starting `release-please--`), by hand ("Run workflow") and
-  via `workflow_call`. On failure the screenshots, wrangler logs and
+  PRs (branches starting `release-please--`), on PRs that change anything
+  under `test/` (#228), by hand ("Run workflow") and via `workflow_call`. On failure the screenshots, wrangler logs and
   results are uploaded as the `regression-output` artifact.
 - `release-please.yml`: maintains a release PR (version bump in
   `package.json`, `CHANGELOG.md`). Merging it creates the GitHub release, and
@@ -102,6 +102,16 @@ use `scripts/check-commit.js`.
 checks the whole app end to end with no accounts, against fake sites in
 `test/fakes.js`:
 
+- upgrade from v0.7.0 (#218, `test/legacy.js`): the app starts on
+  `test/fixtures/legacy-0.7.0` (userData v0.7.0 left after publishing an apex
+  site, secrets sealed with the harness's `safeStorage` key), migrates it and
+  republishes against Cloudflare and Resend faked at `fetch` level, checking
+  the real sending key and Turnstile secret are uploaded (not ciphertext), the
+  recipient and from-address; a site still holding old ciphertext is repaired
+  by republishing, and the guard refuses an invalid key. The built Worker
+  then runs under `wrangler dev` against a fake Resend (`startResend`) that
+  rejects anything but a real key: "sent" with the uploaded key,
+  `failed (401): API key is invalid` with the old ciphertext;
 - single instance (`test/instance.js`): a second copy on the same data
   folder quits and the first window is restored and focused (that `focus()`
   is called; whether the OS grants focus is up to the window manager, and
@@ -197,7 +207,11 @@ published always-pass test secret, so that one step needs internet access.
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
   interrupted move is finished by the next start; a one-time notice says
-  where they went.
+  where they went. A legacy value that doesn't decrypt to text counts as
+  unreadable (#218). Publishing never uploads a secret that isn't a real one:
+  a sending key that doesn't start with `re_`, or a Turnstile secret still in
+  the old sealed format, is re-created or rotated (and logged), and
+  `publish()` refuses to deploy if either is still empty or invalid.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the import screen and HTML sanitizer; `app/content-detect.js` and
   `app/content-pick-frame.js` find and review the content of non-WordPress
@@ -686,7 +700,7 @@ in Settings and in the Publish tab's "Override for this site".
 Every valid form message is also stored in the site's D1 database (#75) by
 `runtime/worker.js`, before it's emailed: the form id, the fields as JSON
 (`[{ label, value }]`), `created_at` (UTC) and `email_status` (`sent`,
-`failed (<HTTP status>)`, `not sent (no email key)`, or `pending` if the
+`failed (<HTTP status>): <Resend's error message>` (#218), `not sent (no email key)`, or `pending` if the
 Worker stopped mid-send). The honeypot and Turnstile token are never stored.
 If the email fails but the message was stored, the visitor is told it was
 sent, since it's waiting in the Inbox. A database error never stops the
@@ -695,7 +709,8 @@ email.
 The app's Inbox tab lists, reads, deletes and exports (CSV) messages through
 Cloudflare's D1 query API with the user's own token (`inbox:*` in main.js),
 so no public endpoint serves them. Messages that weren't emailed get a
-warning badge. Retention is the site's "Delete messages after" setting
+warning badge and their status (with Resend's reason), and the tab says how
+many weren't emailed. Retention is the site's "Delete messages after" setting
 (a Settings default the site can override, `overrides.inboxDays`, default 90): built into the Worker as `RETENTION_DAYS`,
 which deletes older messages on every write, applied again whenever the app
 lists the inbox, and quoted in the privacy page's default retention

@@ -1,0 +1,23 @@
+{
+  "resendKeyHash": "d214308777d491f0",
+  "accountId": "acct-1",
+  "worker": "fixture-site-2e10",
+  "www": {
+    "id": "zone-1",
+    "name": "example.com"
+  },
+  "turnstile": {
+    "sitekey": "1x00000000000000000000AA",
+    "secret": "djEwxDQpGRM3Jtq5m7kgE72W+TAPcXrq3xjXNaVqFQHee7xmHFgMi4B46b4muz8z5QEi",
+    "hostname": "example.com"
+  },
+  "sendingKey": "djEwWOhzN3WfoyEvYQSKw7vB7Q==",
+  "sendingKeyId": "key-1",
+  "sendingKeyDomain": "dom-1",
+  "d1": {
+    "id": "db-1",
+    "name": "fixture-site-2e10-inbox"
+  },
+  "url": "https://example.com",
+  "publishedAt": "2026-10-24T16:52:53.117Z"
+}
