@@ -150,6 +150,29 @@ const site = {
   await pruneAssets(copySite, copyDir, 0);
   assert(fs.existsSync(path.join(copyDir, "mirror/assets/logo.png")) && !fs.existsSync(path.join(copyDir, "assets/0123456789ab.webp")), "prune removes the unused upload only, never a copied file");
 
+  // Privacy link on copied pages (#28): once, in the footer (else before </body>), only
+  // when the privacy page is built, never next to a link the page already has.
+  {
+    const formSite = { ...copySite, forms: [{ id: "f1", name: "Contact", mirrored: true, fields: [] }] };
+    const footer = '<body><p data-sb-edit="s-1">home</p><footer><p>(c) Bob</p></footer></body>';
+    fs.writeFileSync(path.join(copyDir, "mirror/index.html"), footer);
+    fs.writeFileSync(path.join(copyDir, "mirror/caf\u00e9/index.html"), "<body><p>caf</p></body>");
+    fs.writeFileSync(path.join(copyDir, "mirror/thanks.html"), '<body><footer><a href="/privacy/">Our privacy policy</a></footer></body>');
+    await build(formSite, copyDir, out, {});
+    const link = '<p class="sb-privacy-link" style="margin:.5em 0;text-align:center;font-size:.8em"><a href="/privacy">Privacy</a></p>';
+    assert(fs.existsSync(path.join(out, "public/privacy.html")));
+    assert.strictEqual(read("public/index.html"), `<body><p>home</p><footer><p>(c) Bob</p>${link}</footer></body>`, "added once, inside the footer");
+    assert.strictEqual(read("public/caf\u00e9/index.html"), `<body><p>caf</p>${link}</body>`, "no footer: before </body>");
+    assert(!read("public/thanks.html").includes("sb-privacy-link"), "not duplicated when the page already links there");
+    assert.strictEqual(fs.readFileSync(path.join(copyDir, "mirror/index.html"), "utf8"), footer, "stored copy (and its data-sb-edit keys) untouched");
+    await build(copySite, copyDir, out, {});
+    assert(!fs.existsSync(path.join(out, "public/privacy.html")) && !read("public/index.html").includes("sb-privacy-link"), "no privacy page, no link");
+    await build({ ...copySite, analyticsId: "G-ABC123XYZ" }, copyDir, out, {});
+    assert(read("public/index.html").includes(link) && !/googletagmanager|gtag\(/.test(read("public/index.html")), "analytics alone adds it; still no gtag");
+    fs.writeFileSync(path.join(copyDir, "mirror/caf\u00e9/index.html"), "<p>caf</p>");
+    fs.writeFileSync(path.join(copyDir, "mirror/thanks.html"), '<meta name="robots" content="noindex, follow">');
+  }
+
   // Import provenance marker (#141): every built page, theme-built and copied, plus the
   // well-known file; the declaring user's name and email never reach the output.
   {

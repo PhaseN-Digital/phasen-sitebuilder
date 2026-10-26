@@ -319,6 +319,8 @@ are not, so add them yourself.
   clash); `build()` drops it when the site has no forms and no valid
   analytics ID, and the editor uses
   `paths.privacy` to decide whether to show the Privacy page settings.
+  Published copied pages get a link to it from `addPrivacyLink` (#28), only
+  when it's built and only in the build output, never the stored HTML.
 - With `site.analyticsId` set, the Google tag must only ever be injected by
   `runtime/consent.js` after Accept (UK PECR); never add `gtag.js` to a page
   head. `test.js` asserts no built page mentions it. Exact copies strip the

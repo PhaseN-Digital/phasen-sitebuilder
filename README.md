@@ -472,8 +472,10 @@ collects, Cloudflare/Turnstile and Resend as processors, how long messages
 are kept (by default, the Inbox's "Delete messages after" days) and the
 visitor's UK GDPR rights. The business name and retention
 sentence are defaults in Settings, overridable in Publish › Privacy page, which says it's a starting point,
-not legal advice. Exact-copy pages keep their own footer, so there the user
-is told the address and adds the link themselves; the notice doesn't cover
+not legal advice. Exact-copy pages keep their own footer, so the published
+build (not the preview) adds a small "Privacy" link to each copied page's
+last `<footer>`, or before `</body>` without one, unless the page already
+links to that address (#28, `addPrivacyLink`); the notice doesn't cover
 third-party services the copied pages load.
 
 ## Analytics and cookie consent
