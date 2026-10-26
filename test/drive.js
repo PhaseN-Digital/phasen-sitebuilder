@@ -72,7 +72,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -186,7 +186,9 @@ app.on("browser-window-created", (_e, win) => {
       // switched sites by script, is still open over the page (a user couldn't get here past the modal).
       await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`);
       const rightClick = async () => {
-        await waitFor(() => inFrame(`Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
+        // The menu's script (app/theme-builder-frame.js) is at the end of the body: its <script> tag and the page's content are
+        // there before it has run and can see a right-click (#264). It blocks the parser, so a complete document has run it.
+        await waitFor(() => inFrame(`document.readyState === "complete" && Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
         const { x, y } = await run(`(() => { const r = document.querySelector("#preview").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
         const at = await inFrame(`(() => { const r = document.querySelector(".hero h1").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
         const pos = { x: Math.round(x + at.x), y: Math.round(y + at.y) };
@@ -298,6 +300,86 @@ app.on("browser-window-created", (_e, win) => {
       check("theme submit: pull request opened", Boolean(opened), await status());
       await shot("theme-submitted");
       await inDialog(`d.close()`);
+    }
+
+    // ---------- GitHub sync (#235): connect, pull, conflict, restore and shared settings, against the fake GitHub ----------
+    // Runs after themePublish, which signs in with private repositories allowed. "Elsewhere" is
+    // another computer: a clone made here with isomorphic-git, pushing straight to the fake.
+    async function githubSync() {
+      const gh = process.env.SITEBUILDER_GITHUB_API;
+      const { id } = await run(`call("sites:create", "Sync Test", "clean")`); // a site of its own: renaming it must not disturb later steps
+      const auth = { onAuth: () => ({ username: "x-access-token", password: require("./fakes").GITHUB_TOKEN }) }, http = require("isomorphic-git/http/node");
+      const author = { name: "Elsewhere", email: "elsewhere@example.com" };
+      const elsewhere = async (spec, change, pushTo = spec) => {
+        const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "sb-elsewhere-"));
+        try {
+          await git.clone({ fs, http, dir, url: `${gh}/${spec}.git`, ref: "main", singleBranch: true, ...auth });
+          const f = path.join(dir, "site.json");
+          fs.writeFileSync(f, JSON.stringify(change(JSON.parse(read(f))), null, 2));
+          await git.add({ fs, dir, filepath: "site.json" });
+          await git.commit({ fs, dir, message: "Changed elsewhere", author });
+          await git.push({ fs, http, dir, url: `${gh}/${pushTo}.git`, ref: "main", ...auth });
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      };
+      const syncText = () => run(`document.querySelector(".sync-card [role=status]")?.textContent`);
+      const idle = () => run(`!syncState[site.id]?.busy`);
+      const done = (text) => waitFor(async () => (await idle()) && (await syncText()) === text);
+      const editorName = () => run(`site.name`);
+
+      await run(`openSite(${JSON.stringify(id)})`);
+      await siteOpened(`true`);
+      await run(`showSection("dashboard")`);
+      const suggested = await waitFor(() => run(`document.querySelector(".sync-card input")?.value`));
+      const name = await editorName(), slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      check("github sync: suggests a private repo named after the site", suggested === `octo/site-${slug}`, suggested);
+      await shot("sync-connect");
+      await clickButton("Create private repository");
+      check("github sync: new repo created and pushed", await done("Your changes are on GitHub."), await syncText());
+      const spec = await run(`syncState[site.id].remote`);
+      check("github sync: dashboard shows the connected repo", spec === `octo/site-${slug}` && (await run(`document.querySelector(".sync-card").textContent.includes("Synced with octo/site-${slug}")`)), spec);
+      await shot("sync-connected");
+
+      await elsewhere(spec, (s) => ({ ...s, name: "Changed on another computer" }));
+      await clickButton("Sync now");
+      check("github sync: pulls GitHub's changes and reloads the editor", (await done("Brought in the changes from GitHub.")) && (await editorName()) === "Changed on another computer", await editorName());
+
+      await elsewhere(spec, (s) => ({ ...s, name: "Theirs" }));
+      await run(`site.name = "Mine"; save(); 0`); // still in save()'s debounce when Sync now is clicked: runSync must flush it (#143)
+      await clickButton("Sync now");
+      const conflict = await waitFor(async () => (await idle()) && run(`Boolean(syncState[site.id].conflict) && [...document.querySelectorAll(".sync-card button")].some((b) => b.textContent === "Keep GitHub's version")`));
+      check("github sync: edits on both sides ask which to keep", conflict, await syncText());
+      await shot("sync-conflict");
+      await clickButton("Keep GitHub's version");
+      check("github sync: keeping GitHub's version reloads it", (await done("Brought in the changes from GitHub.")) && (await editorName()) === "Theirs", await editorName());
+      const log = await git.log({ fs, dir: S(id), ref: "main", depth: 1 });
+      check("github sync: the choice is a merge of both versions", log[0].commit.parent.length === 2, log[0].commit);
+
+      // Signed out (#253): the card asks to sign in again instead of offering a sync that would fail.
+      await run(`settings.github.expired = true; renderTab(); 0`);
+      check("github sync: signed out asks to sign in again", await run(`[...document.querySelectorAll(".sync-card button")].map((b) => b.textContent).join() === "Sign in to GitHub again"`));
+      await run(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`); // painted before the shot
+      await shot("sync-signed-out");
+      await run(`call("settings:get").then((s) => { settings = s; renderTab(); }); 0`);
+
+      // Restore on "a new computer": a copy of this site under another id, in a repo of its own.
+      const restoredId = "44444444-4444-4444-8444-444444444444";
+      await run(`call("sync:create", "octo", "site-restore-me")`);
+      await elsewhere(spec, (s) => ({ ...s, id: restoredId, name: "Restored site" }), "octo/site-restore-me");
+      await run(`openSettings()`);
+      await waitFor(() => run(`Boolean(document.querySelector(".sync-settings"))`));
+      await run(`{ const i = [...document.querySelectorAll(".sync-settings label.field")].at(-1).querySelector("input"); i.value = "octo/site-restore-me"; } 0`);
+      await shot("sync-settings");
+      await clickButton("Restore website");
+      check("github sync: restores a website from GitHub and opens it", await siteOpened(`site?.id === ${JSON.stringify(restoredId)} && site.name === "Restored site"`) && Boolean(S(restoredId)));
+
+      await run(`openSettings()`);
+      await waitFor(() => run(`Boolean(document.querySelector(".sync-settings"))`));
+      await run(`document.querySelector(".sync-settings").querySelectorAll("button")[0].click(); 0`); // Create private repository
+      check("github sync: shared settings repo created and pushed", await waitFor(async () => (await run(`!syncState.settings?.busy && settings.github.settingsRepo`)) === "octo/sitebuilder-settings"
+        && (await run(`document.querySelector(".sync-settings [role=status]").textContent`)) === "Your changes are on GitHub."), await run(`document.querySelector(".sync-settings").textContent`));
+      await clickButton("Sync now");
+      check("github sync: shared settings up to date", await waitFor(() => run(`!syncState.settings.busy && document.querySelector(".sync-settings [role=status]").textContent === "Up to date with GitHub."`)));
+      await shot("sync-settings-synced");
     }
 
     // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------
@@ -514,6 +596,64 @@ app.on("browser-window-created", (_e, win) => {
       check("layouts: landing page has no menu", files[ids.indexOf("landing")] && !files[ids.indexOf("landing")].includes('id="site-nav"'));
       await shot("layouts");
       await run(`site.pages.splice(${before}); pageId = site.pages[0].id; save(); renderTab()`);
+      await saved();
+    }
+
+    // ---------- 1d. page dropdown and "Reorder pages" (#261), on the made-in-app site; its order is put back afterwards ----------
+    async function pagePicker() {
+      const id = result.sites.created;
+      if (!id) return;
+      const home = path.join(UD, "preview", id, "public", "index.html");
+      const picker = (js) => run(`{ const s = document.querySelector("#page-picker"); ${js} }`);
+      await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); tab = "pages"; pageId = site.pages[0].id; renderEditor(); 0`);
+      const original = await run(`site.pages.map((p) => p.id)`);
+      check("pages: few pages, no filter box", await run(`Boolean(document.querySelector("label[for=page-picker]")) && !document.querySelector(".page-filter") && !document.querySelector(".chips")`));
+      await picker(`s.value = ${JSON.stringify(original[1])}; s.dispatchEvent(new Event("change")); 0`);
+      check("pages: the dropdown switches page", await waitFor(() => run(`pageId === ${JSON.stringify(original[1])} && document.querySelector("#page-picker").value === pageId && document.activeElement?.id === "page-picker" && document.querySelector("#tab input").value === site.pages[1].title`)));
+      await shot("pages-few");
+
+      // Many pages (an import): a filter box narrows the dropdown; Enter opens the first match.
+      await run(`for (let i = 1; i <= 32; i++) site.pages.push({ id: "many" + i, title: "Extra page " + i, layout: "standard", sections: [] }); save(); renderTab(); 0`);
+      await saved();
+      await run(`{ const f = document.querySelector(".page-filter"); f.value = "page 17"; f.dispatchEvent(new Event("input")); } 0`);
+      check("pages: many pages, the filter narrows the dropdown", JSON.stringify(await picker(`[...s.options].map((o) => o.value)`)) === JSON.stringify([original[1], "many17"]));
+      await run(`document.querySelector(".page-filter").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); 0`);
+      check("pages: Enter opens the first match", await waitFor(() => run(`pageId === "many17" && document.querySelector("#page-picker").options.length === site.pages.length`)));
+      await shot("pages-many");
+      // A dialog's "close" event (which saves or drops the order, then removes it) comes a task after close(): wait for it.
+      const reorderOpen = () => waitFor(() => run(`document.querySelectorAll("dialog.reorder-pages[open]").length === 1`));
+      const reorderGone = () => waitFor(() => run(`!document.querySelector("dialog.reorder-pages")`));
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await shot("reorder-many");
+      await run(`document.querySelector("dialog.reorder-pages").close(); 0`);
+      await reorderGone();
+      await run(`site.pages.splice(${original.length + 1}); pageId = site.pages[0].id; save(); renderTab(); 0`); // keeps one extra page: three to reorder
+      await saved();
+
+      // Reorder: Cancel changes nothing; the arrows and a drag then Save change the order.
+      const before = [...original, "many1"];
+      const row = (i) => `document.querySelectorAll("dialog.reorder-pages li")[${i}]`;
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await run(`${row(before.length - 1)}.querySelector('[data-dir="up"]').click(); document.querySelector('dialog.reorder-pages button[value=""]').click(); 0`);
+      check("reorder: Cancel keeps the order", (await reorderGone()) && JSON.stringify(await run(`site.pages.map((p) => p.id)`)) === JSON.stringify(before));
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await run(`${row(1)}.querySelector('[data-dir="up"]').click(); 0`); // the second page becomes the home page
+      check("reorder: the arrow keeps focus on the moved page", await run(`document.activeElement === ${row(0)}.querySelector('[data-dir="down"]')`));
+      await run(`{ const dt = new DataTransfer(); ${row(before.length - 1)}.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true })); ${row(1)}.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true })); ${row(1)}.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true })); } 0`);
+      await shot("reorder");
+      await run(`document.querySelector('dialog.reorder-pages button[value="save"]').click(); 0`);
+      const want = [before[1], before.at(-1), ...before.filter((p, i) => i !== 1 && i !== before.length - 1)];
+      await waitFor(() => run(`!document.querySelector("dialog.reorder-pages") && site.pages[0].id === ${JSON.stringify(want[0])}`));
+      await saved();
+      const saved1 = JSON.parse(read(path.join(S(id), "site.json"))).pages;
+      check("reorder: arrows and drag, saved in site.json", JSON.stringify(saved1.map((p) => p.id)) === JSON.stringify(want), saved1.map((p) => p.title));
+      const titles = want.map((pid) => saved1.find((p) => p.id === pid).title);
+      const menu = () => (/<nav id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(read(home))?.[1].match(/>([^<>]+)<\/a>/g) || []).map((a) => a.slice(1, -4));
+      check("reorder: the built menu follows the new order", await waitFor(() => JSON.stringify(menu()) === JSON.stringify(titles)), menu());
+      await run(`site.pages.splice(0, site.pages.length, ...${JSON.stringify(original)}.map((pid) => site.pages.find((p) => p.id === pid))); pageId = site.pages[0].id; save(); renderTab(); 0`);
       await saved();
     }
 
@@ -812,25 +952,26 @@ app.on("browser-window-created", (_e, win) => {
       check("exact copy: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       result.sites.mirror = id;
-      const M = path.join(S(id), "mirror");
+      // Look the folder up at each read: autosave renames it to match the site name after 15s (#244).
+      const M = (...p) => path.join(S(id), "mirror", ...p);
       const s = JSON.parse(read(path.join(S(id), "site.json")));
       check("declaration: provenance recorded (exact copy), unverified", s.importProvenance?.source === new URL(SB_EL).origin && s.importProvenance.verification?.status === "unverified" && s.importProvenance.declaredBy?.name === "Jo Declarer", s.importProvenance);
       const previewed = await Promise.all(["/", "/about/", "/nope/"].map((p) => require("electron").net.fetch(`preview://${id}${p}`).then((r) => r.text())));
       check("exact copy: in-app preview shows the provenance marker (#145)", previewed.every((h) => h.includes(`<meta name="phasen:imported-from" content="${new URL(SB_EL).origin}">`) && (h.match(/name="generator"/g) || []).length === 1)
-        && !read(path.join(M, "index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
+        && !read(M("index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
       const escape = await require("electron").net.fetch(`preview://${id}/assets/..%2Fsite.json`).then((r) => r.text());
       check("exact copy: preview /assets/ can't reach the site folder", !escape.includes("importProvenance"), escape.slice(0, 200));
       check("exact copy: pages", JSON.stringify(s.pages.map((p) => p.mirror).sort()) === JSON.stringify(["/", "/about/", "/contact-us/"]), s.pages.map((p) => p.mirror));
 
-      const files = [];
-      (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) f.isDirectory() ? walk(path.join(d, f.name)) : files.push(path.join(d, f.name)); })(M);
-      const leftovers = files.filter((f) => /\.(html|css|js|json|txt)$|_redirects$/.test(f) && read(f).includes(elHost)).map((f) => path.relative(M, f));
+      const files = [], root = M();
+      (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) f.isDirectory() ? walk(path.join(d, f.name)) : files.push(path.join(d, f.name)); })(root);
+      const leftovers = files.filter((f) => /\.(html|css|js|json|txt)$|_redirects$/.test(f) && read(f).includes(elHost)).map((f) => path.relative(root, f));
       check("exact copy: no leftover origin URLs", !leftovers.length, leftovers);
       for (const f of ["wp-content/uploads/2024/01/bg.png", "wp-content/uploads/elementor/css/extra.css", "wp-content/themes/hello/fonts/acme.woff2", "wp-content/plugins/elementor/assets/js/frontend.min.js", "assets/logo-wide.png", "assets/brand-bg.png", "404.html"])
-        check(`exact copy: copied ${f}`, fs.existsSync(path.join(M, f)));
-      check("exact copy: redirect kept", /^\/contact\/ \/contact-us\/ 301$/m.test(read(path.join(M, "_redirects"))));
+        check(`exact copy: copied ${f}`, fs.existsSync(M(f)));
+      check("exact copy: redirect kept", /^\/contact\/ \/contact-us\/ 301$/m.test(read(M("_redirects"))));
 
-      const home = read(path.join(M, "index.html"));
+      const home = read(M("index.html"));
       const form = s.forms[0];
       check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false], ["form_fields[services][]", "choice", false], ["form_fields[other]", "text", false]]), s.forms);
       check("exact copy: form re-wired", form && home.includes(`data-form="${form.id}"`) && !home.includes("admin-ajax") && home.includes("cf-turnstile") && home.includes('name="website"') && home.includes("/form.js"));
@@ -846,7 +987,7 @@ app.on("browser-window-created", (_e, win) => {
       check("tagging: both menus share one site-wide key", menuKeys.length === 2 && menuKeys[0] === menuKeys[1] && menuKeys[0].startsWith("s-"), menuKeys);
       check("tagging: text widget is one block", /class="elementor-widget-container" data-sb-edit="p-[^"]+"><p>We make/.test(home));
       check("tagging: layout untagged", !/<(section|div) class="elementor-(section|container|column)[^"]*"[^>]*data-sb-edit/.test(home));
-      check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(path.join(M, f)).includes(`data-sb-edit="${footer}"`)));
+      check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(M(f)).includes(`data-sb-edit="${footer}"`)));
 
       // Preview: our submit handler wins over Elementor's. The editor opens on site.pages[0], which is
       // whichever page the crawl finished first (not always the one with the form), so load the home
@@ -868,16 +1009,16 @@ app.on("browser-window-created", (_e, win) => {
       const edit = async (selector, text) => inFrame(`{ const el = document.querySelector(${JSON.stringify(selector)}); el.click(); el.textContent = ${JSON.stringify(text)}; el.closest("[data-sb-edit]").dispatchEvent(new FocusEvent("blur")); 0 }`);
       const settle = () => run(`copyEdits.then(() => 0)`);
       const all = ["index.html", "about/index.html", "contact-us/index.html", "404.html"];
-      const grab = () => Object.fromEntries(all.map((f) => [f, read(path.join(M, f))]));
+      const grab = () => Object.fromEntries(all.map((f) => [f, read(M(f))]));
 
       await edit("h1", "Welcome to Acme Widgets");
-      await waitFor(() => read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"), 5000); await settle();
+      await waitFor(() => read(M("index.html")).includes("Welcome to Acme Widgets"), 5000); await settle();
       let now = grab();
       check("page edit: saved on this page", now["index.html"].includes(">Welcome to Acme Widgets</h1>"));
       check("page edit: original kept for revert", fs.existsSync(path.join(S(id), "mirror-original", "index.html")));
 
       await edit(".elementor-location-footer p", "Call us on 0800 000 111");
-      await waitFor(() => all.every((f) => read(path.join(M, f)).includes("0800 000 111")), 5000); await settle();
+      await waitFor(() => all.every((f) => read(M(f)).includes("0800 000 111")), 5000); await settle();
       now = grab();
       check("site-wide edit: applied to every page", all.every((f) => now[f].includes("Call us on 0800 000 111")), all.filter((f) => !now[f].includes("0800 000 111")));
       check("site-wide edit: page edit stays on its page", !now["about/index.html"].includes("Acme Widgets"));
@@ -886,9 +1027,9 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(selectedCopyImage)`));
       await fakePick(120, 80, "#0a0");
       await clickButton("Replace image…");
-      const img = await waitFor(() => read(path.join(M, "index.html")).match(/<img src="(\/assets\/[a-f0-9]+\.webp)"[^>]*alt="Hero"/)?.[1], 8000); await settle();
+      const img = await waitFor(() => read(M("index.html")).match(/<img src="(\/assets\/[a-f0-9]+\.webp)"[^>]*alt="Hero"/)?.[1], 8000); await settle();
       check("copy image: new upload shows in the preview (#163)", await waitFor(() => inFrame(`document.querySelector('img[alt="Hero"]').src.endsWith(${JSON.stringify(img)}) && document.querySelector('img[alt="Hero"]').naturalWidth > 0`), 5000));
-      check("copy image: replaced and srcset dropped", img && fs.existsSync(path.join(S(id), img)) && !/alt="Hero"[^>]*srcset|srcset[^>]*alt="Hero"/.test(read(path.join(M, "index.html"))), img);
+      check("copy image: replaced and srcset dropped", img && fs.existsSync(path.join(S(id), img)) && !/alt="Hero"[^>]*srcset|srcset[^>]*alt="Hero"/.test(read(M("index.html"))), img);
 
       await clickButton("Undo last change"); await settle(); // the image
       await clickButton("Undo last change"); await settle(); // the footer
@@ -898,11 +1039,11 @@ app.on("browser-window-created", (_e, win) => {
 
       await clickButton("Revert this page to the original"); await settle();
       const original = read(path.join(S(id), "mirror-original", "index.html"));
-      check("revert: page back to the import", read(path.join(M, "index.html")) === original && original.includes(">Welcome to Acme</h1>"));
+      check("revert: page back to the import", read(M("index.html")) === original && original.includes(">Welcome to Acme</h1>"));
       check("revert: save state", (await run(`document.querySelector(".save-state").textContent`)) === "Page reverted");
       const undone = Date.now();
       await clickButton("Undo last change"); await settle();
-      check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
+      check("undo: revert can be undone", read(M("index.html")).includes("Welcome to Acme Widgets"));
 
       // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
       // Find and click in one poll: a separate click call can land on a frame the undo reload is replacing and hang.
@@ -929,13 +1070,13 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
       await shot("copy-link");
       await setLink("https://example.com/about-acme"); await settle();
-      check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
+      check("copy link: external address saved", all.every((f) => read(M(f)).includes('<a href="https://example.com/about-acme">About</a>')));
       // Linked image (the header logo, site-wide): same link panel from the image panel.
       await waitFor(() => inFrame(`{ const i = document.querySelector(".elementor-location-header a > img"); if (i) i.click(); Boolean(i) }`));
       const logoShown = await waitFor(() => run(`selectedCopyImage && document.querySelector(".copy-link input")?.value`), 5000);
       check("copy image link: panel shows the logo's target", logoShown === "/", logoShown);
       await setLink("/contact-us/"); await settle(); await shot("copy-image-link");
-      check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(path.join(M, f)))));
+      check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(M(f)))));
       // #202: a link edit made while the preview is reloading still reaches the preview.
       const logoHref = (href) => waitFor(() => inFrame(`document.querySelector(".elementor-location-header a > img")?.parentElement.getAttribute("href") === ${JSON.stringify(href)}`), 5000);
       await setLink("/about/"); await settle(); await logoHref("/about/");
