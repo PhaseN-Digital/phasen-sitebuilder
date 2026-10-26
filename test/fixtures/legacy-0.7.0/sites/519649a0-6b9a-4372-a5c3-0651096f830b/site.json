@@ -1,0 +1,87 @@
+{
+  "id": "519649a0-6b9a-4372-a5c3-0651096f830b",
+  "name": "Fixture Site",
+  "description": "",
+  "theme": "clean",
+  "colors": {
+    "background": "#ffffff",
+    "text": "#1f2933",
+    "primary": "#1d4ed8",
+    "accent": "#f59e0b"
+  },
+  "font": "sans",
+  "logo": null,
+  "domain": {
+    "zoneId": "zone-1",
+    "zoneName": "example.com",
+    "label": ""
+  },
+  "workerName": "fixture-site-2e10",
+  "pages": [
+    {
+      "id": "57135fb0",
+      "title": "Home",
+      "sections": [
+        {
+          "id": "dd2f385d",
+          "type": "hero",
+          "heading": "Fixture Site",
+          "text": "A short sentence about what you do and who you do it for.",
+          "image": null,
+          "buttonText": "Get in touch",
+          "buttonPage": "32f17c40"
+        },
+        {
+          "id": "2cb84f28",
+          "type": "text",
+          "heading": "About us",
+          "text": "Tell visitors who you are, what makes you different, and why they should choose you.",
+          "image": null,
+          "imageLeft": false
+        }
+      ]
+    },
+    {
+      "id": "32f17c40",
+      "title": "Contact",
+      "sections": [
+        {
+          "id": "63b3d081",
+          "type": "form",
+          "heading": "Get in touch",
+          "text": "Send us a message and we'll get back to you.",
+          "formId": "contact",
+          "buttonText": "Send message"
+        }
+      ]
+    }
+  ],
+  "forms": [
+    {
+      "id": "contact",
+      "name": "Contact",
+      "to": "",
+      "success": "Thanks! Your message has been sent, we'll be in touch soon.",
+      "fields": [
+        {
+          "id": "name",
+          "label": "Your name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "email",
+          "label": "Email address",
+          "type": "email",
+          "required": true
+        },
+        {
+          "id": "message",
+          "label": "Message",
+          "type": "textarea",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
