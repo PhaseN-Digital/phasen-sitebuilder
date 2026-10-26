@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.3...phasen-sitebuilder-v0.8.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **publish:** clean up the old hostname when a site's address changes ([#139](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/139)) ([#221](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/221)) ([aee31f7](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/aee31f7e2981b44bf7f3913456bed910ec2c21c9))
+
 ## [0.8.3](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.2...phasen-sitebuilder-v0.8.3) (2026-10-26)
 
 
