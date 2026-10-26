@@ -138,7 +138,8 @@ function themeFrom(style) {
 }
 
 // Each image downloaded once, through the upload pipeline; null (and counted in `failed`) when it can't be.
-function imageFetcher(siteId, base) {
+// `fetch` gets an image's bytes by absolute URL (app/markdown.js reads local ones through main.js).
+function imageFetcher(siteId, base, fetch = (abs) => call("wp:image", abs)) {
   const downloaded = new Map();
   const images = {
     failed: 0,
@@ -146,7 +147,7 @@ function imageFetcher(siteId, base) {
       let abs;
       try { abs = new URL(src, base).href; } catch { images.failed++; return null; }
       if (!downloaded.has(abs)) {
-        downloaded.set(abs, call("wp:image", abs).then((bytes) => saveImage(siteId, new Blob([bytes]), max)).catch(() => { images.failed++; return null; }));
+        downloaded.set(abs, fetch(abs).then((bytes) => saveImage(siteId, new Blob([bytes]), max)).catch(() => { images.failed++; return null; }));
       }
       return downloaded.get(abs);
     },
@@ -429,7 +430,8 @@ const originOf = (url) => { try { return new URL(/^https?:\/\//i.test(url.trim()
 // The modal shown before every import, and once for sites imported before it
 // existed (`legacy`, which also asks where the site came from). Resolves to the
 // declaration main.js requires ({ confirmed, statement, token, url }), or null.
-function declarationDialog({ url = "", legacy = false } = {}) {
+// `local`: files on this computer (Markdown, #255), with no website to verify.
+function declarationDialog({ url = "", legacy = false, local = false } = {}) {
   return new Promise((resolve) => {
     const token = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const source = h("input", { name: "source", required: true, placeholder: "https://example.com", value: url });
@@ -447,7 +449,7 @@ function declarationDialog({ url = "", legacy = false } = {}) {
         h("div", { className: "warn" }, "Only import a website you own, or one whose owner has given you written permission to copy and republish it. Copying a website you don't have rights to can infringe copyright, trademarks and database rights, and you're responsible for what you publish. This isn't legal advice."),
         h("label", { className: "declare" }, box, " ", DECLARATION),
         h("p", { className: "hint" }, "Every published page will say it was made with PhaseN Site Builder and imported from this address, with the import date, and /.well-known/phasen-provenance.json will list the address, date, app version and whether ownership was verified. Your name and email are never published; they're kept with the website on this computer, with your declaration."),
-        h("details", {},
+        !local && h("details", {},
           h("summary", {}, "Verify that you own it (optional)"),
           h("p", { className: "hint" }, "We check automatically: it's verified if the domain is in your connected Cloudflare account, or if you import a WordPress site with an application password. Or put a file at this address before you continue, containing just ", h("code", {}, token), ": ", file)),
         h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
@@ -512,7 +514,7 @@ function renderImport() {
     h("button", { className: "primary big" }, "Import website"),
     error,
     status);
-  $("#main").replaceChildren(h("div", { className: "import-wrap" }, form));
+  $("#main").replaceChildren(h("div", { className: "import-wrap" }, form, markdownImportCard())); // app/markdown.js (#255)
 }
 
 $("#import-wp").addEventListener("click", async () => {
