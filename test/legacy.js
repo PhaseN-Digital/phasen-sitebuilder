@@ -52,7 +52,9 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 const cf = require("../lib/publish");
 const deploys = [];
+let failDeploy = false;
 cf.deployWorker = async (out, creds, secrets) => {
+  if (failDeploy) { calls.push("deploy failed"); throw new Error("upload failed"); }
   deploys.push(secrets);
   calls.push("deploy");
   fs.cpSync(out, path.join(OUT, `publish-${deploys.length}`), { recursive: true });
@@ -102,6 +104,27 @@ app.on("browser-window-created", (_e, win) => {
       const r3 = await publish(site.id);
       check("guard: refuses to deploy with an invalid key", /form keys aren't valid/.test(r3) && deploys.length === 2, r3);
       check("guard: the live sending key isn't deleted when the deploy is refused (#176)", !calls.some((c) => c.startsWith("resend DELETE")), calls);
+
+      // 4. A deploy that fails after the key was replaced keeps the old ids for later (#276).
+      issueGarbage = false;
+      await store.updateState(dir, (s) => { delete s.sendingKey; });
+      failDeploy = true;
+      calls.length = 0;
+      const r4 = await publish(site.id);
+      const s4 = await store.loadState(dir);
+      check("failed deploy: publish reports it, nothing deleted at Resend (#276)", /upload failed/.test(r4) && !calls.some((c) => c.startsWith("resend DELETE")), { r4, calls });
+      check("failed deploy: the replaced key ids wait in publish.json, no key values (#276)",
+        JSON.stringify(s4.oldSendingKeyIds) === JSON.stringify(["key-2", "key-3"]) && s4.sendingKeyId === "key-4" && !fs.readFileSync(path.join(dir, "publish.json"), "utf8").includes("re_send"), s4.oldSendingKeyIds);
+
+      // 5. The next successful publish deletes them and reuses the live key.
+      failDeploy = false;
+      calls.length = 0;
+      const r5 = await publish(site.id);
+      const s5 = await store.loadState(dir);
+      const after = calls.slice(calls.indexOf("deploy"));
+      check("next publish: deletes the saved old keys after the deploy, not the live one (#276)",
+        r5 === "ok" && after.includes("resend DELETE /api-keys/key-2") && after.includes("resend DELETE /api-keys/key-3") && !calls.includes("resend DELETE /api-keys/key-4") && !calls.includes("resend POST /api-keys"), calls);
+      check("next publish: the pending list is cleared (#276)", !("oldSendingKeyIds" in s5) && deploys.at(-1)?.RESEND_API_KEY === "re_send_4", s5.oldSendingKeyIds);
     } catch (e) {
       check("legacy run finished without errors", false, String(e.stack || e));
     }

@@ -98,7 +98,8 @@ app.on("browser-window-created", (_e, win) => {
         createSendingKey: async () => ({ id: "key-1", token: "re_sending" }),
         ensureD1: async (token, accountId, workerName) => ({ id: "db-1", name: `${workerName}-inbox` }),
         deployWorker: async (out, creds) => calls.deploy.push({ ...creds, forms: JSON.parse(read(path.join(out, "worker", "forms.json"))), privacy: read(path.join(out, "public", "privacy.html")) }),
-        unpublish: async (token, resendKey, state) => (calls.unpublish.push({ token, resendKey }), { state: {}, failed: [] }),
+        // Like the real one: keeps the inbox unless deleteInbox (#126).
+        unpublish: async (token, resendKey, state, log, opts) => (calls.unpublish.push({ token, resendKey, opts }), { state: opts?.deleteInbox ? { accountId: state.accountId } : { accountId: state.accountId, d1: state.d1 }, failed: [] }),
       });
       const connect = (scope, placeholder, value) => run(`{ const i = document.querySelector(${JSON.stringify(`${scope} input[placeholder="${placeholder}"]`)}); i.value = ${JSON.stringify(value)}; i.nextSibling.click(); } 0`);
       const setField = (label, value, tag = "input") => run(`{ const i = ${fieldInput(label, tag)}; i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("change")); } 0`);
@@ -153,16 +154,20 @@ app.on("browser-window-created", (_e, win) => {
       // Back to the app's account: offline must still go through the account the site is live on, never the app's.
       await clickButton("Reset to the app's account");
       await waitFor(() => run(`!siteAccounts.cloudflare`));
-      await run(`window.confirm = () => true; 0`);
       await clickButton("Take website offline");
+      await clickButton("Take offline");
       const err = await waitFor(() => run(`[...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`));
       check("unpublish: refuses another account than the one that published", /isn't connected any more/.test(err || "") && !calls.unpublish.length, err);
       await run(`[...document.querySelectorAll(".step")][0].querySelector("button:nth-child(2)").click()`);
       await connect(".step", "Paste your Cloudflare API token", "site");
       await waitFor(() => run(`siteAccounts.cloudflare?.accountId === "acct-site"`));
       await clickButton("Take website offline");
+      await clickButton("Take offline");
       await waitFor(() => calls.unpublish.length);
       check("unpublish: uses the account that published", calls.unpublish[0]?.token === "site" && calls.unpublish[0].resendKey === "re_app", calls.unpublish[0]);
+      // #126: the inbox is kept by default, and a kept inbox alone doesn't offer "Take website offline" again.
+      await waitFor(() => run(`!canUnpublish && ![...document.querySelectorAll("button")].some((b) => b.textContent === "Take website offline")`));
+      check("unpublish: keeps the inbox unless asked", calls.unpublish[0]?.opts?.deleteInbox === false && JSON.parse(read(path.join(S(id), "publish.json"))).d1?.id === "db-1", calls.unpublish[0]?.opts);
     }
 
     // ---------- Theme Builder (#130): a theme from the created site's design, saved, then used by that site ----------
@@ -380,6 +385,13 @@ app.on("browser-window-created", (_e, win) => {
       await clickButton("Sync now");
       check("github sync: shared settings up to date", await waitFor(() => run(`!syncState.settings.busy && document.querySelector(".sync-settings [role=status]").textContent === "Up to date with GitHub."`)));
       await shot("sync-settings-synced");
+      await run(`window.confirm = () => true; 0`);
+      await clickButton("Stop syncing settings"); // #298
+      check("github sync: stop syncing settings forgets the repo and its local copy", await waitFor(async () => (await run(`!syncState.settings.busy && !settings.github.settingsRepo && Boolean(document.querySelector(".sync-settings").textContent.includes("Create private repository"))`))
+        && !fs.existsSync(path.join(UD, "settings-sync")) && (await run(`Boolean(settings.github.login)`))), await run(`document.querySelector(".sync-settings").textContent`));
+      await clickButton("Use an existing repository");
+      check("github sync: the settings repo stayed on GitHub and can be used again", await waitFor(async () => (await run(`!syncState.settings.busy && settings.github.settingsRepo`)) === "octo/sitebuilder-settings"
+        && /^(Brought in the changes from GitHub|Up to date with GitHub)\.$/.test(await run(`document.querySelector(".sync-settings [role=status]").textContent`))), await run(`document.querySelector(".sync-settings").textContent`));
     }
 
     // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------
@@ -952,25 +964,26 @@ app.on("browser-window-created", (_e, win) => {
       check("exact copy: import opens the site", id, await run(`document.querySelector(".import .error")?.textContent || document.querySelector(".log")?.textContent`).catch(() => ""));
       if (!id) return;
       result.sites.mirror = id;
-      const M = path.join(S(id), "mirror");
+      // Look the folder up at each read: autosave renames it to match the site name after 15s (#244).
+      const M = (...p) => path.join(S(id), "mirror", ...p);
       const s = JSON.parse(read(path.join(S(id), "site.json")));
       check("declaration: provenance recorded (exact copy), unverified", s.importProvenance?.source === new URL(SB_EL).origin && s.importProvenance.verification?.status === "unverified" && s.importProvenance.declaredBy?.name === "Jo Declarer", s.importProvenance);
       const previewed = await Promise.all(["/", "/about/", "/nope/"].map((p) => require("electron").net.fetch(`preview://${id}${p}`).then((r) => r.text())));
       check("exact copy: in-app preview shows the provenance marker (#145)", previewed.every((h) => h.includes(`<meta name="phasen:imported-from" content="${new URL(SB_EL).origin}">`) && (h.match(/name="generator"/g) || []).length === 1)
-        && !read(path.join(M, "index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
+        && !read(M("index.html")).includes("phasen:"), previewed.map((h) => h.slice(0, 300)));
       const escape = await require("electron").net.fetch(`preview://${id}/assets/..%2Fsite.json`).then((r) => r.text());
       check("exact copy: preview /assets/ can't reach the site folder", !escape.includes("importProvenance"), escape.slice(0, 200));
       check("exact copy: pages", JSON.stringify(s.pages.map((p) => p.mirror).sort()) === JSON.stringify(["/", "/about/", "/contact-us/"]), s.pages.map((p) => p.mirror));
 
-      const files = [];
-      (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) f.isDirectory() ? walk(path.join(d, f.name)) : files.push(path.join(d, f.name)); })(M);
-      const leftovers = files.filter((f) => /\.(html|css|js|json|txt)$|_redirects$/.test(f) && read(f).includes(elHost)).map((f) => path.relative(M, f));
+      const files = [], root = M();
+      (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) f.isDirectory() ? walk(path.join(d, f.name)) : files.push(path.join(d, f.name)); })(root);
+      const leftovers = files.filter((f) => /\.(html|css|js|json|txt)$|_redirects$/.test(f) && read(f).includes(elHost)).map((f) => path.relative(root, f));
       check("exact copy: no leftover origin URLs", !leftovers.length, leftovers);
       for (const f of ["wp-content/uploads/2024/01/bg.png", "wp-content/uploads/elementor/css/extra.css", "wp-content/themes/hello/fonts/acme.woff2", "wp-content/plugins/elementor/assets/js/frontend.min.js", "assets/logo-wide.png", "assets/brand-bg.png", "404.html"])
-        check(`exact copy: copied ${f}`, fs.existsSync(path.join(M, f)));
-      check("exact copy: redirect kept", /^\/contact\/ \/contact-us\/ 301$/m.test(read(path.join(M, "_redirects"))));
+        check(`exact copy: copied ${f}`, fs.existsSync(M(f)));
+      check("exact copy: redirect kept", /^\/contact\/ \/contact-us\/ 301$/m.test(read(M("_redirects"))));
 
-      const home = read(path.join(M, "index.html"));
+      const home = read(M("index.html"));
       const form = s.forms[0];
       check("exact copy: form detected", s.forms.length === 1 && form.mirrored && JSON.stringify(form.fields.map((f) => [f.id, f.type, f.required])) === JSON.stringify([["form_fields[name]", "text", true], ["form_fields[email]", "email", true], ["form_fields[message]", "textarea", false], ["form_fields[services][]", "choice", false], ["form_fields[other]", "text", false]]), s.forms);
       check("exact copy: form re-wired", form && home.includes(`data-form="${form.id}"`) && !home.includes("admin-ajax") && home.includes("cf-turnstile") && home.includes('name="website"') && home.includes("/form.js"));
@@ -986,7 +999,7 @@ app.on("browser-window-created", (_e, win) => {
       check("tagging: both menus share one site-wide key", menuKeys.length === 2 && menuKeys[0] === menuKeys[1] && menuKeys[0].startsWith("s-"), menuKeys);
       check("tagging: text widget is one block", /class="elementor-widget-container" data-sb-edit="p-[^"]+"><p>We make/.test(home));
       check("tagging: layout untagged", !/<(section|div) class="elementor-(section|container|column)[^"]*"[^>]*data-sb-edit/.test(home));
-      check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(path.join(M, f)).includes(`data-sb-edit="${footer}"`)));
+      check("tagging: same key on every page", ["about/index.html", "contact-us/index.html"].every((f) => read(M(f)).includes(`data-sb-edit="${footer}"`)));
 
       // Preview: our submit handler wins over Elementor's. The editor opens on site.pages[0], which is
       // whichever page the crawl finished first (not always the one with the form), so load the home
@@ -1008,16 +1021,16 @@ app.on("browser-window-created", (_e, win) => {
       const edit = async (selector, text) => inFrame(`{ const el = document.querySelector(${JSON.stringify(selector)}); el.click(); el.textContent = ${JSON.stringify(text)}; el.closest("[data-sb-edit]").dispatchEvent(new FocusEvent("blur")); 0 }`);
       const settle = () => run(`copyEdits.then(() => 0)`);
       const all = ["index.html", "about/index.html", "contact-us/index.html", "404.html"];
-      const grab = () => Object.fromEntries(all.map((f) => [f, read(path.join(M, f))]));
+      const grab = () => Object.fromEntries(all.map((f) => [f, read(M(f))]));
 
       await edit("h1", "Welcome to Acme Widgets");
-      await waitFor(() => read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"), 5000); await settle();
+      await waitFor(() => read(M("index.html")).includes("Welcome to Acme Widgets"), 5000); await settle();
       let now = grab();
       check("page edit: saved on this page", now["index.html"].includes(">Welcome to Acme Widgets</h1>"));
       check("page edit: original kept for revert", fs.existsSync(path.join(S(id), "mirror-original", "index.html")));
 
       await edit(".elementor-location-footer p", "Call us on 0800 000 111");
-      await waitFor(() => all.every((f) => read(path.join(M, f)).includes("0800 000 111")), 5000); await settle();
+      await waitFor(() => all.every((f) => read(M(f)).includes("0800 000 111")), 5000); await settle();
       now = grab();
       check("site-wide edit: applied to every page", all.every((f) => now[f].includes("Call us on 0800 000 111")), all.filter((f) => !now[f].includes("0800 000 111")));
       check("site-wide edit: page edit stays on its page", !now["about/index.html"].includes("Acme Widgets"));
@@ -1026,9 +1039,9 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(selectedCopyImage)`));
       await fakePick(120, 80, "#0a0");
       await clickButton("Replace image…");
-      const img = await waitFor(() => read(path.join(M, "index.html")).match(/<img src="(\/assets\/[a-f0-9]+\.webp)"[^>]*alt="Hero"/)?.[1], 8000); await settle();
+      const img = await waitFor(() => read(M("index.html")).match(/<img src="(\/assets\/[a-f0-9]+\.webp)"[^>]*alt="Hero"/)?.[1], 8000); await settle();
       check("copy image: new upload shows in the preview (#163)", await waitFor(() => inFrame(`document.querySelector('img[alt="Hero"]').src.endsWith(${JSON.stringify(img)}) && document.querySelector('img[alt="Hero"]').naturalWidth > 0`), 5000));
-      check("copy image: replaced and srcset dropped", img && fs.existsSync(path.join(S(id), img)) && !/alt="Hero"[^>]*srcset|srcset[^>]*alt="Hero"/.test(read(path.join(M, "index.html"))), img);
+      check("copy image: replaced and srcset dropped", img && fs.existsSync(path.join(S(id), img)) && !/alt="Hero"[^>]*srcset|srcset[^>]*alt="Hero"/.test(read(M("index.html"))), img);
 
       await clickButton("Undo last change"); await settle(); // the image
       await clickButton("Undo last change"); await settle(); // the footer
@@ -1038,11 +1051,11 @@ app.on("browser-window-created", (_e, win) => {
 
       await clickButton("Revert this page to the original"); await settle();
       const original = read(path.join(S(id), "mirror-original", "index.html"));
-      check("revert: page back to the import", read(path.join(M, "index.html")) === original && original.includes(">Welcome to Acme</h1>"));
+      check("revert: page back to the import", read(M("index.html")) === original && original.includes(">Welcome to Acme</h1>"));
       check("revert: save state", (await run(`document.querySelector(".save-state").textContent`)) === "Page reverted");
       const undone = Date.now();
       await clickButton("Undo last change"); await settle();
-      check("undo: revert can be undone", read(path.join(M, "index.html")).includes("Welcome to Acme Widgets"));
+      check("undo: revert can be undone", read(M("index.html")).includes("Welcome to Acme Widgets"));
 
       // Link target of a site-wide menu item (both menus, every page); regression.js checks the built site.
       // Find and click in one poll: a separate click call can land on a frame the undo reload is replacing and hang.
@@ -1069,13 +1082,13 @@ app.on("browser-window-created", (_e, win) => {
       await waitFor(() => run(`Boolean(document.querySelector(".copy-link input"))`), 5000);
       await shot("copy-link");
       await setLink("https://example.com/about-acme"); await settle();
-      check("copy link: external address saved", all.every((f) => read(path.join(M, f)).includes('<a href="https://example.com/about-acme">About</a>')));
+      check("copy link: external address saved", all.every((f) => read(M(f)).includes('<a href="https://example.com/about-acme">About</a>')));
       // Linked image (the header logo, site-wide): same link panel from the image panel.
       await waitFor(() => inFrame(`{ const i = document.querySelector(".elementor-location-header a > img"); if (i) i.click(); Boolean(i) }`));
       const logoShown = await waitFor(() => run(`selectedCopyImage && document.querySelector(".copy-link input")?.value`), 5000);
       check("copy image link: panel shows the logo's target", logoShown === "/", logoShown);
       await setLink("/contact-us/"); await settle(); await shot("copy-image-link");
-      check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(path.join(M, f)))));
+      check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(M(f)))));
       // #202: a link edit made while the preview is reloading still reaches the preview.
       const logoHref = (href) => waitFor(() => inFrame(`document.querySelector(".elementor-location-header a > img")?.parentElement.getAttribute("href") === ${JSON.stringify(href)}`), 5000);
       await setLink("/about/"); await settle(); await logoHref("/about/");

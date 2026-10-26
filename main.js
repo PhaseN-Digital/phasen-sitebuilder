@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, protocol, net, safeStorage, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, protocol, net, safeStorage, dialog, shell, Menu, clipboard } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { build, pruneAssets, stampHtml, themes, fonts, inboxDays } = require("./lib/build");
@@ -21,6 +22,7 @@ const repo = require("./lib/site-repo");
 const folder = require("./lib/sites-folder");
 const sync = require("./lib/sync");
 const markdown = require("./lib/markdown");
+const diagnostics = require("./lib/diagnostics");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -172,9 +174,11 @@ async function saveHistory(id, message) {
   return oid;
 }
 // A renamed site's folder follows its name (#177), once its edits are committed and
-// nothing else is running: every IPC call and commit counts as busy, so a publish,
-// a folder move or a flush is never left holding the old path, and IPC calls and
-// previews wait for a rename in progress. Only after a commit (a pause in editing,
+// nothing else is running: every IPC call, preview request (#246) and commit counts
+// as busy, so a publish, a folder move, a flush or a preview is never left holding
+// the old path, and IPC calls and previews wait for a rename in progress. Requests
+// take milliseconds and a skipped rename is retried at the next commit, so this
+// doesn't starve renames or slow the preview. Only after a commit (a pause in editing,
 // or quitting), so typing a name doesn't rename the folder letter by letter.
 // ponytail: one app-wide busy count, per-site counts if renames ever wait too long.
 let busy = 0, renaming = null;
@@ -339,9 +343,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
-  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
-    oldKeyId = state.sendingKeyId;
+    // Deleted only once the new key is live (#176), and kept until then even if this deploy fails (#276).
+    if (state.sendingKeyId) state.oldSendingKeyIds = [...new Set([...(state.oldSendingKeyIds || []), state.sendingKeyId])];
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -369,7 +373,10 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
-  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
+  if (state.oldSendingKeyIds) {
+    await cf.deleteOldSendingKeys(resendKey, state, log);
+    await writeState(id, state);
+  }
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -386,8 +393,10 @@ async function publish(id, log) {
 }
 
 // Undoes publish() (#71). Throws if anything couldn't be removed; publish.json
-// keeps just those parts, so trying again only retries them.
-async function unpublish(id, log) {
+// keeps just those parts, so trying again only retries them. The inbox is kept
+// unless deleteInbox (#126); inboxOnly deletes just the inbox (deleting a site
+// that's already offline or left online).
+async function unpublish(id, log, { deleteInbox = false, inboxOnly = false } = {}) {
   const site = await readSite(id);
   const { published, state } = await settingsFor(id, site);
   if (!published.cloudflare) throw new Error(state.accountId
@@ -398,13 +407,17 @@ async function unpublish(id, log) {
     if (site.domain && !site.domain.label) state.www ??= { id: site.domain.zoneId, name: site.domain.zoneName };
   }
   state.accountId ??= published.cloudflare.accountId;
-  log("Taking the website offline…\n");
-  const { state: left, failed } = await cf.unpublish(unseal(published.cloudflare.token), unseal(published.resendKey), state, log);
-  await writeState(id, left);
+  log(inboxOnly ? "Deleting the form inbox…\n" : "Taking the website offline…\n");
+  const target = inboxOnly ? { accountId: state.accountId, d1: state.d1 } : state;
+  const { state: left, failed } = await cf.unpublish(unseal(published.cloudflare.token), unseal(published.resendKey), target, log, { deleteInbox });
+  const next = inboxOnly ? { ...state, d1: left.d1 } : left;
+  if (!next.d1) delete next.d1;
+  await writeState(id, next);
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
-  log("\nDone. The website is offline.\n");
+  if (!inboxOnly) log("\nDone. The website is offline.\n");
 }
-const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1 || s.moved?.length);
+// A kept inbox (#126) doesn't count: the site is offline without it.
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.moved?.length);
 
 // Form inbox (#75): read straight from the site's D1 database with the user's
 // token, so no public endpoint ever serves messages. Returns null when the
@@ -643,7 +656,11 @@ const handlers = {
     return previewBuild(site); // page id -> preview path
   },
   "sites:delete": async (id, offline, event) => {
-    if (offline) await unpublish(id, (line) => event.sender.send("publish-log", line)); // throws before anything local is deleted
+    // Deleting a site always deletes its inbox (#126), so no messages are left in the Cloudflare account.
+    // Both throw before anything local is deleted.
+    const log = (line) => event.sender.send("publish-log", line);
+    if (offline) await unpublish(id, log, { deleteInbox: true });
+    else if ((await readState(id)).d1) await unpublish(id, log, { deleteInbox: true, inboxOnly: true });
     clearTimeout(pendingCommits.get(id));
     pendingCommits.delete(id);
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });
@@ -668,9 +685,9 @@ const handlers = {
     await repo.tag(siteDir(id), liveTag()).catch((e) => console.error("Couldn't tag the published version:", e));
     return url;
   },
-  "sites:unpublish": async (id, event) => {
+  "sites:unpublish": async (id, deleteInbox, event) => {
     await saveHistory(id);
-    await unpublish(id, (line) => event.sender.send("publish-log", line));
+    await unpublish(id, (line) => event.sender.send("publish-log", line), { deleteInbox: deleteInbox === true });
     await saveHistory(id, "Took the website offline");
   },
 
@@ -855,6 +872,10 @@ const handlers = {
   "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
   "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
+  "sync:settings-stop": async () => { // #298: forgets the repo and the local copy; the repository on GitHub is left alone
+    await updateSettings((x) => { if (x.github) delete x.github.settingsRepo; });
+    await fs.rm(data("settings-sync"), { recursive: true, force: true });
+  },
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
     return publicSettings(await updateSettings((s) => { s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim(); }));
@@ -985,11 +1006,34 @@ const handlers = {
   open: (url) => /^https:\/\//.test(url) && shell.openExternal(url),
 };
 
+// Help > Copy diagnostic report (#86, lib/diagnostics.js): recent errors and
+// publish/import log lines, kept in memory only, and settings via settingsFor().
+const recentErrors = [], recentLog = [];
+async function copyDiagnostics() {
+  await ready;
+  const ids = [...sites.keys()];
+  const report = diagnostics.report({
+    app: { version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node,
+      platform: process.platform, arch: process.arch, osRelease: os.release(), packaged: app.isPackaged, locale: app.getLocale(), dataDir: data(),
+      portable: keyring.portable, secretsProblem: secrets.problems()[0] || null },
+    settings: await loadSettings(),
+    sites: await Promise.all(ids.map((id) => settingsFor(id).catch(() => ({ site: { id } })))),
+    log: recentLog, errors: recentErrors, home: os.homedir(),
+  });
+  clipboard.writeText(report);
+  await dialog.showMessageBox(mainWindow, { type: "info", message: "Diagnostic report copied", detail: "Paste it into your message to support. It has no passwords, keys or email addresses in it." });
+}
+
+handlers["diagnostics:copy"] = () => copyDiagnostics(); // also Settings › Data & support
+
 for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, async (event, ...args) => {
     await ready;
     while (renaming) await renaming; // no await when idle, so nothing slips in between this and busy++
-    const result = await whileBusy(() => fn(...args, event));
+    const result = await whileBusy(() => fn(...args, event)).catch((e) => {
+      diagnostics.remember(recentErrors, { at: new Date().toISOString(), channel, message: e?.message || String(e) }, 20);
+      throw e;
+    });
     if (EDITS.has(channel)) {
       const id = channel === "sites:save" ? args[0]?.id : channel.startsWith("settings:") ? args.at(-1) : args[0];
       if (typeof id === "string" && sites.has(id)) autosave(id);
@@ -1019,51 +1063,53 @@ app.whenReady().then(() => {
   protocol.handle("preview", async (request) => {
     await ready;
     while (renaming) await renaming;
-    const { host, pathname } = new URL(request.url);
-    if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
-    const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
-    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
-    if (frameScript) {
-      return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
-    }
-    // Uploaded images come straight from the site folder so a fresh upload
-    // shows before the next preview build finishes; exact-copy pages are
-    // served from the site folder too rather than copied on every save.
-    // A copied site's own /assets/ files sit in mirror/ (#163).
-    const mirror = path.join(siteDir(host), "mirror");
-    const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
-    const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
-    const find = async (candidates) => {
-      for (const name of candidates) for (const root of roots) {
-        const file = path.join(root, path.normalize(name));
-        if (file.startsWith(root + path.sep) && (await fs.stat(file).catch(() => null))?.isFile()) return file;
+    return whileBusy(async () => { // so a folder rename can't start mid-request (#246)
+      const { host, pathname } = new URL(request.url);
+      if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
+      const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
+      const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
+      if (frameScript) {
+        return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
       }
-    };
-    const found = await find(names);
-    const file = found || (await find(["/404.html"]));
-    if (!file) return new Response("Not found", { status: 404 });
-    // Copied pages get the provenance marker the published copy will have (#145),
-    // and open in edit mode on the Pages tab (app/copied.js). The editor reads
-    // and writes the file itself (mirror:read/write), so neither ends up in it.
-    if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
-      let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
-      const params = new URL(request.url).searchParams;
-      if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
-      // The editable import's review step (#161): only our script runs, so the page shows exactly the HTML being imported.
-      const nonce = found && params.has("sb-pick") && hex(16);
-      if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
-      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
-    }
-    // The Theme Builder's preview gets its right-click menu script (#156).
-    if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
-      const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
-      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-    }
-    const res = await net.fetch(pathToFileURL(file).href);
-    // Every save rewrites these files, so the preview must never cache them.
-    const headers = new Headers(res.headers);
-    headers.set("Cache-Control", "no-store");
-    return new Response(res.body, { status: found ? 200 : 404, headers });
+      // Uploaded images come straight from the site folder so a fresh upload
+      // shows before the next preview build finishes; exact-copy pages are
+      // served from the site folder too rather than copied on every save.
+      // A copied site's own /assets/ files sit in mirror/ (#163).
+      const mirror = path.join(siteDir(host), "mirror");
+      const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
+      const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
+      const find = async (candidates) => {
+        for (const name of candidates) for (const root of roots) {
+          const file = path.join(root, path.normalize(name));
+          if (file.startsWith(root + path.sep) && (await fs.stat(file).catch(() => null))?.isFile()) return file;
+        }
+      };
+      const found = await find(names);
+      const file = found || (await find(["/404.html"]));
+      if (!file) return new Response("Not found", { status: 404 });
+      // Copied pages get the provenance marker the published copy will have (#145),
+      // and open in edit mode on the Pages tab (app/copied.js). The editor reads
+      // and writes the file itself (mirror:read/write), so neither ends up in it.
+      if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
+        let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
+        const params = new URL(request.url).searchParams;
+        if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+        // The editable import's review step (#161): only our script runs, so the page shows exactly the HTML being imported.
+        const nonce = found && params.has("sb-pick") && hex(16);
+        if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
+        return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
+      }
+      // The Theme Builder's preview gets its right-click menu script (#156).
+      if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
+        const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
+        return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+      }
+      const res = await net.fetch(pathToFileURL(file).href);
+      // Every save rewrites these files, so the preview must never cache them.
+      const headers = new Headers(res.headers);
+      headers.set("Cache-Control", "no-store");
+      return new Response(res.body, { status: found ? 200 : 404, headers });
+    });
   });
 
   const win = mainWindow = new BrowserWindow({
@@ -1075,7 +1121,17 @@ app.whenReady().then(() => {
     icon: path.join(__dirname, "build", "icon.png"), // Linux/dev window icon; packaged mac/win use build.icon
     webPreferences: { preload: path.join(__dirname, "preload.js") },
   });
-  win.removeMenu();
+  const help = { role: "help", submenu: [
+    { label: "Copy diagnostic report", click: () => copyDiagnostics().catch((e) => dialog.showErrorBox("Couldn't make the diagnostic report", e.message)) },
+    { label: "Open data folder", click: () => handlers["settings:open-data"]() },
+  ] };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === "darwin" ? [{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }, help] : [help]));
+  // Publish/import log lines for the diagnostic report (#86); every sender of them goes through this window.
+  const send = win.webContents.send.bind(win.webContents);
+  win.webContents.send = (channel, ...args) => {
+    if (channel === "publish-log" || channel === "import-log") diagnostics.remember(recentLog, String(args[0]), 200);
+    return send(channel, ...args);
+  };
   // Links clicked in the preview open in the user's real browser, never inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
