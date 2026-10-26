@@ -394,6 +394,24 @@ const site = {
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  // Exact copy lists pages in crawl order with home first (#95), even when home finishes after pages fetched
+  // alongside it (the 404 page's links join home's batch) and later pages finish out of order.
+  {
+    const delay = { "/": 150, "/b/": 150 };
+    const html = (body) => `<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`;
+    const srv = require("node:http").createServer((req, res) => {
+      const known = { "/": '<a href="/b/">b</a><a href="/c/">c</a>', "/a/": "a", "/b/": "b", "/c/": "c" }[req.url];
+      setTimeout(() => {
+        res.writeHead(known === undefined ? 404 : 200, { "content-type": "text/html" });
+        res.end(html(known ?? '<a href="/a/">a</a>'));
+      }, delay[req.url] || 0);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-order-"));
+    const r = await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    assert.deepStrictEqual(r.pages.map((p) => p.path), ["/", "/a/", "/b/", "/c/"], "exact copy pages in crawl order, home first");
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
@@ -674,6 +692,16 @@ const site = {
     await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
     const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
     assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+
+    // #258: a rejected token is reported (so main.js can mark the sign-in expired); a working one isn't.
+    let rejected = 0;
+    const tick = async () => rejected++;
+    const cache258 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themecache-"));
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick });
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick }));
+    await ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: fakeGh.token, rejected: tick });
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, rejected: tick });
+    assert.strictEqual(rejected, 2, "rejected() runs once per 401, never for a good or absent token");
   } finally {
     await fakeGh.close();
   }
@@ -1333,6 +1361,32 @@ const site = {
     const rescanned = await folder.scan(to);
     assert(rescanned.size === 2 && [...rescanned.values()].includes(wheels) && !fs.existsSync(cycles) && await repo.isRepo(wheels));
     fs.rmSync(base, { recursive: true, force: true });
+  }
+
+  // Markdown import (#255): titles, addresses, menu order, rendering; sanitizing and links are app/markdown.js (test/drive.js).
+  {
+    const md = require("./lib/markdown");
+    assert.deepStrictEqual(md.frontMatter("\uFEFF---\ntitle: 'A: b'\nSlug: x\n---\nBody").data, { title: "A: b", slug: "x" });
+    assert.strictEqual(md.frontMatter("No front matter\n---\n").body, "No front matter\n---\n");
+    assert.strictEqual(md.toPage("a.md", "Intro\n\n# The *Title*").title, "The Title", "first # heading");
+    assert.strictEqual(md.toPage("a.md", "---\ntitle: Front\n---\n# Heading").title, "Front", "front matter wins");
+    assert.strictEqual(md.toPage("dir/getting-started.md", "## Not h1").title, "Getting started", "file name last");
+    assert.strictEqual(md.toPage("a.md", "---\nslug: /about/\n---\n").path, "/about/");
+    assert.strictEqual(md.toPage("a.md", "---\npath: services/web\n---\n").path, "/services/web");
+    assert.strictEqual(md.toPage("a.md", "x").path, undefined, "no front matter address: title-based");
+    const { html } = md.toPage("a.md", "```\na<b\nc\n```\n\n###### Tiny\n\n<script>x</script>");
+    assert(html.includes("<p>a&lt;b<br>c</p>") && html.includes("<h4>Tiny</h4>") && html.includes("<script>"), "code as a paragraph, h6 as h4, raw HTML left for the sanitizer");
+    const pages = await md.readMarkdown(path.join(__dirname, "test/fixtures/markdown"));
+    assert.deepStrictEqual(pages.map((p) => [p.rel, p.title, p.path]), [
+      ["index.md", "Welcome to Bob's Bikes", undefined], ["about.md", "About the team", "/about-us/"], ["guides/setup.md", "Setup", undefined], ["README.md", "Readme", undefined]],
+      "index.md is home (README.md only without one), then order:, then path");
+    assert.strictEqual(md.toPages([{ rel: "b.md", text: "" }, { rel: "README.md", text: "" }])[0].rel, "README.md");
+    const fx = path.join(__dirname, "test/fixtures/markdown");
+    assert((await md.readImage(fx, "img/bike.png")).length > 50);
+    for (const bad of ["../markdown/img/bike.png/..", "../../package.json", "index.md", "/etc/passwd"]) await assert.rejects(md.readImage(fx, bad), undefined, bad);
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "md-"));
+    await assert.rejects(md.readMarkdown(empty), /no Markdown/);
+    fs.rmSync(empty, { recursive: true });
   }
 
   const { execFileSync } = require("node:child_process");

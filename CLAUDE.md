@@ -145,7 +145,11 @@ are not, so add them yourself.
   moved, the PR's base isn't that main, its head isn't the tested sha or
   doesn't contain main; it re-classifies the bump from the current versions,
   checks main once more just before `gh pr merge`, and fails without
-  releasing if the squash isn't exactly the tested tree. A `regate` PR is
+  releasing if the squash isn't exactly the tested tree. release-please
+  leaves its PR on an old main when only non-releasable commits landed
+  ("remained the same"), so the `pr` step merges the run's recorded main
+  (never a later one) into a head that's behind it before gating (#113);
+  the checks above then apply to that merge unchanged. A `regate` PR is
   re-gated by the next run of any kind (a push, the daily `schedule`, or a
   dispatch), so a refusal never strands it; the label goes once a gate
   reaches a verdict. **Release manager: to re-gate a stuck release PR now
@@ -235,6 +239,9 @@ are not, so add them yourself.
   Get the sign-in token only through `withGithub(fn)` in main.js, so a 401
   marks the sign-in expired and Settings asks to sign in again (#253).
   `lib/sync.js` turns a git 401 into an error with `status: 401` for it.
+  Theme sources are the one exception (#258): main.js's `fetchSource` passes
+  `lib/theme-sources.js` a `rejected` callback that runs `signedOut(token)`,
+  because a 401 there is retried without the token rather than thrown.
 - Settings (#134, README "How it fits together"): site operations (build,
   publish, unpublish, inbox, import) get settings only through
   `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
@@ -317,7 +324,7 @@ are not, so add them yourself.
   rather than adding special cases) and self-host Google Fonts.
 - Imports need the ownership declaration (#141, README "Ownership
   declaration and provenance"): main.js's import handlers (`wp:fetch`,
-  `wp:mirror`) refuse without one, and `publish()` and `sites:export` refuse
+  `wp:mirror`, `md:open`) refuse without one, and `publish()` and `sites:export` refuse
   an imported site without `site.importProvenance` (`requireProvenance`; any
   new way of producing a deployable build must call it too). A new import path must go through
   `requireDeclaration`/`importProvenance` too. `stampProvenance` in
@@ -325,7 +332,7 @@ are not, so add them yourself.
   user's name and email) must never reach the build output (test.js and the
   regression suite check).
 - Anything imported is untrusted: editable imports (WordPress or any site,
-  #161) go through the allowlist sanitizer in `app/wordpress.js`, and
+  #161, and Markdown, #255, `app/markdown.js`) go through the allowlist sanitizer in `app/wordpress.js`, and
   copied-page edits through `cleanEdit` in `app/copied.js`. The review
   step's preview (`?sb-pick`) must keep the page's own scripts blocked (main.js's
   nonce CSP): `app/content-detect.js`'s CSS paths only match the frame
