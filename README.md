@@ -420,6 +420,15 @@ published always-pass test secret, so that one step needs internet access.
   existing fork), syncs the fork, commits on a new branch and opens a PR
   titled with the theme's name, its description as the body; the themes
   repo's CI and PhaseN's review do the rest.
+  The sign-in is an OAuth App's user token, which doesn't expire and has no
+  refresh token; GitHub only stops accepting it when the user revokes the
+  app or it goes unused for a year (#253). Every use of it goes through
+  `withGithub()` in main.js (publishing, GitHub sync's create, push, pull
+  and restore, and the check Settings makes each time it opens). A 401 from
+  the API or git host marks `settings.github.expired`. Settings then says
+  "You've been signed out of GitHub" with "Sign in to GitHub again", and
+  publishing and sync refuse with the same message until the user signs
+  in again.
 
 ## Privacy page
 
@@ -885,7 +894,10 @@ site's local files until taking it offline has fully worked.
   rule whose selector matches exactly (not one inside a selector list or
   `@media`).
 - GitHub publishing (#60): tested against a fake GitHub API only (device
-  flow, git data API, fork, PR), not yet the real one. Signing out only
+  flow, git data API, fork, PR), not yet the real one. Noticing a revoked
+  sign-in (#253) was tested only with the fake answering 401, not with a
+  token revoked on github.com; a theme source using the sign-in token
+  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
   secret to revoke it with). A file dropped from a theme (an old
   `preview.png`) stays in the target repo, since a push only adds or
