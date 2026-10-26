@@ -674,6 +674,16 @@ const site = {
     await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
     const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
     assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+
+    // #258: a rejected token is reported (so main.js can mark the sign-in expired); a working one isn't.
+    let rejected = 0;
+    const tick = async () => rejected++;
+    const cache258 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themecache-"));
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick });
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick }));
+    await ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: fakeGh.token, rejected: tick });
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, rejected: tick });
+    assert.strictEqual(rejected, 2, "rejected() runs once per 401, never for a good or absent token");
   } finally {
     await fakeGh.close();
   }

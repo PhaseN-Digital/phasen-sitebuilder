@@ -234,6 +234,9 @@ are not, so add them yourself.
   Get the sign-in token only through `withGithub(fn)` in main.js, so a 401
   marks the sign-in expired and Settings asks to sign in again (#253).
   `lib/sync.js` turns a git 401 into an error with `status: 401` for it.
+  Theme sources are the one exception (#258): main.js's `fetchSource` passes
+  `lib/theme-sources.js` a `rejected` callback that runs `signedOut(token)`,
+  because a 401 there is retried without the token rather than thrown.
 - Settings (#134, README "How it fits together"): site operations (build,
   publish, unpublish, inbox, import) get settings only through
   `settingsFor()` in main.js (`lib/settings.js` `resolve`/`publishedWith`),
