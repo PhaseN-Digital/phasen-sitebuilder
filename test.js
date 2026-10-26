@@ -449,6 +449,22 @@ const site = {
     assert.deepStrictEqual(r.pages.map((p) => p.path), ["/", "/a/", "/b/", "/c/"], "exact copy pages in crawl order, home first");
   }
 
+  // Exact copy strips the site name from every page title (#273), even pages that would finish before a slow home.
+  {
+    const html = (title, body) => `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
+    const srv = require("node:http").createServer((req, res) => {
+      const known = { "/": ["Acme – Tagline", '<a href="/b/">b</a>'], "/a/": ["About – Acme", ""], "/b/": ["Blog – Acme", ""] }[req.url];
+      setTimeout(() => {
+        res.writeHead(known ? 200 : 404, { "content-type": "text/html" });
+        res.end(known ? html(...known) : html("Not found – Acme", '<a href="/a/">a</a>'));
+      }, req.url === "/" ? 150 : 0);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-title-"));
+    const r = await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    assert.deepStrictEqual(r.pages.map((p) => p.title), ["Home", "About", "Blog"], "exact copy titles lose the site name whatever order they finish in");
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
