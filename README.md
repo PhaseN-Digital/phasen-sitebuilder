@@ -704,7 +704,8 @@ since then as the "original".
 
 Not copied: anything only reachable
 via a query string (`?p=123` permalinks, search results), files only loaded
-by JS at runtime (some page-builder widget scripts), feeds, file uploads in
+by JS at runtime (Elementor's widget chunks are found in its scripts; other
+page builders' are not), feeds, file uploads in
 forms. Third-party assets (Google Fonts, CDNs) stay remote.
 
 ### Editable import
@@ -1055,5 +1056,7 @@ site's local files until taking it offline has fully worked.
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
   Divi conditional form (#22); editable import of Divi/WPBakery pages and block-theme pages is tested only against fixtures (#24); SVG logos aren't copied (#282);
-  Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
+  Elementor 3's runtime-loaded webpack chunks are read from its webpack
+  runtime but only tested against a fake (#11), and other page builders'
+  runtime-loaded scripts aren't copied. Tracker removal and Google Fonts
   self-hosting (#45) are tested only against a fake Elementor site.
