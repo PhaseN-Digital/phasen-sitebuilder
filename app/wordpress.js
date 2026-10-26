@@ -159,12 +159,33 @@ function imageFetcher(siteId, base, fetch = (abs) => call("wp:image", abs)) {
       let abs;
       try { abs = new URL(src, base).href; } catch { images.failed++; return null; }
       if (!downloaded.has(abs)) {
-        downloaded.set(abs, fetch(abs).then((bytes) => saveImage(siteId, new Blob([bytes]), max)).catch(() => { images.failed++; return null; }));
+        downloaded.set(abs, fetch(abs).then(async (bytes) => saveImage(siteId, isSvg(bytes) ? await rasterSvg(bytes, max) : new Blob([bytes]), max))
+          .catch(() => { images.failed++; return null; }));
       }
       return downloaded.get(abs);
     },
   };
   return images;
+}
+
+// No raster format starts with "<"; SVG (and anything else that's markup) does.
+const isSvg = (bytes) => /^\uFEFF?\s*</.test(new TextDecoder().decode(bytes.slice(0, 64)));
+
+// SVG is active content, so it never reaches a site as markup (#282): an <img> draws it, which
+// runs no script and loads nothing external, and only the pixels are kept, at `max` on the long side.
+async function rasterSvg(bytes, max) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: "image/svg+xml" }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const w = img.naturalWidth || max, h = img.naturalHeight || max, scale = max / Math.max(w, h);
+    const canvas = new OffscreenCanvas(Math.round(w * scale), Math.round(h * scale));
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 // A page's address, for matching links to imported pages: no trailing slash or index.html.
