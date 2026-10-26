@@ -112,3 +112,10 @@ main img { border-radius: var(--radius); }
 .pagination span { opacity: .8; }
 .pagination [rel="next"] { margin-left: auto; }
 @media (max-width: 760px) { .post-card { grid-template-columns: 1fr; } }
+.business-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; }
+.business-grid h2, .business-grid h3 { font-size: 1rem; margin: 0 0 8px; }
+.business-grid address { font-style: normal; }
+.business-grid p, .business-grid ul { margin: 0 0 8px; }
+.business-grid ul { list-style: none; padding: 0; }
+.site-business { border-top: 1px solid color-mix(in srgb, var(--text) 12%, transparent); font-size: .9rem; padding: 32px 0 0; }
+.site-business a { color: inherit; }
