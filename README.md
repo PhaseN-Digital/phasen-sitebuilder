@@ -255,7 +255,15 @@ published always-pass test secret, so that one step needs internet access.
   allowlist, `shared()`) sync the same way through a settings repo of their
   own, kept locally in `userData/settings-sync/`; the first sync on a
   computer takes GitHub's settings if there are any. The token is only ever
-  sent to `github.com/<owner>/<repo>.git`.
+  sent to `github.com/<owner>/<repo>.git`. In the app (#235): a site's
+  Dashboard has "GitHub sync" (make a private repo, by default
+  `<login>/site-<name>`, or use an existing one; then Sync now, Disconnect,
+  and the "keep this computer's version or GitHub's" choice after a
+  conflict), and Settings › GitHub sync has the shared-settings repo and
+  "Restore a website". A pull reopens the site in the editor. Both ask to
+  sign in to GitHub again (with private repositories allowed) when the
+  sign-in is missing or expired (#253). A restored site's id must be one the
+  app uses (`ID_RE` in `lib/sites-folder.js`), or the restore is refused.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the import screen and HTML sanitizer; `app/content-detect.js` and
   `app/content-pick-frame.js` find and review the content of non-WordPress
@@ -896,11 +904,12 @@ site's local files until taking it offline has fully worked.
   map instead of embedding one (#248); theme footer templates can't place the
   details themselves (#249). Checked in the built HTML and the app's preview
   headlessly, not yet with Google's Rich Results Test on a published site.
-- GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
-  Tested against real git smart HTTP (`git http-backend` in test/fakes.js
-  `startGitHost`) and the IPC channels driven in the app headlessly once,
-  not yet against github.com itself. A pull rewrites the site's files
-  directly, so the editor has to reload the open site afterwards.
+- GitHub sync (#137, #235): tested only against real git smart HTTP
+  (`git http-backend`, the fakes' `gitSync()`), in test.js and through the UI
+  in the regression suite, not yet against github.com itself. A signed-out
+  GitHub sign-in is checked in the UI by marking it expired in the renderer,
+  not by a real revoked token. There's no way to stop syncing the shared
+  settings short of signing out of GitHub (#298).
 - Linux (#153): x64 only (no arm64 build), unsigned, and checked only
   headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
   `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used

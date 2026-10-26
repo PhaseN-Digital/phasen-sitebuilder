@@ -1211,6 +1211,12 @@ const site = {
       const has = () => false;
       await assert.rejects(sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has: () => true }), /already in your sites folder/);
       await assert.rejects(sync.clone({ root: rootB, ...o, spec: "PhaseN-Digital/site-shop", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/);
+      const C = path.join(base, "c");
+      w(C, "site.json", { id: "../escape", name: "Bad" });
+      await repo.ensure(C, who);
+      await sync.connect(C, host.url, await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "bad-id" }));
+      await sync.sync(C, o);
+      await assert.rejects(sync.clone({ root: rootB, ...o, spec: "octo/bad-id", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/, "a site id the app can't use is refused (#235)");
       const { id: got, dir: B } = await sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has });
       assert(got === id && B === path.join(rootB, "shop") && site(B).name === "Shop");
       assert.deepStrictEqual([...(await folder.scan(rootB)).keys()], [id], "a restored site is found by the scan; no clone leftovers");
