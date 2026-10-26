@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.2...phasen-sitebuilder-v0.8.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **test:** start the legacy Worker check with wrangler's own port ([#229](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/229)) ([5579eff](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/5579eff1177e620429bd18fe1960cffbdddaf748))
+
 ## [0.8.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.1...phasen-sitebuilder-v0.8.2) (2026-10-24)
 
 
