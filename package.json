@@ -1,7 +1,7 @@
 {
   "name": "phasen-sitebuilder",
   "productName": "PhaseN Site Builder",
-  "version": "0.10.2",
+  "version": "0.11.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "description": "Desktop CMS that builds and publishes small websites to Cloudflare Workers.",
