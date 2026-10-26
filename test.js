@@ -394,6 +394,24 @@ const site = {
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  // Exact copy lists pages in crawl order with home first (#95), even when home finishes after pages fetched
+  // alongside it (the 404 page's links join home's batch) and later pages finish out of order.
+  {
+    const delay = { "/": 150, "/b/": 150 };
+    const html = (body) => `<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`;
+    const srv = require("node:http").createServer((req, res) => {
+      const known = { "/": '<a href="/b/">b</a><a href="/c/">c</a>', "/a/": "a", "/b/": "b", "/c/": "c" }[req.url];
+      setTimeout(() => {
+        res.writeHead(known === undefined ? 404 : 200, { "content-type": "text/html" });
+        res.end(html(known ?? '<a href="/a/">a</a>'));
+      }, delay[req.url] || 0);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-order-"));
+    const r = await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    assert.deepStrictEqual(r.pages.map((p) => p.path), ["/", "/a/", "/b/", "/c/"], "exact copy pages in crawl order, home first");
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
