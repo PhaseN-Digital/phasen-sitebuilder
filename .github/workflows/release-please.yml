@@ -69,6 +69,20 @@ jobs:
           why=$(node scripts/release-bump.js gate)
           [ -n "$why" ] || { echo "Release PR #$number: nothing new to gate"; exit 0; }
           sha=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+          # #113: release-please leaves its PR alone ("remained the same")
+          # when only non-releasable commits (chore/docs/test) landed since
+          # it built it, so the head never gets this run's main and the gate
+          # would refuse it forever. Merge START_MAIN (not a later main) into
+          # the branch: regression then tests that merge, and the gate's
+          # checks below are unchanged. release-please force-pushes over it
+          # the next time it rebuilds. A conflict (e.g. a chore touched
+          # package.json) leaves the head behind, labelled regate below.
+          if [ "$(gh api "repos/$GH_REPO/compare/$START_MAIN...$sha" -q .behind_by)" != 0 ] &&
+             merged=$(gh api -X POST "repos/$GH_REPO/merges" -f base="$branch" -f head="$START_MAIN" \
+               -f commit_message="Merge main $START_MAIN into $branch (#113)" -q .sha) && [ -n "$merged" ]; then
+            sha=$merged
+            echo "Merged main $START_MAIN into release PR #$number: head is now $sha"
+          fi
           # A head without this run's main would only be refused after
           # regression, so don't spend a regression run on it; the label
           # brings it back once release-please has rebuilt it on main.

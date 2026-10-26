@@ -61,7 +61,11 @@ use `scripts/check-commit.js`.
   only merges if `main` is still exactly what the regression run tested
   against (#97); if anything landed on `main` meanwhile it comments, labels
   the PR `regate` and leaves it to the next run (a push, the daily schedule,
-  or `gh workflow run release-please.yml`), which re-gates it. This all
+  or `gh workflow run release-please.yml`), which re-gates it.
+  release-please doesn't rebuild its PR when only non-releasable commits
+  (chore/docs/test) landed, so before gating, a head that's behind the
+  run's main gets that main merged into it (#113) and regression tests the
+  merge; if that conflicts the PR stays labelled `regate`. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -226,7 +230,8 @@ published always-pass test secret, so that one step needs internet access.
   startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
   a secret is next saved. A published site whose Turnstile secret was lost
   gets a new one (`rotate_secret`) on the next publish; a lost sending key is
-  re-created. Sites and settings from before #136 (`userData/sites`,
+  re-created, and the old one deleted at Resend once the new one is live
+  (#176; if that fails, publishing goes on and the log says so). Sites and settings from before #136 (`userData/sites`,
   `userData/settings.json`, each secret sealed separately) are moved on the
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
@@ -423,7 +428,9 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  also deletes theme files the theme no longer has (an old `preview.png`)
+  from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -439,7 +446,10 @@ published always-pass test secret, so that one step needs internet access.
   the API or git host marks `settings.github.expired`. Settings then says
   "You've been signed out of GitHub" with "Sign in to GitHub again", and
   publishing and sync refuse with the same message until the user signs
-  in again.
+  in again. A theme source without its own token uses the sign-in's; when
+  GitHub rejects it, `fetchSource` in main.js marks it expired the same way
+  (#258), downloads a public source without it (#251), and stops sending it
+  until the user signs in again.
 
 ## Privacy page
 
@@ -944,8 +954,8 @@ site's local files until taking it offline has fully worked.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
-  a site's folder (#177) likewise only on Linux. A lost
-  sending key is re-created without deleting the old one at Resend. A secrets
+  a site's folder (#177) likewise only on Linux. Deleting a replaced
+  sending key at Resend (#176) is tested against a fake Resend only. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
@@ -971,12 +981,10 @@ site's local files until taking it offline has fully worked.
 - GitHub publishing (#60): tested against a fake GitHub API only (device
   flow, git data API, fork, PR), not yet the real one. Noticing a revoked
   sign-in (#253) was tested only with the fake answering 401, not with a
-  token revoked on github.com; a theme source using the sign-in token
-  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
+  token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
-  secret to revoke it with). A file dropped from a theme (an old
-  `preview.png`) stays in the target repo, since a push only adds or
-  replaces files.
+  secret to revoke it with). Deleting files dropped from a theme (#159) is
+  skipped when GitHub truncates the repo's file listing (100k+ files).
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.10.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.1...phasen-sitebuilder-v0.10.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **publish:** delete the replaced Resend sending key after the deploy ([#176](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/176)) ([#277](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/277)) ([a628df4](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/a628df4ed48a9e6d37a93f9490f9fed06ac99604))
+
+## [0.10.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.0...phasen-sitebuilder-v0.10.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **github:** delete files dropped from a theme when publishing it ([#159](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/159)) ([#274](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/274)) ([420d77b](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/420d77ba501fe9ec6b405990cedec977dffe4cf4))
+* **mirror:** list an exact copy's pages in crawl order, home first ([#95](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/95)) ([#272](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/272)) ([16efdcb](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/16efdcba4e1296041f363722b10db66c2f6b39b9))
+
+## [0.10.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.9.1...phasen-sitebuilder-v0.10.0) (2026-10-26)
+
+
+### Features
+
+* **import:** import Markdown files as pages, or a folder as a new site ([#255](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/255)) ([#263](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/263)) ([ffa74bf](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/ffa74bf7da3f3c7c6b51752fb997b6afaafc06a1))
+* **settings:** link the licence and third-party notices in About ([#233](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/233)) ([#270](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/270)) ([e41a6a2](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e41a6a26def57d0ea3b9d1ac269dece73de10f81))
+* **site:** business details, footer and local SEO ([#80](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/80)) ([#250](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/250)) ([0d67d81](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/0d67d8143929a33a01eca8dd55d094b66af11a09))
+* **theme-builder:** syntax highlighting in the Advanced HTML editor ([#226](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/226)) ([#254](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/254)) ([515cc53](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/515cc53a8e136e867256136dca60912869bd7cd7))
+* **themes:** mark the GitHub sign-in expired when a theme source rejects it ([#258](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/258)) ([#271](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/271)) ([43f1cd8](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/43f1cd84bf1f77a02b27c95c7413781110a079ad))
+
+
+### Bug Fixes
+
+* **editor:** reload the preview for a copied-page edit made mid-reload ([#202](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/202)) ([#260](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/260)) ([ed7923e](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/ed7923e9fc958c8607a0e7a8cfff5d6d1bec510f))
+* **release:** merge main into a release PR release-please left behind ([#113](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/113)) ([#279](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/279)) ([77b4044](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/77b4044ff10da3ab9952faba10b16b95bd1c5dcb))
+* **test:** wait for the restored version in the history list ([#215](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/215)) ([#265](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/265)) ([1339104](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/13391044cc398afd8e0f813124d508359b668bd5))
+
 ## [0.9.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.9.0...phasen-sitebuilder-v0.9.1) (2026-10-26)
 
 

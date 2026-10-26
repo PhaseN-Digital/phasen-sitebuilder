@@ -339,7 +339,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
+  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
+    oldKeyId = state.sendingKeyId;
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -367,6 +369,7 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
+  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -433,7 +436,14 @@ const findSource = async (spec) => {
   return source;
 };
 // A source without its own token uses the GitHub sign-in (#60), if any.
-const fetchSource = async (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token) || unseal((await loadSettings()).github?.token), api: GITHUB_API });
+// A source without its own token uses the sign-in's (unless it's known to be
+// expired); GitHub rejecting it marks the sign-in expired, as withGithub does (#258).
+const fetchSource = async (source) => {
+  const own = unseal(source.token), g = own ? null : (await loadSettings()).github;
+  const signIn = g && !g.expired ? unseal(g.token) : null;
+  const rejected = signIn ? () => signedOut(signIn)({ status: 401 }).catch(() => {}) : undefined;
+  return themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: own || signIn, api: GITHUB_API, rejected });
+};
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
   const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };

@@ -186,7 +186,9 @@ app.on("browser-window-created", (_e, win) => {
       // switched sites by script, is still open over the page (a user couldn't get here past the modal).
       await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`);
       const rightClick = async () => {
-        await waitFor(() => inFrame(`Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
+        // The menu's script (app/theme-builder-frame.js) is at the end of the body: its <script> tag and the page's content are
+        // there before it has run and can see a right-click (#264). It blocks the parser, so a complete document has run it.
+        await waitFor(() => inFrame(`document.readyState === "complete" && Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
         const { x, y } = await run(`(() => { const r = document.querySelector("#preview").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
         const at = await inFrame(`(() => { const r = document.querySelector(".hero h1").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
         const pos = { x: Math.round(x + at.x), y: Math.round(y + at.y) };
