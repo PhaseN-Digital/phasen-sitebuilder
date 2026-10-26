@@ -875,6 +875,11 @@ app.on("browser-window-created", (_e, win) => {
       check("copy image link: panel shows the logo's target", logoShown === "/", logoShown);
       await setLink("/contact-us/"); await settle(); await shot("copy-image-link");
       check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(path.join(M, f)))));
+      // #202: a link edit made while the preview is reloading still reaches the preview.
+      const logoHref = (href) => waitFor(() => inFrame(`document.querySelector(".elementor-location-header a > img")?.parentElement.getAttribute("href") === ${JSON.stringify(href)}`), 5000);
+      await setLink("/about/"); await settle(); await logoHref("/about/");
+      await run(`refreshPreview(); setCopyLink("/contact-us/").then(() => 0)`);
+      check("copy link: edit during a reload shows in the preview (#202)", await logoHref("/contact-us/"));
     }
   });
 });
