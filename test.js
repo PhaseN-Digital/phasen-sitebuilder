@@ -640,7 +640,9 @@ const site = {
     assert(pub.themes.retro.preview.startsWith("data:image/png;base64,") && pub.themes.retro.label === "Retro");
     assert(pub.themes.broken.errors.join().includes("evil.js") && !pub.themes.broken.label);
     await assert.rejects(ts.fetchSource(fakeGh.privateSpec, opts), /private repository, add an access token/);
-    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /token has Contents/);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /didn't accept the access token.*sign out and sign in again/);
+    // A rejected token (e.g. an expired sign-in) doesn't block a public repo (#251).
+    assert.deepStrictEqual(Object.keys((await ts.fetchSource(ts.PUBLIC_SOURCE, { ...opts, token: "expired" })).themes).sort(), ["broken", "clean", "retro"]);
     await assert.rejects(ts.fetchSource("limited/repo", opts), /download limit/);
     await assert.rejects(ts.fetchSource(`${ts.PUBLIC_SOURCE}/nope`, opts), /no theme folders in nope\//);
     fakeGh.requests.length = 0;

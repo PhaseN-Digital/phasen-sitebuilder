@@ -267,6 +267,8 @@ async function startGitHub() {
     if (await writer.handle(req, res)) return;
     const m = /^\/repos\/([^/]+\/[^/]+)\/tarball(\/.*)?$/.exec(req.url);
     if (m?.[1] === "limited/repo") { res.writeHead(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }); return res.end(); }
+    // Like GitHub: a bad token is refused even for a public repo.
+    if (m && req.headers.authorization && req.headers.authorization !== `Bearer ${GITHUB_TOKEN}`) { res.writeHead(401, { "content-type": "application/json" }); return res.end('{"message":"Bad credentials"}'); }
     if (!m || !repos[m[1]]?.(req.headers.authorization === `Bearer ${GITHUB_TOKEN}`)) { res.writeHead(404, { "content-type": "application/json" }); return res.end('{"message":"Not Found"}'); }
     res.writeHead(302, { location: `${downloads.url}/${encodeURIComponent(m[1])}` });
     res.end();
