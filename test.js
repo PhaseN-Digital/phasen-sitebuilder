@@ -507,6 +507,20 @@ const site = {
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
+  // Replaced sending key (#176): deleting it never throws, and never logs a key value.
+  for (const [status, said] of [[200, /Deleted this site's old/], [404, /^$/], [401, /Couldn't delete this site's old Resend sending key \(Resend: nope\)/], [0, /Couldn't delete .*offline/]]) {
+    const seen = [], said176 = [];
+    globalThis.fetch = async (url, { method, headers }) => {
+      seen.push(`${method} ${url} ${headers.Authorization}`);
+      if (!status) throw new Error("offline");
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    await pub135.deleteSendingKey("re_account", "old-1", (l) => said176.push(l));
+    assert.deepStrictEqual(seen, ["DELETE https://api.resend.com/api-keys/old-1 Bearer re_account"]);
+    assert(said.test(said176.join("")) && !said176.join("").includes("re_account"), `${status}: ${said176}`);
+  }
+  globalThis.fetch = realFetch;
+
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
   const moveStub = (routes, writes) => async (url, { method, body }) => {
     url = url.replace("https://api.cloudflare.com/client/v4", "");

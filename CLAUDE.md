@@ -263,7 +263,9 @@ are not, so add them yourself.
   are no-ops kept as markers. `publish()` must never upload a secret that
   isn't real (#218): keep its repair (re-create a non-`re_` sending key,
   rotate an old-format Turnstile secret) and the `validSecrets` guard before
-  `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. `lib/site-repo.js` must keep refusing to stage
+  `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. The
+  replaced key is deleted at Resend only after `deployWorker` (#176), and
+  that delete must stay best-effort (`deleteSendingKey` never throws). `lib/site-repo.js` must keep refusing to stage
   `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
   it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
   so they can be interrupted: keep that order. A renamed site's folder is
