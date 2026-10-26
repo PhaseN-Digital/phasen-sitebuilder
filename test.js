@@ -1303,6 +1303,32 @@ const site = {
     fs.rmSync(base, { recursive: true, force: true });
   }
 
+  // Markdown import (#255): titles, addresses, menu order, rendering; sanitizing and links are app/markdown.js (test/drive.js).
+  {
+    const md = require("./lib/markdown");
+    assert.deepStrictEqual(md.frontMatter("\uFEFF---\ntitle: 'A: b'\nSlug: x\n---\nBody").data, { title: "A: b", slug: "x" });
+    assert.strictEqual(md.frontMatter("No front matter\n---\n").body, "No front matter\n---\n");
+    assert.strictEqual(md.toPage("a.md", "Intro\n\n# The *Title*").title, "The Title", "first # heading");
+    assert.strictEqual(md.toPage("a.md", "---\ntitle: Front\n---\n# Heading").title, "Front", "front matter wins");
+    assert.strictEqual(md.toPage("dir/getting-started.md", "## Not h1").title, "Getting started", "file name last");
+    assert.strictEqual(md.toPage("a.md", "---\nslug: /about/\n---\n").path, "/about/");
+    assert.strictEqual(md.toPage("a.md", "---\npath: services/web\n---\n").path, "/services/web");
+    assert.strictEqual(md.toPage("a.md", "x").path, undefined, "no front matter address: title-based");
+    const { html } = md.toPage("a.md", "```\na<b\nc\n```\n\n###### Tiny\n\n<script>x</script>");
+    assert(html.includes("<p>a&lt;b<br>c</p>") && html.includes("<h4>Tiny</h4>") && html.includes("<script>"), "code as a paragraph, h6 as h4, raw HTML left for the sanitizer");
+    const pages = await md.readMarkdown(path.join(__dirname, "test/fixtures/markdown"));
+    assert.deepStrictEqual(pages.map((p) => [p.rel, p.title, p.path]), [
+      ["index.md", "Welcome to Bob's Bikes", undefined], ["about.md", "About the team", "/about-us/"], ["guides/setup.md", "Setup", undefined], ["README.md", "Readme", undefined]],
+      "index.md is home (README.md only without one), then order:, then path");
+    assert.strictEqual(md.toPages([{ rel: "b.md", text: "" }, { rel: "README.md", text: "" }])[0].rel, "README.md");
+    const fx = path.join(__dirname, "test/fixtures/markdown");
+    assert((await md.readImage(fx, "img/bike.png")).length > 50);
+    for (const bad of ["../markdown/img/bike.png/..", "../../package.json", "index.md", "/etc/passwd"]) await assert.rejects(md.readImage(fx, bad), undefined, bad);
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "md-"));
+    await assert.rejects(md.readMarkdown(empty), /no Markdown/);
+    fs.rmSync(empty, { recursive: true });
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);

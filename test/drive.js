@@ -72,7 +72,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, wordpressImport, elementorEditable, contentDetection, anyEditable, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -739,6 +739,66 @@ app.on("browser-window-created", (_e, win) => {
       check("any site: built menu in the original order", /Home<\/a>.*Visit us<\/a>.*Our menu<\/a>/s.test(built[0]), built[0].slice(0, 2000));
       const redirects = fs.existsSync(path.join(pub, "_redirects")) ? read(path.join(pub, "_redirects")) : "";
       check("any site: .html addresses redirect to the new ones", redirects.includes("/visit.html /visit-us 301") && redirects.includes("/menu.html /our-menu 301"), redirects);
+    }
+
+    // ---------- Markdown import (#255): a folder (test/fixtures/markdown) becomes a site, then a file becomes a page of it ----------
+    async function markdownImport() {
+      const { dialog } = require("electron");
+      const MD = path.join(__dirname, "fixtures", "markdown");
+      const realOpen = dialog.showOpenDialog;
+      let picked = [MD];
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: picked }); // never a real file picker
+      try {
+        const refused = await run(`cms.call("md:open", "folder", { confirmed: false }).then(() => "imported", (e) => e.message)`);
+        check("markdown: main process refuses an import without a declaration", /Confirm that you own/.test(refused), refused);
+        await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); document.querySelector("#site-switcher").click(); document.querySelector("#import-wp").click()`);
+        await waitFor(() => run(`Boolean(document.querySelector(".markdown-import button"))`));
+        await shot("markdown-import-screen");
+        await clickButton("Import a folder of Markdown files…");
+        await waitFor(() => run(`Boolean(document.querySelector("dialog.declaration[open]"))`));
+        check("markdown: declaration asked, without the website verification", !(await run(`Boolean(document.querySelector("dialog.declaration details"))`)));
+        await declare();
+        const id = await siteOpened(`site?.name === "markdown"`, 30000);
+        check("markdown: folder import opens a new site", id, await run(`document.querySelector(".markdown-import")?.textContent`).catch(() => ""));
+        if (!id) return;
+        result.sites.markdown = id;
+        await saved();
+        const s = JSON.parse(read(path.join(S(id), "site.json")));
+        check("markdown: pages, titles, order and addresses", JSON.stringify(s.pages.map((p) => [p.title, p.path || null])) === JSON.stringify([["Welcome to Bob's Bikes", null], ["About the team", "/about-us/"], ["Setup", null], ["Readme", null]]), s.pages.map((p) => [p.title, p.path]));
+        const p = s.importProvenance || {};
+        check("markdown: provenance recorded", p.source === "Markdown files" && p.importedAt && p.verification?.status === "unverified" && /I confirm/.test(p.statement), p);
+        const [home, about, setup] = s.pages;
+        const html = home.sections[0].html;
+        check("markdown: hostile HTML removed", !/<script|onclick|javascript:|alert|evil/i.test(html), html);
+        check("markdown: links between files go to their pages", html.includes(`href="#page:${about.id}"`) && html.includes(`href="#page:${setup.id}"`) && about.sections[0].html.includes(`href="#page:${home.id}"`), html);
+        check("markdown: links to other local files dropped, text kept", !/prices\.pdf|markdown\.invalid/.test(JSON.stringify(s.pages)) && html.includes("price list"), html);
+        const img = html.match(/<img src="(assets\/[a-f0-9]+\.webp)" alt="A red bike">/);
+        check("markdown: local image copied like an upload", img && fs.existsSync(path.join(S(id), img[1])), html);
+        check("markdown: missing image dropped", !/<img/.test(setup.sections[0].html) && setup.sections[0].html.includes("Missing picture"), setup.sections[0].html);
+        check("markdown: code and small headings kept as text", html.includes("step &lt;two&gt;") && html.includes("<h4>Small print</h4>"), html);
+        const built = read(path.join(UD, "preview", id, "public", "about-us", "index.html"));
+        check("markdown: built at its front matter address, marked as imported", built.includes("We <strong>love</strong> bikes") && built.includes('content="Markdown files"'));
+
+        // Imported rich text loads into the editor and saves back without losing anything.
+        await run(`tab = "pages"; pageId = site.pages[0].id; renderEditor(); 0`);
+        await waitFor(() => run(`Boolean(document.querySelector(".rich-editor .ql-editor"))`));
+        await run(`{ const q = Quill.find(document.querySelector(".rich")); q.insertText(0, "x", "user"); q.deleteText(0, 1, "user"); 0 }`);
+        await saved();
+        const resaved = JSON.parse(read(path.join(S(id), "site.json"))).pages[0].sections[0].html;
+        const textOf = (h) => h.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
+        check("markdown: rich text survives a round trip through the editor", textOf(resaved) === textOf(html) && resaved.includes(`href="#page:${about.id}"`) && resaved.includes(img?.[0]) && resaved.includes("<h4>Small print</h4>"), [html, resaved]);
+
+        // Files on the Pages tab: added to this site.
+        picked = [path.join(MD, "guides", "setup.md")];
+        await clickButton("Import Markdown…");
+        await declare();
+        await waitFor(() => run(`site.pages.length === 5 && pageId === site.pages[4].id`));
+        await saved();
+        const after = JSON.parse(read(path.join(S(id), "site.json")));
+        check("markdown: files added as pages of the open site", after.pages.length === 5 && after.pages[4].title === "Setup" && after.pages[4].layout === "standard" && after.importProvenance.importedAt === p.importedAt, after.pages.map((x) => x.title));
+      } finally {
+        dialog.showOpenDialog = realOpen;
+      }
     }
 
     // ---------- 3. exact copy of an Elementor site ----------

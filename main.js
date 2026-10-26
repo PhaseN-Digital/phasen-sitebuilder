@@ -20,6 +20,7 @@ const secrets = require("./lib/secrets");
 const repo = require("./lib/site-repo");
 const folder = require("./lib/sites-folder");
 const sync = require("./lib/sync");
+const markdown = require("./lib/markdown");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -260,17 +261,19 @@ function requireProvenance(site) {
 // "Decide for me" falling back to an exact copy keeps that verification (#145).
 // ponytail: in memory only; a restart between fetch and copy loses it (it's one click apart).
 const wpAuthenticatedOrigins = new Set();
+const markdownDirs = new Map(); // md:open token -> folder (#255)
 function requireDeclaration(declaration) {
   if (declaration?.confirmed !== true) throw new Error("Confirm that you own this website, or have the owner's written permission to copy and republish it, before importing it.");
 }
-async function importProvenance(url, declaration, { wpAuthenticated = false, imported = true } = {}) {
+// `local` names a source that isn't a website (Markdown files, #255): no address to verify against.
+async function importProvenance(url, declaration, { wpAuthenticated = false, imported = true, local = "" } = {}) {
   requireDeclaration(declaration);
   const raw = String(url || "").trim();
-  let source;
-  try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
+  let source = local;
+  if (!local) try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
   if (wpAuthenticated) wpAuthenticatedOrigins.add(source);
   const settings = await loadSettings();
-  const zones = settings.cloudflare ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
+  const zones = settings.cloudflare && !local ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
   const now = new Date().toISOString();
   return {
     source,
@@ -279,7 +282,7 @@ async function importProvenance(url, declaration, { wpAuthenticated = false, imp
     appVersion: app.getVersion(),
     declaredBy: { name: settings.name || "", email: settings.defaults?.email || "" }, // the app default form email (#134)
     statement: String(declaration.statement || "").slice(0, 500),
-    verification: await verifyOwnership(source, { zones, wpAuthenticated: wpAuthenticatedOrigins.has(source), token: String(declaration.token || "") }),
+    verification: local ? { status: "unverified", checkedAt: now } : await verifyOwnership(source, { zones, wpAuthenticated: wpAuthenticatedOrigins.has(source), token: String(declaration.token || "") }),
   };
 }
 
@@ -861,6 +864,25 @@ const handlers = {
   "mirror:discard": async (id) => {
     if ((await readSite(id))?.mirror) throw new Error("This website is still an exact copy.");
     for (const dir of ["mirror", "mirror-original"]) await fs.rm(path.join(siteDir(id), dir), { recursive: true, force: true });
+  },
+  // Markdown import (#255): read and rendered here (lib/markdown.js); app/markdown.js sanitizes the HTML and saves the
+  // pages. Each pick gets a token, so md:image only ever reads images from inside a folder the user chose.
+  "md:open": async (kind, declaration) => {
+    requireDeclaration(declaration);
+    const pickFolder = kind === "folder";
+    const { canceled, filePaths } = await dialog.showOpenDialog(pickFolder
+      ? { title: "Choose a folder of Markdown files", properties: ["openDirectory"] }
+      : { title: "Choose Markdown files", properties: ["openFile", "multiSelections"], filters: [{ name: "Markdown", extensions: ["md", "markdown"] }] });
+    if (canceled || !filePaths.length) return null;
+    const dir = pickFolder ? filePaths[0] : path.dirname(filePaths[0]);
+    const pages = await markdown.readMarkdown(dir, pickFolder ? null : filePaths);
+    const token = hex(8);
+    markdownDirs.set(token, dir);
+    return { token, name: path.basename(dir), pages, provenance: await importProvenance(null, declaration, { local: "Markdown files" }) };
+  },
+  "md:image": (token, rel) => {
+    if (!markdownDirs.has(token)) throw new Error("Choose the Markdown files again.");
+    return markdown.readImage(markdownDirs.get(token), rel);
   },
   // Exact-copy import: see lib/mirror.js.
   "wp:mirror": async (url, declaration, event) => {
