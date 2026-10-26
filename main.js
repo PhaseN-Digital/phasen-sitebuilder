@@ -421,7 +421,14 @@ const findSource = async (spec) => {
   return source;
 };
 // A source without its own token uses the GitHub sign-in (#60), if any.
-const fetchSource = async (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token) || unseal((await loadSettings()).github?.token), api: GITHUB_API });
+// A source without its own token uses the sign-in's (unless it's known to be
+// expired); GitHub rejecting it marks the sign-in expired, as withGithub does (#258).
+const fetchSource = async (source) => {
+  const own = unseal(source.token), g = own ? null : (await loadSettings()).github;
+  const signIn = g && !g.expired ? unseal(g.token) : null;
+  const rejected = signIn ? () => signedOut(signIn)({ status: 401 }).catch(() => {}) : undefined;
+  return themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: own || signIn, api: GITHUB_API, rejected });
+};
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
   const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };

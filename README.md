@@ -429,7 +429,10 @@ published always-pass test secret, so that one step needs internet access.
   the API or git host marks `settings.github.expired`. Settings then says
   "You've been signed out of GitHub" with "Sign in to GitHub again", and
   publishing and sync refuse with the same message until the user signs
-  in again.
+  in again. A theme source without its own token uses the sign-in's; when
+  GitHub rejects it, `fetchSource` in main.js marks it expired the same way
+  (#258), downloads a public source without it (#251), and stops sending it
+  until the user signs in again.
 
 ## Privacy page
 
@@ -897,8 +900,7 @@ site's local files until taking it offline has fully worked.
 - GitHub publishing (#60): tested against a fake GitHub API only (device
   flow, git data API, fork, PR), not yet the real one. Noticing a revoked
   sign-in (#253) was tested only with the fake answering 401, not with a
-  token revoked on github.com; a theme source using the sign-in token
-  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
+  token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
   secret to revoke it with). A file dropped from a theme (an old
   `preview.png`) stays in the target repo, since a push only adds or
