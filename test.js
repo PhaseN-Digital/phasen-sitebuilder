@@ -790,6 +790,18 @@ const site = {
       assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
       assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
       assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+
+      // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
+      const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
+      const x = Buffer.from("x");
+      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days/sub", { "preview.png": x }); // a subfolder
+      await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });
+      assert.deepStrictEqual(Object.keys(fake.files(gh.PRIVATE_DEFAULT)).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days-old/preview.png",
+        "themes/sunny-days/notes.md", "themes/sunny-days/sub/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] }); // nothing left to delete: no error
+      for (const id of ["..", "a/../b", "", "a//b"]) await assert.rejects(push(id, files), /Bad theme folder/);
       assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
     } finally {
       await fake.close();
