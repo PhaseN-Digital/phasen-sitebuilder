@@ -341,7 +341,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
+  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
+    oldKeyId = state.sendingKeyId;
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -369,6 +371,7 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
+  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -470,7 +473,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired) } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired), settingsRepo: s.github.settingsRepo || null } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
   sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
@@ -851,6 +854,8 @@ const handlers = {
     sites.set(id, dir);
     return readSite(id);
   },
+  "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
+  "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");

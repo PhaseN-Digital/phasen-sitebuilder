@@ -229,7 +229,8 @@ are not, so add them yourself.
   rename a class in `renderPage`/`renderSection`, update `STABLE` too.
 - GitHub publishing (#60, `lib/github.js`): only the files of a theme that
   passes `lib/theme-validate.js` (so only the names it allows) may ever be
-  sent (`themeFiles`). The sign-in token stays in the main process
+  sent (`themeFiles`), and a push may only delete theme file names directly
+  in that theme's own folder (`commitFiles`, #159). The sign-in token stays in the main process
   (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
@@ -262,7 +263,9 @@ are not, so add them yourself.
   are no-ops kept as markers. `publish()` must never upload a secret that
   isn't real (#218): keep its repair (re-create a non-`re_` sending key,
   rotate an old-format Turnstile secret) and the `validSecrets` guard before
-  `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. `lib/site-repo.js` must keep refusing to stage
+  `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. The
+  replaced key is deleted at Resend only after `deployWorker` (#176), and
+  that delete must stay best-effort (`deleteSendingKey` never throws). `lib/site-repo.js` must keep refusing to stage
   `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
   it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
   so they can be interrupted: keep that order. A renamed site's folder is
@@ -338,7 +341,7 @@ are not, so add them yourself.
   when no script has changed the page.
 - Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
   leaves the editor or writes/publishes the site (switching site, Settings,
-  Themes, Import, delete, publish, and window close via main.js's `close`
+  Themes, Import, delete, publish, GitHub sync (`runSync`), and window close via main.js's `close`
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
