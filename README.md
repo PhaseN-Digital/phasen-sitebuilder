@@ -939,8 +939,7 @@ site's local files until taking it offline has fully worked.
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
   a site's folder (#177) likewise only on Linux. A lost
-  sending key is re-created without deleting the old one at Resend. A secrets
-  problem for a deleted site's folder shows until the app restarts. Nothing
+  sending key is re-created without deleting the old one at Resend. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
