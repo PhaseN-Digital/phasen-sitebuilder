@@ -303,6 +303,9 @@ are not, so add them yourself.
   stored messages. The table is created both by the Worker (`SCHEMA` in
   `runtime/worker.js`) and at publish (`D1_SCHEMA` in `lib/publish.js`):
   change both together, and never store the honeypot or Turnstile token.
+  Taking a site offline keeps its inbox unless asked (#126), so `canUnpublish`
+  ignores `d1`; deleting a site always deletes it (`sites:delete`), so no
+  messages are orphaned in the user's Cloudflare account.
 - Copied (exact-copy) pages are edited in their stored HTML via
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed

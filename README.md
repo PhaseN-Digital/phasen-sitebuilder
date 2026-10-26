@@ -877,9 +877,14 @@ using what `sites/<id>/publish.json` recorded at publish time:
 2. Deletes the `www` record and redirect rule, and any old-hostname
    redirects (#139), but only ones publishing made (matched by the record's
    comment and the rule's `ref`).
-3. Deletes the Turnstile widget, the form inbox's D1 database (with its
-   messages; the confirmation says to export them first) and the site's
-   Resend sending key.
+3. Deletes the Turnstile widget and the site's Resend sending key.
+4. Keeps the form inbox's D1 database (#126), so its messages can still be
+   read, exported and deleted in the Inbox tab (retention still applies each
+   time the app lists them), and publishing again uses it again. Ticking
+   "Also delete the messages in its Inbox" in the confirmation deletes it
+   too. Deleting a site always deletes its inbox database (even if the site
+   was already offline or is left online), so no messages stay behind in the
+   Cloudflare account; the confirmation says to export them first.
 
 Each step is logged and best-effort: one failing doesn't stop the rest, and
 anything already gone (404) counts as removed. Whatever failed stays in
@@ -915,7 +920,12 @@ site's local files until taking it offline has fully worked.
   "Delete messages after" value reaches the Worker only on the next publish.
   The Inbox loads every message at once. Its unread count (#185) is per
   computer: a message counts as read once the Inbox has been opened on
-  this computer after it arrived.
+  this computer after it arrived. While a site is offline with its inbox
+  kept (#126), old messages are only deleted when the app lists that inbox,
+  so they can outlive the retention period if the app isn't opened. Keeping
+  and deleting the inbox on unpublish/delete is tested against stubs only,
+  not real Cloudflare. Deleting a site that has an inbox needs the Cloudflare
+  account it was published with to be connected.
 - Rich text (#120): Quill has no header cells or line breaks inside a
   paragraph, so imported `<th>`s become ordinary cells and `<br>` starts a
   new paragraph; a quote with several paragraphs becomes several quotes, and

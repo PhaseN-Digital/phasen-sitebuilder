@@ -386,8 +386,10 @@ async function publish(id, log) {
 }
 
 // Undoes publish() (#71). Throws if anything couldn't be removed; publish.json
-// keeps just those parts, so trying again only retries them.
-async function unpublish(id, log) {
+// keeps just those parts, so trying again only retries them. The inbox is kept
+// unless deleteInbox (#126); inboxOnly deletes just the inbox (deleting a site
+// that's already offline or left online).
+async function unpublish(id, log, { deleteInbox = false, inboxOnly = false } = {}) {
   const site = await readSite(id);
   const { published, state } = await settingsFor(id, site);
   if (!published.cloudflare) throw new Error(state.accountId
@@ -398,13 +400,17 @@ async function unpublish(id, log) {
     if (site.domain && !site.domain.label) state.www ??= { id: site.domain.zoneId, name: site.domain.zoneName };
   }
   state.accountId ??= published.cloudflare.accountId;
-  log("Taking the website offline…\n");
-  const { state: left, failed } = await cf.unpublish(unseal(published.cloudflare.token), unseal(published.resendKey), state, log);
-  await writeState(id, left);
+  log(inboxOnly ? "Deleting the form inbox…\n" : "Taking the website offline…\n");
+  const target = inboxOnly ? { accountId: state.accountId, d1: state.d1 } : state;
+  const { state: left, failed } = await cf.unpublish(unseal(published.cloudflare.token), unseal(published.resendKey), target, log, { deleteInbox });
+  const next = inboxOnly ? { ...state, d1: left.d1 } : left;
+  if (!next.d1) delete next.d1;
+  await writeState(id, next);
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
-  log("\nDone. The website is offline.\n");
+  if (!inboxOnly) log("\nDone. The website is offline.\n");
 }
-const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1 || s.moved?.length);
+// A kept inbox (#126) doesn't count: the site is offline without it.
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.moved?.length);
 
 // Form inbox (#75): read straight from the site's D1 database with the user's
 // token, so no public endpoint ever serves messages. Returns null when the
@@ -643,7 +649,11 @@ const handlers = {
     return previewBuild(site); // page id -> preview path
   },
   "sites:delete": async (id, offline, event) => {
-    if (offline) await unpublish(id, (line) => event.sender.send("publish-log", line)); // throws before anything local is deleted
+    // Deleting a site always deletes its inbox (#126), so no messages are left in the Cloudflare account.
+    // Both throw before anything local is deleted.
+    const log = (line) => event.sender.send("publish-log", line);
+    if (offline) await unpublish(id, log, { deleteInbox: true });
+    else if ((await readState(id)).d1) await unpublish(id, log, { deleteInbox: true, inboxOnly: true });
     clearTimeout(pendingCommits.get(id));
     pendingCommits.delete(id);
     for (const dir of [siteDir(id), previewDir(id), publishDir(id)]) await fs.rm(dir, { recursive: true, force: true });
@@ -668,9 +678,9 @@ const handlers = {
     await repo.tag(siteDir(id), liveTag()).catch((e) => console.error("Couldn't tag the published version:", e));
     return url;
   },
-  "sites:unpublish": async (id, event) => {
+  "sites:unpublish": async (id, deleteInbox, event) => {
     await saveHistory(id);
-    await unpublish(id, (line) => event.sender.send("publish-log", line));
+    await unpublish(id, (line) => event.sender.send("publish-log", line), { deleteInbox: deleteInbox === true });
     await saveHistory(id, "Took the website offline");
   },
 

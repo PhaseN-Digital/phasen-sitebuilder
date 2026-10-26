@@ -1139,18 +1139,27 @@ function publishTab() {
     paths = await call("sites:save", site);
     await call("sites:publish", site.id);
   }) }, publishedUrl ? "Publish changes" : "Publish website");
-  const unpublishBtn = canUnpublish && h("button", { disabled: publishing || !cfDone, onclick: () => {
-    if (confirm(`Take "${site.name}" offline? This deletes the website from Cloudflare, along with its www redirect, form keys and the messages in its Inbox (export them first if you need them). You can publish it again later.`)) run(unpublishBtn, async () => {
-      await call("sites:unpublish", site.id);
-    });
-  } }, "Take website offline");
+  // Taking it offline keeps the Inbox unless asked (#126).
+  const deleteMessages = h("input", { type: "checkbox" });
+  const unpublishDialog = h("dialog", { style: "max-width:560px" },
+    h("form", { method: "dialog" },
+      h("p", {}, h("b", {}, `Take "${site.name}" offline?`)),
+      h("p", {}, "This deletes the website from Cloudflare, along with its www redirect and form keys. Its Inbox messages are kept, so you can still read them here, and you can publish it again later."),
+      h("label", {}, deleteMessages, " Also delete the messages in its Inbox (export them first if you need them)"),
+      h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
+        h("button", { value: "" }, "Cancel"), h("button", { className: "danger", value: "offline" }, "Take offline"))));
+  unpublishDialog.addEventListener("close", () => {
+    if (unpublishDialog.returnValue === "offline") run(unpublishBtn, () => call("sites:unpublish", site.id, deleteMessages.checked));
+  });
+  const unpublishBtn = canUnpublish && h("button", { disabled: publishing || !cfDone, onclick: () => { unpublishDialog.returnValue = ""; deleteMessages.checked = false; unpublishDialog.showModal(); } }, "Take website offline");
 
   // The delete confirmation, with the choice to take the live site down too (#71).
   const offline = h("input", { type: "checkbox", checked: Boolean(canUnpublish && cfDone), disabled: !canUnpublish || !cfDone });
   const deleteDialog = h("dialog", {},
     h("form", { method: "dialog" },
       h("p", {}, h("b", {}, `Delete "${site.name}" from this computer?`)),
-      canUnpublish && h("label", {}, offline, " Also take it offline (deletes it from Cloudflare, with its www redirect, form keys and Inbox messages)"),
+      canUnpublish && h("label", {}, offline, " Also take it offline (deletes it from Cloudflare, with its www redirect and form keys)"),
+      h("p", { className: "hint" }, "Any messages in its Inbox are deleted from Cloudflare too, so export them first if you need them."),
       canUnpublish && !cfDone && h("p", { className: "hint" }, "Connect Cloudflare above to take it offline too."),
       h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
         h("button", { value: "" }, "Cancel"), h("button", { className: "danger", value: "delete" }, "Delete"))));
@@ -1195,6 +1204,7 @@ function publishTab() {
     status,
     log,
     h("hr", { style: "margin:32px 0 16px;border:0;border-top:1px solid var(--line)" }),
+    unpublishDialog,
     deleteDialog,
     deleteBtn,
   ];
