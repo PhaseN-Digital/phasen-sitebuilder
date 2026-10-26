@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.11.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.2...phasen-sitebuilder-v0.11.0) (2026-10-26)
+
+
+### Features
+
+* **build:** RSS feed of blog posts at /feed.xml ([#183](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/183)) ([#309](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/309)) ([a20b59b](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/a20b59bfa8701d6969a9fed9998d7ad4c71ddf82))
+* **help:** copy a diagnostic report and open the data folder ([#86](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/86)) ([#291](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/291)) ([6799493](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6799493c664bb3eacf0a61a68bfa3b91d520008a))
+* **pages:** choose the page from a dropdown and reorder pages in a dialog ([#261](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/261)) ([#288](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/288)) ([40f5dda](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/40f5dda20edf42fe6a34fbb7d86d713a2f94bf07))
+* **publish:** keep a site's form inbox when it's taken offline ([#126](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/126)) ([#300](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/300)) ([f7949f0](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/f7949f0ddd099b0b123da83285632f086eb87eee))
+* **sync:** GitHub sync UI on the Dashboard and in Settings ([#235](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/235)) ([#299](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/299)) ([2156e90](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/2156e90b47c0d97d2d91b3d60ba2e9a397dd424d))
+* **sync:** stop syncing shared settings without signing out ([#298](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/298)) ([#303](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/303)) ([67ea846](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/67ea846872216f6b3e4f5126d369b5b77dc665b1))
+* **themes:** optional {{footer.business}} placeholder for footer templates ([#249](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/249)) ([#280](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/280)) ([6590d31](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/6590d31474ca2199e3edafd2e848188de72ffcb6))
+* **themes:** page layouts in the Theme Builder ([#171](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/171)) ([#308](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/308)) ([48b4961](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/48b49612ddd2270f254089c588d6017d39c53534))
+
+
+### Bug Fixes
+
+* **import:** strip Divi/WPBakery shortcodes and fill block-theme pages from their templates ([#24](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/24)) ([#283](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/283)) ([70bd7f0](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/70bd7f0ee185a2a621358118231afbbbf5e3af21))
+* **mirror:** copy Elementor 3 webpack chunks that load at runtime ([#11](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/11)) ([#294](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/294)) ([9408e93](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/9408e9388aeac1ce4f5e041f38838ab8f55a248a))
+* **mirror:** strip the site name from every exact-copy page title, whatever order pages finish in ([#273](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/273)) ([#290](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/290)) ([2a799e6](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/2a799e6f496a559f3684bf31c5b316d8ec37a5fc))
+* **preview:** count preview requests as busy so a folder rename waits ([#246](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/246)) ([#286](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/286)) ([75cc337](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/75cc337f3f66176da59abcdb4c099aa3073763ce))
+* **publish:** keep a replaced sending key's id until a deploy succeeds ([#276](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/276)) ([#297](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/297)) ([693e29d](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/693e29ddf5532dad0a557621761a460e0ec3b2f5))
+* **secrets:** forget a deleted site folder's secrets problem ([#275](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/275)) ([#281](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/281)) ([15540ba](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/15540ba601cde858435393395b758afa308fa86b))
+* **test:** look the exact copy's folder up at each read ([#244](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/244)) ([#285](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/285)) ([bae29e8](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/bae29e871cfa4aaff174b2efa205e4b609694ca8))
+* **test:** right-click the Theme Builder preview only once its menu script has run ([#264](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/264)) ([#278](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/278)) ([e787e3e](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/e787e3e4a72c94afd92e97a86f2f4295bc701fa0))
+
 ## [0.10.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.1...phasen-sitebuilder-v0.10.2) (2026-10-26)
 
 
