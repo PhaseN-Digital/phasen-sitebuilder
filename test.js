@@ -507,6 +507,14 @@ const site = {
   ], { f1: "Contact" });
   assert.strictEqual(csv, 'Received (UTC),Form,Email,Name,Message,Phone\r\n2026-10-24 10:00:00,Contact,failed (403),\'=HYPERLINK(1),"Hi, ""there""\nbye",\r\n2026-10-23 09:00:00,gone,sent,,,0123\r\n');
 
+  // #182: nothing copyleft gets packaged; sharp/libvips (LGPL) stays excluded by build.files.
+  const licences = require("./scripts/licences");
+  const shipped = licences.packaged();
+  assert.deepStrictEqual(licences.copyleft(shipped), [], "copyleft production dependency would be packaged");
+  assert(shipped.some((p) => p.name === "wrangler") && !shipped.some((p) => /^node_modules\/(@img|sharp)\b/.test(p.key)));
+  for (const [lic, want] of [["MIT", false], ["(MIT OR GPL-3.0)", false], ["Apache-2.0 AND LGPL-3.0-or-later", true],
+    ["GPL-2.0 OR AGPL-3.0", true], ["MPL-2.0", true], ["BSD-3-Clause", false]]) assert.strictEqual(licences.isCopyleft(lic), want, lic);
+
   const { bump } = require("./scripts/release-bump");
   for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],
     ["0.4.0", "1.0.0", "major"], ["1.2.3", "1.2.3", "major"], ["1.2.3", "1.2.4-beta.1", "major"], ["", "1.0.1", "major"]]) {
