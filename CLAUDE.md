@@ -264,6 +264,10 @@ are not, so add them yourself.
   main.js takes `app.requestSingleInstanceLock()` (#149, per userData dir:
   test harnesses with their own userData never block each other or a
   running app); keep it before anything writes.
+- Licences (#182): a new production dependency must not be copyleft
+  (`npm test` and `npm run dist` fail via `scripts/licences.js`); exclude it
+  in `build.files` or add a justified `ALLOW` entry. Keep `LICENSE` and
+  `THIRD-PARTY-NOTICES.txt` in `build.files`.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
