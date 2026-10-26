@@ -806,7 +806,8 @@ function pagesTab() {
   return [
     h("div", { className: "chips" },
       site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
-      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page")),
+      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page"),
+      h("button", { onclick: addMarkdownPages }, "Import Markdown…")), // app/markdown.js (#255)
     choosingLayout && layoutChooser(),
     copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
