@@ -297,6 +297,10 @@ are not, so add them yourself.
   (`npm test` and `npm run dist` fail via `scripts/licences.js`); exclude it
   in `build.files` or add a justified `ALLOW` entry. Keep `LICENSE` and
   `THIRD-PARTY-NOTICES.txt` in `build.files`.
+- The diagnostic report (#86, `lib/diagnostics.js`) is an allowlist: add
+  fields one by one, never spread a settings/site/state object into it, and
+  pass any new free text through its `clean`. test.js asserts no secret,
+  `declaredBy`, `secrets.enc` content or inbox email reaches it.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
@@ -305,6 +309,9 @@ are not, so add them yourself.
   stored messages. The table is created both by the Worker (`SCHEMA` in
   `runtime/worker.js`) and at publish (`D1_SCHEMA` in `lib/publish.js`):
   change both together, and never store the honeypot or Turnstile token.
+  Taking a site offline keeps its inbox unless asked (#126), so `canUnpublish`
+  ignores `d1`; deleting a site always deletes it (`sites:delete`), so no
+  messages are orphaned in the user's Cloudflare account.
 - Copied (exact-copy) pages are edited in their stored HTML via
   `data-sb-edit` keys (`app/copied.js`). `s-` keys are site-wide and derived
   from the element's original text, so don't change how keys are computed
@@ -343,7 +350,7 @@ are not, so add them yourself.
   when no script has changed the page.
 - Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
   leaves the editor or writes/publishes the site (switching site, Settings,
-  Themes, Import, delete, publish, and window close via main.js's `close`
+  Themes, Import, delete, publish, GitHub sync (`runSync`), and window close via main.js's `close`
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
