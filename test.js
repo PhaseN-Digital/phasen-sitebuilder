@@ -982,6 +982,36 @@ const site = {
       "theme.css: unknown layout class .layout-shop"]);
   }
 
+  // RSS feed (#183): newest 20 posts, only with a Blog page and a hostname, everything escaped, nothing personal.
+  {
+    const fout = path.join(os.tmpdir(), "sitebuilder-test-feed");
+    const evil = `<script>&"'\x0B]]>`;
+    const fsite = { ...site, forms: [], importProvenance: { source: "https://old.example", importedAt: "2026-10-01T09:00:00.000Z", declaredBy: { name: "Jo Declarer", email: "jo.declarer@example.org" } },
+      pages: [{ id: "h", title: "Home", sections: [] }, { id: "b", title: "News", layout: "blog-index", sections: [] }, { id: "f", title: "feed.xml", sections: [] },
+        { id: "e", title: evil, layout: "blog-post", date: "2026-13-01", excerpt: evil, sections: [] },
+        ...Array.from({ length: 22 }, (_, i) => ({ id: `q${i}`, title: `Post ${i}`, layout: "blog-post", date: `2026-03-${String(i + 1).padStart(2, "0")}`, sections: [{ type: "richtext", html: "<p>Fish &amp; chips</p>" }] }))] };
+    const fp = await build(fsite, siteDir, fout, { hostname: "bikes.example" });
+    const feed = fs.readFileSync(path.join(fout, "public/feed.xml"), "utf8");
+    assert.strictEqual(fp.f, "/feed-xml", "a page called feed.xml doesn't take the feed's file");
+    assert.strictEqual((feed.match(/<item>/g) || []).length, 20, "newest 20");
+    assert(feed.includes("<title>News | Bob&#39;s &lt;Bikes&gt;</title>\n  <link>https://bikes.example/news</link>") && feed.includes('<atom:link href="https://bikes.example/feed.xml" rel="self"'), "channel");
+    assert(feed.includes("<title>Post 21</title>\n    <link>https://bikes.example/post-21</link>\n    <guid>https://bikes.example/post-21</guid>\n    <pubDate>Sun, 22 Mar 2026 00:00:00 GMT</pubDate>\n    <description>Fish &amp;amp; chips</description>"), "item");
+    assert(!feed.includes("Post 0<") && !feed.includes("Post 1<"), "the oldest posts are past 20");
+    assert(!/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(feed) && !feed.includes("Declarer") && !feed.includes("jo.declarer"), "no control characters, no declaredBy");
+    const head = (f) => fs.readFileSync(path.join(fout, "public", f), "utf8");
+    for (const f of ["index.html", "news.html", "post-1.html", "404.html"]) assert(head(f).includes('<link rel="alternate" type="application/rss+xml" title="Bob&#39;s &lt;Bikes&gt;" href="/feed.xml">'), `${f} links the feed`);
+    assert(head("index.html").includes('<meta name="phasen:imported-from"'), "pages still stamped");
+    // A few posts, so the hostile one is in: escaped once more inside the description.
+    await build({ ...fsite, pages: fsite.pages.slice(0, 5) }, siteDir, fout, { hostname: "bikes.example" });
+    const small = fs.readFileSync(path.join(fout, "public/feed.xml"), "utf8");
+    assert(small.includes("<title>&lt;script&gt;&amp;&quot;&#39;]]&gt;</title>") && small.includes("<description>&amp;lt;script&amp;gt;&amp;amp;&amp;quot;&amp;#39;]]&amp;gt;</description>") && !small.split("<item>").find((i) => i.includes("&lt;script")).includes("pubDate"), "escaped; an invalid date leaves out pubDate");
+    // No hostname (preview/export) or no Blog page: no feed, no link.
+    await build(fsite, siteDir, fout, { preview: true });
+    assert(!fs.existsSync(path.join(fout, "public/feed.xml")) && !head("index.html").includes("rss+xml"), "preview: no feed");
+    await build({ ...fsite, pages: fsite.pages.filter((p) => p.id !== "b") }, siteDir, fout, { hostname: "bikes.example" });
+    assert(!fs.existsSync(path.join(fout, "public/feed.xml")) && !head("index.html").includes("rss+xml"), "no Blog page: no feed");
+  }
+
   // HTML templates (#200): the validator rejects each forbidden construct, placeholders are escaped,
   // a theme's templates reach the build, and an invalid one falls back to the built-in templates.
   {
