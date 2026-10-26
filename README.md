@@ -422,11 +422,13 @@ published always-pass test secret, so that one step needs internet access.
   repo's CI and PhaseN's review do the rest.
   The sign-in is an OAuth App's user token, which doesn't expire and has no
   refresh token; GitHub only stops accepting it when the user revokes the
-  app or it goes unused for a year (#253). Any 401 from the API with it
-  (publishing, the push target lookup, or the check Settings makes each
-  time it opens) marks `settings.github.expired`, Settings then says
+  app or it goes unused for a year (#253). Every use of it goes through
+  `withGithub()` in main.js (publishing, GitHub sync's create, push, pull
+  and restore, and the check Settings makes each time it opens). A 401 from
+  the API or git host marks `settings.github.expired`. Settings then says
   "You've been signed out of GitHub" with "Sign in to GitHub again", and
-  publishing refuses with the same message until the user signs in again.
+  publishing and sync refuse with the same message until the user signs
+  in again.
 
 ## Privacy page
 

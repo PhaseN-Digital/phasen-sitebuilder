@@ -514,11 +514,16 @@ const signedOut = (token) => async (e) => {
   if (e.status === 401) await updateSettings((s) => { if (s.github && unseal(s.github.token) === token) s.github.expired = true; });
   throw e;
 };
-const syncAuth = async () => ({ login: GITHUB_LOGIN, token: await githubToken(), author: await author() });
+// Every use of the sign-in token goes through here: fn(token), with a 401 marking it expired.
+async function withGithub(fn) {
+  const token = await githubToken();
+  return fn(token).catch(signedOut(token));
+}
+const syncAuth = (fn) => withGithub(async (token) => fn({ login: GITHUB_LOGIN, token, author: await author() }));
 // Commits pending edits, runs fn(dir, auth), and rebuilds the preview if files came in from GitHub.
 async function syncSite(id, fn) {
   await saveHistory(id);
-  const r = await fn(siteDir(id), await syncAuth());
+  const r = await syncAuth((o) => fn(siteDir(id), o));
   if (r.status === "pulled") await previewBuild(await readSite(id));
   return r;
 }
@@ -527,7 +532,7 @@ async function syncSettings(run, spec) {
   const s = await loadSettings();
   spec ||= s.github?.settingsRepo;
   if (!spec) throw new Error("Choose a GitHub repository for your settings first.");
-  const r = await (run ? run(await syncAuth()) : sync.syncSettings(data("settings-sync"), { ...(await syncAuth()), spec }, s));
+  const r = await syncAuth((o) => (run ? run(o) : sync.syncSettings(data("settings-sync"), { ...o, spec }, s)));
   const shared = r.shared || (r.status === "pulled" ? JSON.parse(await fs.readFile(data("settings-sync", "shared.json"), "utf8")) : null);
   await updateSettings((x) => { if (x.github) x.github.settingsRepo = spec; if (shared) sync.applyShared(x, shared); });
   return { status: r.status, branch: r.branch };
@@ -794,31 +799,26 @@ const handlers = {
   "github:push-target": async () => {
     const s = await loadSettings();
     if (!s.github) return "";
-    const token = unseal(s.github.token);
-    return s.github.pushRepo || ((await github.canPush(GITHUB_API, token, github.PRIVATE_DEFAULT).catch(signedOut(token))) ? github.PRIVATE_DEFAULT : "");
+    return s.github.pushRepo || ((await withGithub((token) => github.canPush(GITHUB_API, token, github.PRIVATE_DEFAULT))) ? github.PRIVATE_DEFAULT : "");
   },
   // Settings asks GitHub whether the sign-in still works; offline is not an answer.
   "github:check": async () => {
-    const s = await loadSettings();
-    const token = s.github && !s.github.expired && unseal(s.github.token);
-    if (token) await github.user(GITHUB_API, token).catch(signedOut(token)).catch(() => {});
+    await withGithub((token) => github.user(GITHUB_API, token)).catch(() => {}); // throws at once if signed out or expired
     return publicSettings(await loadSettings());
   },
   "github:push": async (id, target) => {
-    const token = await githubToken();
     const { files, json: theme } = await publishable(id);
-    const r = await github.pushTheme({ api: GITHUB_API, token, target, id, files, version: theme.version || "1.0.0" }).catch(signedOut(token));
+    const r = await withGithub((token) => github.pushTheme({ api: GITHUB_API, token, target, id, files, version: theme.version || "1.0.0" }));
     await updateSettings((s) => { if (s.github) s.github.pushRepo = themeSources.parseSource(target).spec; });
     return r;
   },
   "github:submit": async (id) => {
-    const token = await githubToken();
     const { files, json: theme } = await publishable(id);
-    return github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" }).catch(signedOut(token));
+    return withGithub((token) => github.submitTheme({ api: GITHUB_API, token, id, files, label: theme.label, about: theme.about, version: theme.version || "1.0.0" }));
   },
 
   // GitHub sync (#137, lib/sync.js). id null means the shared settings, kept locally in userData/settings-sync.
-  "sync:create": async (owner, name) => sync.createRepo({ api: GITHUB_API, token: await githubToken(), user: (await loadSettings()).github.login, owner, name, description: "A website made with PhaseN Site Builder" }),
+  "sync:create": async (owner, name) => withGithub(async (token) => sync.createRepo({ api: GITHUB_API, token, user: (await loadSettings()).github.login, owner, name, description: "A website made with PhaseN Site Builder" })),
   "sync:connect": async (id, spec) => {
     await sync.connect(siteDir(id), GITHUB_LOGIN, spec);
     return syncSite(id, sync.sync);
@@ -826,7 +826,7 @@ const handlers = {
   "sync:now": (id) => (id === null ? syncSettings() : syncSite(id, sync.sync)),
   "sync:resolve": (id, branch, keep) => (id === null ? syncSettings((o) => sync.resolve(data("settings-sync"), { ...o, branch, keep })) : syncSite(id, (dir, o) => sync.resolve(dir, { ...o, branch, keep }))),
   "sync:restore": async (spec) => {
-    const { id, dir } = await sync.clone({ root: SITES, login: GITHUB_LOGIN, token: await githubToken(), spec, freeDir: folder.freeDir, has: (x) => sites.has(x) });
+    const { id, dir } = await withGithub((token) => sync.clone({ root: SITES, login: GITHUB_LOGIN, token, spec, freeDir: folder.freeDir, has: (x) => sites.has(x) }));
     sites.set(id, dir);
     return readSite(id);
   },

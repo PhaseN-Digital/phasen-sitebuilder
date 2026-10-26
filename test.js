@@ -1155,7 +1155,7 @@ const site = {
       await sync.connect(A, host.url, spec);
       assert.strictEqual(await sync.remote(A, host.url), spec);
       assert.strictEqual(await sync.remote(A, "https://elsewhere.example"), null, "a remote on another host isn't trusted with the token");
-      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), /didn't accept your sign-in/);
+      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), (e) => e.status === 401 && e.message === require("./lib/github").SIGNED_OUT, "a rejected sign-in token says signed out (#253)");
       assert.deepStrictEqual(await sync.sync(A, o), { status: "pushed" });
       assert.deepStrictEqual(await sync.sync(A, o), { status: "up to date" });
       assert(!/secrets/.test(host.git(spec, "ls-tree", "-r", "--name-only", "main")), "secrets never pushed");
