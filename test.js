@@ -250,6 +250,43 @@ const site = {
     assert.strictEqual(c("Join", `<form method="post"><input name="user_login"><input type="password" name="pass1"></form>`).wpOnly, true);
   }
 
+  // Editable import: Divi/WPBakery shortcodes stripped, inner content kept; block-theme pages built by templates (#24).
+  {
+    const { stripShortcodes, fromTemplates } = require("./lib/wordpress");
+    // Divi with the builder off, as the REST API returns it: wpautop'd and wptexturized.
+    const divi = `<p>[et_pb_section fb_built=&#8221;1&#8243; _builder_version=&#8221;4.9.4&#8243; _module_preset=&#8221;default&#8221;][et_pb_row _builder_version=&#8221;4.9.4&#8243;][et_pb_column type=&#8221;4_4&#8243;][et_pb_text _builder_version=&#8221;4.9.4&#8243;]</p>
+<h2>Welcome to Bob&#8217;s Bikes</h2>
+<p>We fix bikes. [Est. 1999]</p>
+<p>[/et_pb_text][et_pb_image src=&#8221;https://bob.test/wp-content/uploads/2021/04/shop.jpg&#8221; title_text=&#8221;shop&#8221; _builder_version=&#8221;4.9.4&#8243;][/et_pb_image][et_pb_button button_url=&#8221;/contact/&#8221; button_text=&#8221;Contact&#8221;][/et_pb_button][/et_pb_column][/et_pb_row][/et_pb_section]</p>`;
+    assert.strictEqual(stripShortcodes(divi).replace(/\s+/g, " ").trim(),
+      `<h2>Welcome to Bob&#8217;s Bikes</h2> <p>We fix bikes. [Est. 1999]</p> <p><img src="https://bob.test/wp-content/uploads/2021/04/shop.jpg" alt=""></p>`);
+    const vc = `<p>[vc_row full_width=&#8221;stretch_row&#8221;][vc_column width=&#8221;1/2&#8243;][vc_column_text css=&#8221;.vc_custom_1{margin-top: 0px !important;}&#8221;]</p>
+<h3>Opening hours</h3>
+<p>Mon&#8211;Fri 9&#8211;5</p>
+<p>[/vc_column_text][vc_raw_html]JTNDc2NyaXB0JTNFYWxlcnQoMSklM0MlMkZzY3JpcHQlM0U=[/vc_raw_html][vc_single_image image=&#8221;42&#8243;][/vc_column][/vc_row]</p>
+<p>[contact-form-7 id="7"]</p>`;
+    assert.strictEqual(stripShortcodes(vc).replace(/\s+/g, " ").trim(), `<h3>Opening hours</h3> <p>Mon&#8211;Fri 9&#8211;5</p> <p>[contact-form-7 id="7"]</p>`, "only builder shortcodes go");
+    // WordPress-only pages are still recognised by their shortcodes.
+    assert.strictEqual(stripShortcodes("<p>[woocommerce_my_account]</p>"), "<p>[woocommerce_my_account]</p>");
+
+    const home = `<body class="home page-template-default page page-id-5 wp-custom-logo"><div class="wp-site-blocks"><header class="wp-block-template-part"><nav>Menu</nav></header>
+<main class="wp-block-group is-layout-constrained"><h1 class="wp-block-post-title">Home</h1><div class="wp-block-cover"><h2 class="wp-block-heading">Bikes, fixed</h2></div></main>
+<footer class="wp-block-template-part">Footer</footer></div></body>`;
+    const fetched = [];
+    const text = async (url) => { fetched.push(url); if (url.endsWith("/gone/")) throw new Error("404"); return `<main><h1 class="entry-title">Forum</h1><p>Threads</p></main>`; };
+    const pages = await fromTemplates("https://bob.test", home, [
+      { id: 5, title: "Home", html: "\n", link: "https://bob.test/" },
+      { id: 6, title: "About", html: "<p>Us</p>", link: "https://bob.test/about/" },
+      { id: 7, title: "Forum", html: "", link: "https://bob.test/forum/" },
+      { id: 8, title: "Gone", html: "", link: "https://bob.test/gone/" },
+      { id: 9, title: "Elsewhere", html: "", link: "https://evil.test/x/" },
+      { id: "blog", title: "Blog", html: "", link: "https://bob.test/blog/", layout: "blog-index" },
+    ], text);
+    assert.deepStrictEqual(pages.map((p) => p.html.replace(/\s+/g, " ").trim()),
+      [`<div class="wp-block-cover"><h2 class="wp-block-heading">Bikes, fixed</h2></div>`, "<p>Us</p>", "<p>Threads</p>", "", "", ""]);
+    assert.deepStrictEqual(fetched, ["https://bob.test/forum/", "https://bob.test/gone/"], "only the site's own empty pages are fetched, and the home page reuses homeHtml");
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {
@@ -542,6 +579,20 @@ const site = {
     "DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/challenges/widgets/s1", "DELETE /api-keys/k1"]);
   assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
+  globalThis.fetch = realFetch;
+
+  // Replaced sending key (#176): deleting it never throws, and never logs a key value.
+  for (const [status, said] of [[200, /Deleted this site's old/], [404, /^$/], [401, /Couldn't delete this site's old Resend sending key \(Resend: nope\)/], [0, /Couldn't delete .*offline/]]) {
+    const seen = [], said176 = [];
+    globalThis.fetch = async (url, { method, headers }) => {
+      seen.push(`${method} ${url} ${headers.Authorization}`);
+      if (!status) throw new Error("offline");
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    await pub135.deleteSendingKey("re_account", "old-1", (l) => said176.push(l));
+    assert.deepStrictEqual(seen, ["DELETE https://api.resend.com/api-keys/old-1 Bearer re_account"]);
+    assert(said.test(said176.join("")) && !said176.join("").includes("re_account"), `${status}: ${said176}`);
+  }
   globalThis.fetch = realFetch;
 
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
@@ -855,6 +906,18 @@ const site = {
       assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
       assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
       assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+
+      // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
+      const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
+      const x = Buffer.from("x");
+      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days/sub", { "preview.png": x }); // a subfolder
+      await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });
+      assert.deepStrictEqual(Object.keys(fake.files(gh.PRIVATE_DEFAULT)).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days-old/preview.png",
+        "themes/sunny-days/notes.md", "themes/sunny-days/sub/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] }); // nothing left to delete: no error
+      for (const id of ["..", "a/../b", "", "a//b"]) await assert.rejects(push(id, files), /Bad theme folder/);
       assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
     } finally {
       await fake.close();
@@ -1072,6 +1135,23 @@ const site = {
     assert.deepStrictEqual(tb.clean({ templates: { header: tpl.DEFAULTS.header, evil: "x", footer: 1 } }).templates, {}, "only changed, known templates are kept");
   }
 
+  // {{footer.business}} (#249): a footer template can place the business details; then they aren't also above it.
+  {
+    const tb = require("./lib/theme-builder");
+    const sample = { ...tb.sampleSite({}, "tpl"), business: { town: "Leeds", phone: "0113 496 0000" } };
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-site-")), tout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-fb-built-"));
+    const footer = '<footer class="site-footer"><div class="wrap">{{#if footer.business}}<div class="mine">{{footer.business}}</div>{{/if}}{{footer.links}}</div></footer>';
+    assert.deepStrictEqual(await tb.writeTheme(path.join(sdir, "theme"), { templates: { footer } }), [], "footer.business is a valid placeholder");
+    await build(sample, sdir, tout);
+    const home = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert.strictEqual(home.split('class="site-business"').length, 2, "business details once");
+    assert(home.includes('<div class="mine"><div class="site-business"><div class="business-grid">') && home.includes("0113 496 0000"), "inside the theme's footer");
+    await build({ ...sample, business: {} }, sdir, tout);
+    const none = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+    assert(!none.includes("mine") && !none.includes("site-business"), "no details: the {{#if}} drops the wrapper");
+    assert.match(require("./lib/theme-validate").validateTemplate("header", "<header>{{menu}}{{footer.business}}</header>").join(), /unknown placeholder \{\{footer\.business\}\}/, "footer only");
+  }
+
   // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
   {
     const sec = require("./lib/secrets");
@@ -1147,6 +1227,20 @@ const site = {
     env.data = Buffer.from("x" + Buffer.from(env.data, "base64").toString("latin1").slice(1), "latin1").toString("base64");
     assert.throws(() => sec.decrypt(env, portable), /couldn't be unlocked/);
     fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  // A deleted site folder's secrets problem leaves Settings with it, no restart needed (#275).
+  {
+    const sec = require("./lib/secrets");
+    const gone = fs.mkdtempSync(path.join(os.tmpdir(), "sb-gone-"));
+    const file = path.join(gone, ".secrets", "secrets.enc");
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ v: 1, mode: "portable", iv: "", tag: "", data: "" }));
+    await sec.readVault(file, { portable: true, key: null });
+    const locked = (m) => /Enter it in Settings/.test(m);
+    assert(sec.problems().some(locked), "a locked site vault is reported");
+    fs.rmSync(gone, { recursive: true });
+    assert(!sec.problems().some(locked), "and forgotten once its site folder is deleted");
   }
 
   // Site history (#136): one repo per site, readable batched commits, tags, page-level changes, revert as a new commit.
@@ -1248,6 +1342,12 @@ const site = {
       const has = () => false;
       await assert.rejects(sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has: () => true }), /already in your sites folder/);
       await assert.rejects(sync.clone({ root: rootB, ...o, spec: "PhaseN-Digital/site-shop", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/);
+      const C = path.join(base, "c");
+      w(C, "site.json", { id: "../escape", name: "Bad" });
+      await repo.ensure(C, who);
+      await sync.connect(C, host.url, await sync.createRepo({ api: host.url, token: host.token, user: "octo", owner: "octo", name: "bad-id" }));
+      await sync.sync(C, o);
+      await assert.rejects(sync.clone({ root: rootB, ...o, spec: "octo/bad-id", freeDir: folder.freeDir, has }), /doesn't hold a PhaseN Site Builder website/, "a site id the app can't use is refused (#235)");
       const { id: got, dir: B } = await sync.clone({ root: rootB, ...o, spec, freeDir: folder.freeDir, has });
       assert(got === id && B === path.join(rootB, "shop") && site(B).name === "Shop");
       assert.deepStrictEqual([...(await folder.scan(rootB)).keys()], [id], "a restored site is found by the scan; no clone leftovers");
@@ -1412,6 +1512,33 @@ const site = {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), "md-"));
     await assert.rejects(md.readMarkdown(empty), /no Markdown/);
     fs.rmSync(empty, { recursive: true });
+  }
+
+  { // Diagnostic report (#86): no secret, declaredBy, secrets.enc content or inbox email, wherever they turn up.
+    const diag = require("./lib/diagnostics");
+    const S = { cf: "cfTokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", resend: "re_ResendKey123", gh: "gho_GithubTok", turnstile: "0x4TurnstileSecret",
+      sending: "re_SendingKey456", password: "hunter2-wp-pass", siteCf: "siteCfTok", siteResend: "siteResendKey", vault: "djEwSecretsEncBlobXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==",
+      name: "Jane Q Owner", email: "jane.owner@example.org", inbox: "visitor42@mail.example.com", defaultEmail: "forms@bobs-bikes.example" };
+    const settings = { defaults: { email: S.defaultEmail }, cloudflare: { token: S.cf, accountId: "acc1", accounts: [{ id: "acc1" }] }, resendKey: S.resend,
+      github: { token: S.gh, login: "janeq" }, wp: { password: S.password }, secretsEnc: S.vault, name: S.name };
+    const fixtureSite = { id: "11111111-2222-3333-4444-555555555555", name: "Bob", theme: "bold", pages: [{ id: "a" }, { id: "b", mirror: true }], forms: [{ id: "f" }], domain: "bobs.example",
+      importProvenance: { source: "https://bobs.example", appVersion: "0.9.0", declaredBy: { name: S.name, email: S.email }, verification: { status: "verified" } } };
+    const text = diag.report({
+      app: { version: "1.2.3", electron: "30", chrome: "124", node: "20", platform: "darwin", arch: "arm64", osRelease: "23.0", packaged: true, locale: "en-GB",
+        dataDir: "/Users/jane/Library/Application Support/PhaseN", portable: false, secretsProblem: `Couldn't decrypt ${S.vault}` },
+      settings,
+      sites: [{ site: fixtureSite, accounts: { cloudflare: { token: S.siteCf }, resendKey: S.siteResend }, state: { publishedAt: "2026-01-01T00:00:00Z", secret: S.turnstile, sendingKey: S.sending } }],
+      log: [`Deploying with ${S.cf}\n`, `New message from ${S.inbox} for ${S.defaultEmail}`, `Resend said: bad key ${S.sending} / ${S.siteResend}`, `Signed by ${S.name}`],
+      errors: [{ at: "2026-01-01T00:00:00Z", channel: "publish:run", message: `401 for ${S.siteCf} (${S.turnstile}) ${S.password} ${S.gh} ${S.email}` }],
+      home: "/Users/jane",
+    });
+    for (const [k, v] of Object.entries(S)) assert(!text.includes(v), `diagnostic report leaks ${k}`);
+    assert(!text.includes("/Users/jane"), "home folder replaced");
+    for (const want of ["App version: 1.2.3", "darwin 23.0 (arm64)", "Cloudflare connected: yes (1 accounts)", "GitHub connected: yes", fixtureSite.id,
+      "2 pages, 1 forms, 1 copied pages", "verification verified", "published: 2026-01-01T00:00:00Z", "publish:run: 401 for [redacted]", "New message from [email]"]) {
+      assert(text.includes(want), `diagnostic report has ${want}`);
+    }
+    assert(diag.report({}).includes("Sites (0)"), "empty inputs still make a report");
   }
 
   const { execFileSync } = require("node:child_process");

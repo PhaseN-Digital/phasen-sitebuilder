@@ -54,6 +54,7 @@ const cf = require("../lib/publish");
 const deploys = [];
 cf.deployWorker = async (out, creds, secrets) => {
   deploys.push(secrets);
+  calls.push("deploy");
   fs.cpSync(out, path.join(OUT, `publish-${deploys.length}`), { recursive: true });
 };
 
@@ -91,13 +92,16 @@ app.on("browser-window-created", (_e, win) => {
       const d2 = deploys[1];
       check("broken site: republish re-creates the sending key and rotates the Turnstile secret", r2 === "ok" && /^re_send_\d+$/.test(d2?.RESEND_API_KEY) && d2.RESEND_API_KEY !== "re_send_1" && d2.TURNSTILE_SECRET_KEY === "0x4AAAAAAArotated", { r2, d2 });
       const state = await store.loadState(dir);
+      check("broken site: the replaced sending key is deleted at Resend after the deploy (#176)", calls.indexOf("resend DELETE /api-keys/key-1") > calls.indexOf("deploy"), calls);
       check("broken site: the new keys are stored", state.sendingKey === d2?.RESEND_API_KEY && state.turnstile.secret === "0x4AAAAAAArotated");
 
       // 3. The guard: a key that isn't a Resend key is never uploaded.
       await store.updateState(dir, (s) => { delete s.sendingKey; });
       issueGarbage = true;
+      calls.length = 0;
       const r3 = await publish(site.id);
       check("guard: refuses to deploy with an invalid key", /form keys aren't valid/.test(r3) && deploys.length === 2, r3);
+      check("guard: the live sending key isn't deleted when the deploy is refused (#176)", !calls.some((c) => c.startsWith("resend DELETE")), calls);
     } catch (e) {
       check("legacy run finished without errors", false, String(e.stack || e));
     }
