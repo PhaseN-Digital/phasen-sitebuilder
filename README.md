@@ -157,7 +157,9 @@ checks the whole app end to end with no accounts, against fake sites in
   pre-#141 import asked to declare before publishing); Markdown import of
   `test/fixtures/markdown` (new site, titles, order, front matter address,
   links between files, local image, hostile HTML, editor round trip, then one
-  file added to that site from the Pages tab); exact copy of a fake
+  file added to that site from the Pages tab); the Pages screen's page
+  dropdown (switching, filtering 30+ pages) and "Reorder pages" dialog (Cancel,
+  arrows, drag, saved order and built menu); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -499,7 +501,11 @@ becomes Home, the rest Standard; copied pages have none.
 | Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
 
 Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
-keeps the sections. The page is `<body class="layout-<id>">`; only its
+keeps the sections. The Pages screen picks the page to edit from a dropdown
+(with a filter box above it once a site has more than 8 pages, #261), and
+"Reorder pages…" opens a dialog (drag and drop, or each page's up/down
+buttons; Save or Cancel) that sets the menu order; the first page is the home
+page. The page is `<body class="layout-<id>">`; only its
 first heading is an `h1` (the title band, else the first banner, later
 banners get `h2`), and the title band is left out when a banner opens the
 page. Rich text sections can be "shown as cards": each Heading 3 starts a
