@@ -332,6 +332,7 @@ async function gitRepos() {
     if (req.method === "GET" && !rest) return send(200, { full_name: m[1], default_branch: r.default_branch, private: r.private, permissions: { push: authed && r.push } });
     let x;
     if (req.method === "GET" && (x = /^\/git\/ref\/heads\/(.+)$/.exec(rest))) return r.refs[x[1]] ? send(200, { object: { sha: r.refs[x[1]] } }) : send(404, { message: "Not Found" });
+    if (req.method === "GET" && (x = /^\/git\/trees\/(\w+)$/.exec(rest)) && u.searchParams.get("recursive") === "1") return send(200, { truncated: false, tree: Object.entries(trees[x[1]]).map(([p, s]) => ({ path: p, mode: "100644", type: "blob", sha: s })) });
     if (req.method === "GET" && (x = /^\/git\/commits\/(\w+)$/.exec(rest))) return send(200, { sha: x[1], tree: { sha: commits[x[1]].tree } });
     if (req.method === "POST" && rest === "/forks") {
       const name = `octo/${m[1].split("/")[1]}`;
@@ -343,7 +344,11 @@ async function gitRepos() {
     if (req.method === "POST" && rest === "/git/blobs") { const b = Buffer.from(body.content, "base64"); const s = sha(body.content); blobs[s] = b; return send(201, { sha: s }); }
     if (req.method === "POST" && rest === "/git/trees") {
       const tree = { ...trees[body.base_tree] };
-      for (const e of body.tree) { if (!blobs[e.sha] || e.mode !== "100644") return send(422, { message: "bad tree entry" }); tree[e.path] = e.sha; }
+      for (const e of body.tree) {
+        if (e.sha === null && tree[e.path]) { delete tree[e.path]; continue; } // GitHub errors deleting a missing path
+        if (!blobs[e.sha] || e.mode !== "100644") return send(422, { message: "bad tree entry" });
+        tree[e.path] = e.sha;
+      }
       const t = sha(tree); trees[t] = tree; return send(201, { sha: t });
     }
     if (req.method === "POST" && rest === "/git/commits") return send(201, { sha: commit(body.tree, body.parents, body.message) });

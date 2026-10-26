@@ -507,6 +507,20 @@ const site = {
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
+  // Replaced sending key (#176): deleting it never throws, and never logs a key value.
+  for (const [status, said] of [[200, /Deleted this site's old/], [404, /^$/], [401, /Couldn't delete this site's old Resend sending key \(Resend: nope\)/], [0, /Couldn't delete .*offline/]]) {
+    const seen = [], said176 = [];
+    globalThis.fetch = async (url, { method, headers }) => {
+      seen.push(`${method} ${url} ${headers.Authorization}`);
+      if (!status) throw new Error("offline");
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    await pub135.deleteSendingKey("re_account", "old-1", (l) => said176.push(l));
+    assert.deepStrictEqual(seen, ["DELETE https://api.resend.com/api-keys/old-1 Bearer re_account"]);
+    assert(said.test(said176.join("")) && !said176.join("").includes("re_account"), `${status}: ${said176}`);
+  }
+  globalThis.fetch = realFetch;
+
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
   const moveStub = (routes, writes) => async (url, { method, body }) => {
     url = url.replace("https://api.cloudflare.com/client/v4", "");
@@ -818,6 +832,18 @@ const site = {
       assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
       assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
       assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+
+      // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
+      const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
+      const x = Buffer.from("x");
+      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days/sub", { "preview.png": x }); // a subfolder
+      await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });
+      assert.deepStrictEqual(Object.keys(fake.files(gh.PRIVATE_DEFAULT)).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days-old/preview.png",
+        "themes/sunny-days/notes.md", "themes/sunny-days/sub/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] }); // nothing left to delete: no error
+      for (const id of ["..", "a/../b", "", "a//b"]) await assert.rejects(push(id, files), /Bad theme folder/);
       assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
     } finally {
       await fake.close();

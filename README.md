@@ -157,7 +157,9 @@ checks the whole app end to end with no accounts, against fake sites in
   pre-#141 import asked to declare before publishing); Markdown import of
   `test/fixtures/markdown` (new site, titles, order, front matter address,
   links between files, local image, hostile HTML, editor round trip, then one
-  file added to that site from the Pages tab); exact copy of a fake
+  file added to that site from the Pages tab); the Pages screen's page
+  dropdown (switching, filtering 30+ pages) and "Reorder pages" dialog (Cancel,
+  arrows, drag, saved order and built menu); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -228,7 +230,8 @@ published always-pass test secret, so that one step needs internet access.
   startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
   a secret is next saved. A published site whose Turnstile secret was lost
   gets a new one (`rotate_secret`) on the next publish; a lost sending key is
-  re-created. Sites and settings from before #136 (`userData/sites`,
+  re-created, and the old one deleted at Resend once the new one is live
+  (#176; if that fails, publishing goes on and the log says so). Sites and settings from before #136 (`userData/sites`,
   `userData/settings.json`, each secret sealed separately) are moved on the
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
@@ -433,7 +436,9 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  also deletes theme files the theme no longer has (an old `preview.png`)
+  from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -504,7 +509,11 @@ becomes Home, the rest Standard; copied pages have none.
 | Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
 
 Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
-keeps the sections. The page is `<body class="layout-<id>">`; only its
+keeps the sections. The Pages screen picks the page to edit from a dropdown
+(with a filter box above it once a site has more than 8 pages, #261), and
+"Reorder pages…" opens a dialog (drag and drop, or each page's up/down
+buttons; Save or Cancel) that sets the menu order; the first page is the home
+page. The page is `<body class="layout-<id>">`; only its
 first heading is an `h1` (the title band, else the first banner, later
 banners get `h2`), and the title band is left out when a banner opens the
 page. Rich text sections can be "shown as cards": each Heading 3 starts a
@@ -954,8 +963,8 @@ site's local files until taking it offline has fully worked.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
-  a site's folder (#177) likewise only on Linux. A lost
-  sending key is re-created without deleting the old one at Resend. A secrets
+  a site's folder (#177) likewise only on Linux. Deleting a replaced
+  sending key at Resend (#176) is tested against a fake Resend only. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
@@ -983,9 +992,8 @@ site's local files until taking it offline has fully worked.
   sign-in (#253) was tested only with the fake answering 401, not with a
   token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
-  secret to revoke it with). A file dropped from a theme (an old
-  `preview.png`) stays in the target repo, since a push only adds or
-  replaces files.
+  secret to revoke it with). Deleting files dropped from a theme (#159) is
+  skipped when GitHub truncates the repo's file listing (100k+ files).
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

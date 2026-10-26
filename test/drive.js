@@ -72,7 +72,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -186,7 +186,9 @@ app.on("browser-window-created", (_e, win) => {
       // switched sites by script, is still open over the page (a user couldn't get here past the modal).
       await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`);
       const rightClick = async () => {
-        await waitFor(() => inFrame(`Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
+        // The menu's script (app/theme-builder-frame.js) is at the end of the body: its <script> tag and the page's content are
+        // there before it has run and can see a right-click (#264). It blocks the parser, so a complete document has run it.
+        await waitFor(() => inFrame(`document.readyState === "complete" && Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
         const { x, y } = await run(`(() => { const r = document.querySelector("#preview").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
         const at = await inFrame(`(() => { const r = document.querySelector(".hero h1").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
         const pos = { x: Math.round(x + at.x), y: Math.round(y + at.y) };
@@ -594,6 +596,64 @@ app.on("browser-window-created", (_e, win) => {
       check("layouts: landing page has no menu", files[ids.indexOf("landing")] && !files[ids.indexOf("landing")].includes('id="site-nav"'));
       await shot("layouts");
       await run(`site.pages.splice(${before}); pageId = site.pages[0].id; save(); renderTab()`);
+      await saved();
+    }
+
+    // ---------- 1d. page dropdown and "Reorder pages" (#261), on the made-in-app site; its order is put back afterwards ----------
+    async function pagePicker() {
+      const id = result.sites.created;
+      if (!id) return;
+      const home = path.join(UD, "preview", id, "public", "index.html");
+      const picker = (js) => run(`{ const s = document.querySelector("#page-picker"); ${js} }`);
+      await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); tab = "pages"; pageId = site.pages[0].id; renderEditor(); 0`);
+      const original = await run(`site.pages.map((p) => p.id)`);
+      check("pages: few pages, no filter box", await run(`Boolean(document.querySelector("label[for=page-picker]")) && !document.querySelector(".page-filter") && !document.querySelector(".chips")`));
+      await picker(`s.value = ${JSON.stringify(original[1])}; s.dispatchEvent(new Event("change")); 0`);
+      check("pages: the dropdown switches page", await waitFor(() => run(`pageId === ${JSON.stringify(original[1])} && document.querySelector("#page-picker").value === pageId && document.activeElement?.id === "page-picker" && document.querySelector("#tab input").value === site.pages[1].title`)));
+      await shot("pages-few");
+
+      // Many pages (an import): a filter box narrows the dropdown; Enter opens the first match.
+      await run(`for (let i = 1; i <= 32; i++) site.pages.push({ id: "many" + i, title: "Extra page " + i, layout: "standard", sections: [] }); save(); renderTab(); 0`);
+      await saved();
+      await run(`{ const f = document.querySelector(".page-filter"); f.value = "page 17"; f.dispatchEvent(new Event("input")); } 0`);
+      check("pages: many pages, the filter narrows the dropdown", JSON.stringify(await picker(`[...s.options].map((o) => o.value)`)) === JSON.stringify([original[1], "many17"]));
+      await run(`document.querySelector(".page-filter").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); 0`);
+      check("pages: Enter opens the first match", await waitFor(() => run(`pageId === "many17" && document.querySelector("#page-picker").options.length === site.pages.length`)));
+      await shot("pages-many");
+      // A dialog's "close" event (which saves or drops the order, then removes it) comes a task after close(): wait for it.
+      const reorderOpen = () => waitFor(() => run(`document.querySelectorAll("dialog.reorder-pages[open]").length === 1`));
+      const reorderGone = () => waitFor(() => run(`!document.querySelector("dialog.reorder-pages")`));
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await shot("reorder-many");
+      await run(`document.querySelector("dialog.reorder-pages").close(); 0`);
+      await reorderGone();
+      await run(`site.pages.splice(${original.length + 1}); pageId = site.pages[0].id; save(); renderTab(); 0`); // keeps one extra page: three to reorder
+      await saved();
+
+      // Reorder: Cancel changes nothing; the arrows and a drag then Save change the order.
+      const before = [...original, "many1"];
+      const row = (i) => `document.querySelectorAll("dialog.reorder-pages li")[${i}]`;
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await run(`${row(before.length - 1)}.querySelector('[data-dir="up"]').click(); document.querySelector('dialog.reorder-pages button[value=""]').click(); 0`);
+      check("reorder: Cancel keeps the order", (await reorderGone()) && JSON.stringify(await run(`site.pages.map((p) => p.id)`)) === JSON.stringify(before));
+      await clickButton("Reorder pages…");
+      await reorderOpen();
+      await run(`${row(1)}.querySelector('[data-dir="up"]').click(); 0`); // the second page becomes the home page
+      check("reorder: the arrow keeps focus on the moved page", await run(`document.activeElement === ${row(0)}.querySelector('[data-dir="down"]')`));
+      await run(`{ const dt = new DataTransfer(); ${row(before.length - 1)}.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true })); ${row(1)}.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true })); ${row(1)}.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true })); } 0`);
+      await shot("reorder");
+      await run(`document.querySelector('dialog.reorder-pages button[value="save"]').click(); 0`);
+      const want = [before[1], before.at(-1), ...before.filter((p, i) => i !== 1 && i !== before.length - 1)];
+      await waitFor(() => run(`!document.querySelector("dialog.reorder-pages") && site.pages[0].id === ${JSON.stringify(want[0])}`));
+      await saved();
+      const saved1 = JSON.parse(read(path.join(S(id), "site.json"))).pages;
+      check("reorder: arrows and drag, saved in site.json", JSON.stringify(saved1.map((p) => p.id)) === JSON.stringify(want), saved1.map((p) => p.title));
+      const titles = want.map((pid) => saved1.find((p) => p.id === pid).title);
+      const menu = () => (/<nav id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(read(home))?.[1].match(/>([^<>]+)<\/a>/g) || []).map((a) => a.slice(1, -4));
+      check("reorder: the built menu follows the new order", await waitFor(() => JSON.stringify(menu()) === JSON.stringify(titles)), menu());
+      await run(`site.pages.splice(0, site.pages.length, ...${JSON.stringify(original)}.map((pid) => site.pages.find((p) => p.id === pid))); pageId = site.pages[0].id; save(); renderTab(); 0`);
       await saved();
     }
 

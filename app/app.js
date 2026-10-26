@@ -894,22 +894,12 @@ function pagesTab() {
   const index = site.pages.indexOf(page);
   const copied = page.mirror && copiedPageCard(page);
   return [
-    h("div", { className: "chips" },
-      site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
-      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page"),
-      h("button", { onclick: addMarkdownPages }, "Import Markdown…")), // app/markdown.js (#255)
+    pagePicker(page, index),
     choosingLayout && layoutChooser(),
     copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
       select("Layout", page, "layout", LAYOUTS.map((l) => [l.id, l.label]), renderTab),
       h("p", { className: "hint" }, `${LAYOUT[page.layout]?.description || ""} Changing it keeps this page's sections.`),
-      h("div", { className: "inline" },
-        h("button", { disabled: index === 0, onclick: () => move(site.pages, index, -1) }, "Move left in menu"),
-        h("button", { disabled: index === site.pages.length - 1, onclick: () => move(site.pages, index, 1) }, "Move right"),
-        h("button", { className: "danger", disabled: site.pages.length === 1, onclick: () => {
-          if (!confirm(`Delete the "${page.title}" page?`)) return;
-          site.pages.splice(index, 1); pageId = site.pages[0].id; save(); renderTab();
-        } }, "Delete page")),
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
     page.layout === "blog-post" && postCard(page),
     page.layout === "blog-index" && h("p", { className: "hint" }, "Your blog posts (pages with the Blog post layout) are listed on this page automatically, newest first, ten to a page. Sections added here appear above the list."),
@@ -928,6 +918,89 @@ function pagesTab() {
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
       h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
+}
+
+// Which page to edit (#261): a labelled <select> (native keyboard support and
+// type-ahead), with a filter box once there are too many pages to scan.
+const PAGE_FILTER_FROM = 8;
+const pageLabel = (p, i) => `${i + 1}. ${p.title || "Untitled"}`;
+function pagePicker(page, index) {
+  const go = async (id) => {
+    if (!id || id === page.id) return;
+    await flushSave(); // a copied page's pending edit lands (and goes on its undo stack) before the page changes
+    pageId = id; selectedCopyImage = null; choosingLayout = false;
+    renderTab(); refreshPreview();
+    $("#page-picker")?.focus();
+  };
+  const picker = h("select", { id: "page-picker", onchange: (e) => go(e.target.value) });
+  const fill = (q = "") => {
+    q = q.trim().toLowerCase();
+    picker.replaceChildren(...site.pages.map((p, i) => (p === page || !q || (p.title || "Untitled").toLowerCase().includes(q)) && h("option", { value: p.id }, pageLabel(p, i))).filter(Boolean));
+    picker.value = page.id;
+  };
+  fill();
+  const filter = site.pages.length > PAGE_FILTER_FROM && h("input", { type: "search", className: "page-filter", placeholder: `Filter ${site.pages.length} pages…`, "aria-label": "Filter pages by name", "aria-controls": "page-picker",
+    oninput: (e) => fill(e.target.value),
+    onkeydown: (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); picker.focus(); }
+      if (e.key === "Enter") go([...picker.options].find((o) => o.value !== page.id)?.value); // first match
+    } });
+  return [
+    h("div", { className: "page-picker" },
+      h("label", { htmlFor: "page-picker" }, "Page to edit"), filter,
+      h("div", { className: "inline" }, picker,
+      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page"),
+      h("button", { className: "danger", disabled: site.pages.length === 1 || Boolean(page.mirror), title: page.mirror ? "Copied pages can't be deleted here" : "", onclick: async () => {
+        if (!confirm(`Delete the "${page.title}" page?`)) return;
+        await flushSave();
+        site.pages.splice(site.pages.indexOf(page), 1); pageId = site.pages[0].id; save(); renderTab(); refreshPreview();
+      } }, "Delete page"))),
+    h("div", { className: "inline page-actions" },
+      h("button", { disabled: site.pages.length < 2, onclick: reorderPages }, "Reorder pages…"),
+      h("button", { onclick: addMarkdownPages }, "Import Markdown…")), // app/markdown.js (#255)
+  ];
+}
+
+// "Reorder pages" (#261): works on a copy of the order; Save writes it, Cancel or Esc drops it.
+// The menu and home page follow site.pages' order. For nesting (#190), give each row a
+// depth with indent/outdent buttons and keep `order` flat in menu order.
+function reorderPages() {
+  const order = [...site.pages];
+  let dragged = null;
+  const list = h("ol", { className: "reorder" });
+  const shift = (from, to, focus) => {
+    order.splice(to, 0, ...order.splice(from, 1));
+    draw();
+    if (focus) (list.children[to].querySelector(`[data-dir="${focus}"]:not(:disabled)`) || list.children[to].querySelector("button:not(:disabled)"))?.focus();
+  };
+  const draw = () => list.replaceChildren(...order.map((p, i) => {
+    const name = p.title || "Untitled";
+    return h("li", { draggable: true,
+      ondragstart: (e) => { dragged = i; e.dataTransfer.effectAllowed = "move"; },
+      ondragover: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
+      ondrop: (e) => { e.preventDefault(); if (dragged != null && dragged !== i) shift(dragged, i); dragged = null; } },
+      h("span", { className: "grip", "aria-hidden": "true" }, "⠿"),
+      h("span", { className: "name" }, name, i === 0 && h("small", {}, " · home page")),
+      h("button", { type: "button", className: "icon", "data-dir": "up", "aria-label": `Move ${name} up`, title: "Move up", disabled: i === 0, onclick: () => shift(i, i - 1, "up") }, "↑"),
+      h("button", { type: "button", className: "icon", "data-dir": "down", "aria-label": `Move ${name} down`, title: "Move down", disabled: i === order.length - 1, onclick: () => shift(i, i + 1, "down") }, "↓"));
+  }));
+  draw();
+  const dialog = h("dialog", { className: "reorder-pages" },
+    h("form", { method: "dialog" },
+      h("h2", {}, "Reorder pages"),
+      h("p", { className: "hint" }, "Your menu lists pages in this order, and the first page is your home page. Drag a page, or use its arrows."),
+      list,
+      h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
+        h("button", { value: "" }, "Cancel"), h("button", { className: "primary", value: "save" }, "Save order"))));
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (dialog.returnValue !== "save" || order.every((p, i) => p === site.pages[i])) return;
+    site.pages.splice(0, site.pages.length, ...order);
+    save(); renderTab();
+  });
+  document.body.append(dialog);
+  dialog.returnValue = "";
+  dialog.showModal();
 }
 
 // "Add page" (#169): pick a layout (lib/layouts.js); the page starts with its sections.
