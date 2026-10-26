@@ -261,10 +261,10 @@ async function startGitHub() {
     res.writeHead(200, { "content-type": "application/x-gzip" });
     res.end(tarball(files));
   });
-  const writer = await gitRepos();
+  const writer = await gitRepos(), sync = gitSync();
   const api = await listen(async (req, res) => {
     requests.push([api.host, req.url, req.headers.authorization || null]);
-    if (await writer.handle(req, res)) return;
+    if ((await sync.handle(req, res)) || (await writer.handle(req, res))) return;
     const m = /^\/repos\/([^/]+\/[^/]+)\/tarball(\/.*)?$/.exec(req.url);
     if (m?.[1] === "limited/repo") { res.writeHead(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }); return res.end(); }
     // Like GitHub: a bad token is refused even for a public repo.
@@ -273,7 +273,7 @@ async function startGitHub() {
     res.writeHead(302, { location: `${downloads.url}/${encodeURIComponent(m[1])}` });
     res.end();
   });
-  return { ...api, ...writer.state, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, close: () => Promise.all([api.close(), downloads.close()]) };
+  return { ...api, ...writer.state, requests, token: GITHUB_TOKEN, privateSpec: `acme/private-themes/${PRIVATE_FOLDER}@main`, syncRepos: sync.repos, git: sync.git, close: () => Promise.all([api.close(), downloads.close()]).finally(sync.cleanUp) };
 }
 
 // The writing half of the fake GitHub (#60), served by startGitHub's API host:
@@ -332,6 +332,7 @@ async function gitRepos() {
     if (req.method === "GET" && !rest) return send(200, { full_name: m[1], default_branch: r.default_branch, private: r.private, permissions: { push: authed && r.push } });
     let x;
     if (req.method === "GET" && (x = /^\/git\/ref\/heads\/(.+)$/.exec(rest))) return r.refs[x[1]] ? send(200, { object: { sha: r.refs[x[1]] } }) : send(404, { message: "Not Found" });
+    if (req.method === "GET" && (x = /^\/git\/trees\/(\w+)$/.exec(rest)) && u.searchParams.get("recursive") === "1") return send(200, { truncated: false, tree: Object.entries(trees[x[1]]).map(([p, s]) => ({ path: p, mode: "100644", type: "blob", sha: s })) });
     if (req.method === "GET" && (x = /^\/git\/commits\/(\w+)$/.exec(rest))) return send(200, { sha: x[1], tree: { sha: commits[x[1]].tree } });
     if (req.method === "POST" && rest === "/forks") {
       const name = `octo/${m[1].split("/")[1]}`;
@@ -343,7 +344,11 @@ async function gitRepos() {
     if (req.method === "POST" && rest === "/git/blobs") { const b = Buffer.from(body.content, "base64"); const s = sha(body.content); blobs[s] = b; return send(201, { sha: s }); }
     if (req.method === "POST" && rest === "/git/trees") {
       const tree = { ...trees[body.base_tree] };
-      for (const e of body.tree) { if (!blobs[e.sha] || e.mode !== "100644") return send(422, { message: "bad tree entry" }); tree[e.path] = e.sha; }
+      for (const e of body.tree) {
+        if (e.sha === null && tree[e.path]) { delete tree[e.path]; continue; } // GitHub errors deleting a missing path
+        if (!blobs[e.sha] || e.mode !== "100644") return send(422, { message: "bad tree entry" });
+        tree[e.path] = e.sha;
+      }
       const t = sha(tree); trees[t] = tree; return send(201, { sha: t });
     }
     if (req.method === "POST" && rest === "/git/commits") return send(201, { sha: commit(body.tree, body.parents, body.message) });
@@ -396,18 +401,19 @@ async function startResend() {
 // GitHub for site/settings sync (#137): POST /user/repos and /orgs/<org>/repos
 // make an empty bare repo, and /<owner>/<repo>.git is real git smart HTTP via
 // `git http-backend`. Only Basic auth with GITHUB_TOKEN as the password gets in.
-// Anything else (device flow sign-in, /user) is gitRepos()'s.
+// Anything else (device flow sign-in, /user) is gitRepos()'s. startGitHub serves
+// the same routes (gitSync().handle) so the app's regression run can sync (#235).
 // state: repos (owner/repo -> bare dir), git(spec, ...args) runs git on one.
-async function startGitHost() {
+function gitSync() {
   const { execFileSync, spawn } = require("node:child_process");
   const os = require("node:os"), fs = require("node:fs"), path = require("node:path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-githost-"));
-  const repos = new Map(), requests = [], writer = await gitRepos();
+  const repos = new Map();
   const git = (spec, ...args) => execFileSync("git", ["-C", repos.get(spec), ...args], { encoding: "utf8" });
-  const host = await listen(async (req, res) => {
+  // Answers repo creation and git smart HTTP; false for anything else.
+  const handle = async (req, res) => {
     const auth = req.headers.authorization || "";
-    requests.push([req.method, req.url, auth || null]);
-    const send = (status, v) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+    const send = (status, v) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); return true; };
     const m = /^\/(?:user|orgs\/([^/]+))\/repos$/.exec(req.url);
     if (req.method === "POST" && m) {
       if (auth !== `Bearer ${GITHUB_TOKEN}`) return send(401, { message: "Bad credentials" });
@@ -422,7 +428,7 @@ async function startGitHost() {
     }
     const g = /^\/([^/]+\/[^/]+?)\.git(\/[^?]*)(?:\?(.*))?$/.exec(req.url);
     const basic = auth.startsWith("Basic ") ? Buffer.from(auth.slice(6), "base64").toString().split(":")[1] : null;
-    if (!g) return (await writer.handle(req, res)) || send(404, { message: "Not Found" });
+    if (!g) return false;
     if (!repos.has(g[1])) { res.writeHead(404); return res.end(); }
     if (basic !== GITHUB_TOKEN) { res.writeHead(401, { "www-authenticate": 'Basic realm="GitHub"' }); return res.end(); }
     const cgi = spawn("git", ["http-backend"], { env: { ...process.env, GIT_PROJECT_ROOT: root, GIT_HTTP_EXPORT_ALL: "1", REMOTE_USER: "octo", PATH_INFO: `/${g[1]}${g[2]}`, QUERY_STRING: g[3] || "", REQUEST_METHOD: req.method, CONTENT_TYPE: req.headers["content-type"] || "", GIT_PROTOCOL: req.headers["git-protocol"] || "" } });
@@ -438,8 +444,17 @@ async function startGitHost() {
       res.writeHead(status, headers);
       res.end(buf.slice(end + 4));
     });
+    return true;
+  };
+  return { handle, repos, git, cleanUp: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+async function startGitHost() {
+  const sync = gitSync(), requests = [], writer = await gitRepos();
+  const host = await listen(async (req, res) => {
+    requests.push([req.method, req.url, req.headers.authorization || null]);
+    if (!(await sync.handle(req, res)) && !(await writer.handle(req, res))) { res.writeHead(404, { "content-type": "application/json" }); res.end('{"message":"Not Found"}'); }
   });
-  return { ...host, repos, requests, git, token: GITHUB_TOKEN, clientId: CLIENT_ID, close: async () => { await host.close(); fs.rmSync(root, { recursive: true, force: true }); } };
+  return { ...host, repos: sync.repos, requests, git: sync.git, token: GITHUB_TOKEN, clientId: CLIENT_ID, close: async () => { await host.close(); sync.cleanUp(); } };
 }
 
-module.exports = { startResend, startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, startGitHost, tarball, PNG };
+module.exports = { GITHUB_TOKEN, startResend, startWordPress, cloudflareZones, startElementor, startSubfolder, startPlainSite, CHROME_MARKER, startUpdates, startGitHub, startGitHost, tarball, PNG };

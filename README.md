@@ -61,7 +61,11 @@ use `scripts/check-commit.js`.
   only merges if `main` is still exactly what the regression run tested
   against (#97); if anything landed on `main` meanwhile it comments, labels
   the PR `regate` and leaves it to the next run (a push, the daily schedule,
-  or `gh workflow run release-please.yml`), which re-gates it. This all
+  or `gh workflow run release-please.yml`), which re-gates it.
+  release-please doesn't rebuild its PR when only non-releasable commits
+  (chore/docs/test) landed, so before gating, a head that's behind the
+  run's main gets that main merged into it (#113) and regression tests the
+  merge; if that conflicts the PR stays labelled `regate`. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -105,6 +109,11 @@ use `scripts/check-commit.js`.
   exclusions in `build.files`, which the script reads; a justified exception
   goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
   next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
+  Settings > About links to all four (#233) through main.js's
+  `about:open-licence`, which opens only those fixed files (never a path from
+  the renderer) and lists only the ones that exist: in `npm start` runs the
+  notices need `node scripts/licences.js` first, and Electron's licence is
+  `node_modules/electron/dist/LICENSE`.
 
 ## Regression tests
 
@@ -148,7 +157,9 @@ checks the whole app end to end with no accounts, against fake sites in
   pre-#141 import asked to declare before publishing); Markdown import of
   `test/fixtures/markdown` (new site, titles, order, front matter address,
   links between files, local image, hostile HTML, editor round trip, then one
-  file added to that site from the Pages tab); exact copy of a fake
+  file added to that site from the Pages tab); the Pages screen's page
+  dropdown (switching, filtering 30+ pages) and "Reorder pages" dialog (Cancel,
+  arrows, drag, saved order and built menu); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -219,7 +230,8 @@ published always-pass test secret, so that one step needs internet access.
   startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
   a secret is next saved. A published site whose Turnstile secret was lost
   gets a new one (`rotate_secret`) on the next publish; a lost sending key is
-  re-created. Sites and settings from before #136 (`userData/sites`,
+  re-created, and the old one deleted at Resend once the new one is live
+  (#176; if that fails, publishing goes on and the log says so). Sites and settings from before #136 (`userData/sites`,
   `userData/settings.json`, each secret sealed separately) are moved on the
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
@@ -246,7 +258,15 @@ published always-pass test secret, so that one step needs internet access.
   allowlist, `shared()`) sync the same way through a settings repo of their
   own, kept locally in `userData/settings-sync/`; the first sync on a
   computer takes GitHub's settings if there are any. The token is only ever
-  sent to `github.com/<owner>/<repo>.git`.
+  sent to `github.com/<owner>/<repo>.git`. In the app (#235): a site's
+  Dashboard has "GitHub sync" (make a private repo, by default
+  `<login>/site-<name>`, or use an existing one; then Sync now, Disconnect,
+  and the "keep this computer's version or GitHub's" choice after a
+  conflict), and Settings › GitHub sync has the shared-settings repo and
+  "Restore a website". A pull reopens the site in the editor. Both ask to
+  sign in to GitHub again (with private repositories allowed) when the
+  sign-in is missing or expired (#253). A restored site's id must be one the
+  app uses (`ID_RE` in `lib/sites-folder.js`), or the restore is refused.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the import screen and HTML sanitizer; `app/content-detect.js` and
   `app/content-pick-frame.js` find and review the content of non-WordPress
@@ -418,7 +438,9 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  also deletes theme files the theme no longer has (an old `preview.png`)
+  from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -434,7 +456,10 @@ published always-pass test secret, so that one step needs internet access.
   the API or git host marks `settings.github.expired`. Settings then says
   "You've been signed out of GitHub" with "Sign in to GitHub again", and
   publishing and sync refuse with the same message until the user signs
-  in again.
+  in again. A theme source without its own token uses the sign-in's; when
+  GitHub rejects it, `fetchSource` in main.js marks it expired the same way
+  (#258), downloads a public source without it (#251), and stops sending it
+  until the user signs in again.
 
 ## Privacy page
 
@@ -486,7 +511,11 @@ becomes Home, the rest Standard; copied pages have none.
 | Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
 
 Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
-keeps the sections. The page is `<body class="layout-<id>">`; only its
+keeps the sections. The Pages screen picks the page to edit from a dropdown
+(with a filter box above it once a site has more than 8 pages, #261), and
+"Reorder pages…" opens a dialog (drag and drop, or each page's up/down
+buttons; Save or Cancel) that sets the menu order; the first page is the home
+page. The page is `<body class="layout-<id>">`; only its
 first heading is an `h1` (the title band, else the first banner, later
 banners get `h2`), and the title band is left out when a banner opens the
 page. Rich text sections can be "shown as cards": each Heading 3 starts a
@@ -886,11 +915,12 @@ site's local files until taking it offline has fully worked.
   map instead of embedding one (#248); theme footer templates can't place the
   details themselves (#249). Checked in the built HTML and the app's preview
   headlessly, not yet with Google's Rich Results Test on a published site.
-- GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
-  Tested against real git smart HTTP (`git http-backend` in test/fakes.js
-  `startGitHost`) and the IPC channels driven in the app headlessly once,
-  not yet against github.com itself. A pull rewrites the site's files
-  directly, so the editor has to reload the open site afterwards.
+- GitHub sync (#137, #235): tested only against real git smart HTTP
+  (`git http-backend`, the fakes' `gitSync()`), in test.js and through the UI
+  in the regression suite, not yet against github.com itself. A signed-out
+  GitHub sign-in is checked in the UI by marking it expired in the renderer,
+  not by a real revoked token. There's no way to stop syncing the shared
+  settings short of signing out of GitHub (#298).
 - Linux (#153): x64 only (no arm64 build), unsigned, and checked only
   headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
   `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used
@@ -935,8 +965,8 @@ site's local files until taking it offline has fully worked.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
-  a site's folder (#177) likewise only on Linux. A lost
-  sending key is re-created without deleting the old one at Resend. A secrets
+  a site's folder (#177) likewise only on Linux. Deleting a replaced
+  sending key at Resend (#176) is tested against a fake Resend only. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
@@ -962,12 +992,10 @@ site's local files until taking it offline has fully worked.
 - GitHub publishing (#60): tested against a fake GitHub API only (device
   flow, git data API, fork, PR), not yet the real one. Noticing a revoked
   sign-in (#253) was tested only with the fake answering 401, not with a
-  token revoked on github.com; a theme source using the sign-in token
-  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
+  token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
-  secret to revoke it with). A file dropped from a theme (an old
-  `preview.png`) stays in the target repo, since a push only adds or
-  replaces files.
+  secret to revoke it with). Deleting files dropped from a theme (#159) is
+  skipped when GitHub truncates the repo's file listing (100k+ files).
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

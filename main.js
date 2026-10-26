@@ -35,6 +35,15 @@ protocol.registerSchemesAsPrivileged([{ scheme: "preview", privileges: { standar
 
 const ID_RE = /^[a-f0-9-]{36}$/;
 const data = (...p) => path.join(app.getPath("userData"), ...p);
+const LICENCE_FILES = {
+  licence: () => [path.join(app.getAppPath(), "LICENSE")],
+  notices: () => [path.join(app.getAppPath(), "THIRD-PARTY-NOTICES.txt")],
+  electron: () => ["LICENSE.electron.txt", "LICENSE"].map((f) => path.join(path.dirname(process.execPath), f)),
+  chromium: () => [path.join(path.dirname(process.execPath), "LICENSES.chromium.html")],
+};
+const licenceFile = async (id) => {
+  for (const f of LICENCE_FILES[id]()) if (await fs.stat(f).then((s) => s.isFile(), () => false)) return f;
+};
 // Sites live in the user's sites folder (#136, lib/sites-folder.js), found by
 // scanning it: id -> folder. userData keeps only machine-local things (location.json,
 // preview/publish builds, caches).
@@ -330,7 +339,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
+  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
+    oldKeyId = state.sendingKeyId;
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -358,6 +369,7 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
+  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -424,7 +436,14 @@ const findSource = async (spec) => {
   return source;
 };
 // A source without its own token uses the GitHub sign-in (#60), if any.
-const fetchSource = async (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token) || unseal((await loadSettings()).github?.token), api: GITHUB_API });
+// A source without its own token uses the sign-in's (unless it's known to be
+// expired); GitHub rejecting it marks the sign-in expired, as withGithub does (#258).
+const fetchSource = async (source) => {
+  const own = unseal(source.token), g = own ? null : (await loadSettings()).github;
+  const signIn = g && !g.expired ? unseal(g.token) : null;
+  const rejected = signIn ? () => signedOut(signIn)({ status: 401 }).catch(() => {}) : undefined;
+  return themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: own || signIn, api: GITHUB_API, rejected });
+};
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
   const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };
@@ -452,7 +471,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired) } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired), settingsRepo: s.github.settingsRepo || null } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
   sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
@@ -833,6 +852,8 @@ const handlers = {
     sites.set(id, dir);
     return readSite(id);
   },
+  "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
+  "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
@@ -842,6 +863,20 @@ const handlers = {
     return publicSettings(await updateSettings((s) => { s.autoUpdate = Boolean(on); }));
   },
   "settings:open-data": () => shell.openPath(data()),
+  // Settings › About (#233): only these fixed files, never a renderer path. In
+  // `npm start` runs Electron's licence is node_modules/electron/dist/LICENSE and
+  // THIRD-PARTY-NOTICES.txt exists only after scripts/licences.js; missing ones aren't listed.
+  "about:licences": async () => {
+    const found = [];
+    for (const id of Object.keys(LICENCE_FILES)) if (await licenceFile(id)) found.push(id);
+    return found;
+  },
+  "about:open-licence": async (id) => {
+    const file = Object.hasOwn(LICENCE_FILES, id) && await licenceFile(id);
+    if (!file) throw new Error("That file isn't included in this copy of the app.");
+    const err = await shell.openPath(file);
+    if (err) throw new Error(err);
+  },
   zones: async (siteId) => {
     const { cloudflare } = await settingsFor(siteId);
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];

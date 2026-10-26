@@ -63,12 +63,53 @@ async function githubSignIn(privateRepos) {
   if ($("#settings-page")) renderSettings();
 }
 
+// Settings › GitHub sync (#235): the shared-settings repository, and restoring a
+// website from GitHub (on a new computer). Uses app.js's runSync and friends.
+function syncSettings() {
+  const needed = githubNeeded("sync your settings and restore websites from GitHub");
+  if (needed) return needed;
+  const st = (syncState.settings ||= {}), repo = settings.github.settingsRepo;
+  const run = (fn) => runSync("settings", fn);
+  const restoreIn = h("input", { spellcheck: false, placeholder: "owner/name" });
+  const restoreStatus = h("p", { className: "hint", role: "status" });
+  return h("div", { className: "sync-settings" },
+    h("h3", {}, "Shared settings"),
+    h("p", { className: "hint" }, "Sync your defaults for websites, theme sources and theme choices through a private GitHub repository, so every computer you use has them. Passwords, keys and tokens never sync. On a new computer, choose the same repository to bring them in."),
+    repo && h("p", {}, "Synced with ", repoLink(repo), "."),
+    st.conflict ? conflictChoice(st.busy, (keep) => run(() => call("sync:resolve", null, st.conflict, keep)))
+      : repo ? h("button", { className: "primary", disabled: st.busy, onclick: () => run(() => call("sync:now", null)) }, "Sync now")
+      : repoPicker(`${settings.github.login}/sitebuilder-settings`, st.busy,
+        (owner, name) => run(async () => call("sync:settings", await call("sync:create", owner, name))),
+        (spec) => run(() => call("sync:settings", spec))),
+    syncStatus(st),
+    h("h3", {}, "Restore a website"),
+    h("p", { className: "hint" }, "Bring a website synced from another computer into your sites folder. Its accounts and keys have to be entered again."),
+    labelled("GitHub repository", restoreIn),
+    h("button", { onclick: async (e) => {
+      e.target.disabled = true;
+      restoreStatus.className = "hint"; restoreStatus.textContent = "Restoring…";
+      try {
+        const restored = await call("sync:restore", restoreIn.value);
+        await openSite(restored.id);
+      } catch (err) {
+        settings = await call("settings:get");
+        restoreStatus.className = "error"; restoreStatus.textContent = errorText(err);
+        e.target.disabled = false;
+        if (settings.github?.expired) renderSettings();
+      }
+    } }, "Restore website"),
+    restoreStatus);
+}
+
 const LICENCES = [
   ["Electron", "MIT", "https://github.com/electron/electron/blob/main/LICENSE"],
   ["Quill", "BSD-3-Clause", "https://github.com/slab/quill/blob/main/LICENSE"],
   ["isomorphic-git", "MIT", "https://github.com/isomorphic-git/isomorphic-git/blob/main/LICENSE.md"],
   ["Wrangler", "MIT or Apache-2.0", "https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler"],
 ];
+
+// Files shipped with the app (#233), opened by main.js's about:open-licence.
+const LICENCE_LABELS = { licence: "Licence", notices: "Third-party notices", electron: "Electron licence", chromium: "Chromium licences" };
 
 function renderSettings() {
   const page = $("#settings-page");
@@ -89,6 +130,7 @@ function renderSettings() {
     } catch (e) { updateStatus.textContent = errorText(e); }
     checkNow.disabled = false;
   } }, "Check now");
+  const licenceFiles = h("p", { className: "hint" });
   const soon = (label) => h("button", { disabled: true }, label);
 
   page.replaceChildren(
@@ -98,7 +140,10 @@ function renderSettings() {
     h("h2", { className: "section-title" }, "Accounts"),
     step("Cloudflare (hosting)", Boolean(settings.cloudflare), cloudflareAccount()),
     step("Resend (sends your form emails)", settings.resend, resendAccount()),
-    step("GitHub (publishing themes)", Boolean(settings.github && !settings.github.expired), githubAccount()),
+    step("GitHub (publishing themes and sync)", Boolean(settings.github && !settings.github.expired), githubAccount()),
+
+    h("h2", { className: "section-title" }, "GitHub sync"),
+    syncSettings(),
 
     h("h2", { className: "section-title" }, "Defaults for websites"),
     h("p", { className: "hint" }, "Every website uses these unless you override them for that website. Changing one here changes it for every website that hasn't."),
@@ -132,7 +177,10 @@ function renderSettings() {
     h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), ". ", link("Documentation", DOCS_URL)),
     h("p", { className: "hint" }, "Built with open-source software, including:"),
     h("ul", { className: "licences" }, LICENCES.map(([name, licence, url]) => h("li", {}, `${name} (${licence}) `, link("licence", url)))),
+    licenceFiles,
   );
+  call("about:licences").then((ids) => licenceFiles.replaceChildren(...ids.flatMap((id, i) => [i ? " · " : "",
+    h("a", { href: "#", "data-licence": id, onclick: (e) => { e.preventDefault(); call("about:open-licence", id).catch((err) => alert(errorText(err))); } }, LICENCE_LABELS[id])])));
   page.parentElement.scrollTop = scroll;
 }
 
