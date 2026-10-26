@@ -1155,6 +1155,20 @@ const site = {
     fs.rmSync(root, { recursive: true, force: true });
   }
 
+  // A deleted site folder's secrets problem leaves Settings with it, no restart needed (#275).
+  {
+    const sec = require("./lib/secrets");
+    const gone = fs.mkdtempSync(path.join(os.tmpdir(), "sb-gone-"));
+    const file = path.join(gone, ".secrets", "secrets.enc");
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ v: 1, mode: "portable", iv: "", tag: "", data: "" }));
+    await sec.readVault(file, { portable: true, key: null });
+    const locked = (m) => /Enter it in Settings/.test(m);
+    assert(sec.problems().some(locked), "a locked site vault is reported");
+    fs.rmSync(gone, { recursive: true });
+    assert(!sec.problems().some(locked), "and forgotten once its site folder is deleted");
+  }
+
   // Site history (#136): one repo per site, readable batched commits, tags, page-level changes, revert as a new commit.
   {
     const repo = require("./lib/site-repo");
