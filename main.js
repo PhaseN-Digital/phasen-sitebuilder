@@ -10,6 +10,7 @@ const { mirrorSite, verifyOwnership } = require("./lib/mirror");
 const update = require("./lib/update");
 const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
+const templates = require("./lib/templates");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
 const { migrateLayouts } = require("./lib/layouts");
@@ -507,13 +508,14 @@ async function githubToken() {
 }
 const publishable = (id) => {
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");
-  return github.themeFiles(path.join(localThemes(), id)); // validated; only theme.json/theme.css/preview.png
+  return github.themeFiles(path.join(localThemes(), id)); // validated; only the files lib/theme-validate.js allows
 };
 
 const handlers = {
   themes: () => ({ themes, fonts }),
   "builder:list": () => builder.listLocal(localThemes()),
   "builder:new": () => builder.clean({}),
+  "builder:templates": () => ({ defaults: templates.DEFAULTS, placeholders: templates.PLACEHOLDERS }),
   "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
   // Selectors come from the preview's frame script: classes and tag names only.
   "builder:css-rule": (css, selectors) => {

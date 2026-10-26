@@ -698,7 +698,7 @@ const site = {
       await assert.rejects(gh.themeFiles(path.join(lroot, "bad-one")), /can't be published: unexpected file notes.txt/);
       fs.writeFileSync(path.join(lroot, "sunny-days", "preview.png"), require("./test/fakes").PNG);
       const { files, json } = await gh.themeFiles(path.join(lroot, "sunny-days"));
-      assert.deepStrictEqual(Object.keys(files), gh.FILES);
+      assert.deepStrictEqual(Object.keys(files).sort(), ["preview.png", "theme.css", "theme.json"]);
       const theme = { id: "sunny-days", files, version: json.version };
 
       const pushed = await gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, ...theme });
@@ -852,6 +852,85 @@ const site = {
       'theme.json: unknown layout "shop" (one of home, standard, landing, services, contact, blog-post, blog-index, legal)',
       'theme.json: layouts.home may only have "notes", a string up to 500 characters',
       "theme.css: unknown layout class .layout-shop"]);
+  }
+
+  // HTML templates (#200): the validator rejects each forbidden construct, placeholders are escaped,
+  // a theme's templates reach the build, and an invalid one falls back to the built-in templates.
+  {
+    const { validateTemplate } = require("./lib/theme-validate");
+    const tpl = require("./lib/templates");
+    const tb = require("./lib/theme-builder");
+    for (const [name, html] of Object.entries(tpl.DEFAULTS)) assert.deepStrictEqual(validateTemplate(name.startsWith("layout-") ? "layout" : name, html), [], `default ${name} is valid`);
+    const ok = '<header class="site-header"><div class="wrap"><a class="brand" href="/">{{brand}}</a>{{#if site.logo}}<img src="{{site.logo}}" alt="{{site.name}}">{{/if}}{{menu}}</div></header>';
+    assert.deepStrictEqual(validateTemplate("header", ok), []);
+    assert.deepStrictEqual(validateTemplate("layout", '<div class="cols"><aside>Hi</aside>{{content}}<a href="https://example.com/x?a=1&amp;b=2">x</a><img src="https://images.unsplash.com/p.jpg" alt=""><iframe src="https://www.youtube-nocookie.com/embed/abcdefghijk"></iframe></div>'), []);
+    const rejects = (kind, html, re) => assert.match(validateTemplate(kind, html).join("\n"), re, html);
+    const H = (x) => `{{menu}}${x}`;
+    rejects("header", H("<script>alert(1)</script>"), /<script> is not allowed/);
+    rejects("header", H("<SCRIPT src=x></SCRIPT>"), /<script> is not allowed/);
+    rejects("header", H("<style>a{background:url(javascript:x)}</style>"), /<style> is not allowed/);
+    rejects("header", H('<div style="background:url(javascript:x)">'), /style=: no url\(\)/);
+    rejects("header", H('<img src="/a.png" onerror="x()">'), /event-handler attributes \(onerror=\)/);
+    rejects("header", H('<a href="#" OnClick="x()">'), /event-handler attributes \(onclick=\)/);
+    rejects("header", H('<a href="javascript:alert(1)">x</a>'), /javascript: URLs are not allowed/);
+    rejects("header", H('<a href=" JaVa\tScRiPt:alert(1)">x</a>'), /javascript: URLs are not allowed/);
+    rejects("header", H('<a href="jav&#x61;script:alert(1)">x</a>'), /character references/);
+    rejects("header", H('<img src="data:image/svg+xml,<svg>">'), /data: URLs are not allowed/);
+    rejects("header", H('<img src="https://evil.example/t.gif">'), /external images must be https from images\.unsplash\.com/);
+    rejects("header", H('<img src="//evil.example/t.gif">'), /external images/);
+    rejects("header", H('<img srcset="/a.png 1x, http://images.unsplash.com/b.png 2x">'), /external images/);
+    rejects("header", H('<iframe src="https://evil.example/embed"></iframe>'), /<iframe> may only embed YouTube/);
+    rejects("header", H('<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe>'), /<iframe> may only embed YouTube/);
+    rejects("header", H('<iframe srcdoc="<script>x</script>"></iframe>'), /attribute srcdoc= is not allowed/);
+    for (const t of ["object", "embed"]) rejects("header", H(`<${t} data="x.swf"></${t}>`), new RegExp(`<${t}> is not allowed`));
+    for (const t of ["form", "input", "button", "textarea", "select"]) rejects("header", H(`<${t}>`), /forms are not allowed/);
+    rejects("header", H('<link rel="stylesheet" href="https://fonts.example/x.css">'), /<link> is not allowed/);
+    rejects("header", H('<base href="https://evil.example/">'), /<base> is not allowed/);
+    rejects("header", H("<svg><script>x</script></svg>"), /<svg> is not allowed/);
+    rejects("header", H("<!-- x --><b>x</b>"), /comments/);
+    rejects("header", H('<?x <a title="> <img src=x onerror=alert(1)> ">'), /<\?…>/);
+    rejects("header", H("</ x>"), /comments/);
+    rejects("header", H("<b <script>"), /<script/);
+    rejects("header", H('<a href="{{site.name}}">x</a>'), /href= may only be a whole URL placeholder/);
+    rejects("header", H("<a class={{site.name}}>x</a>"), /put placeholders in quotes/);
+    rejects("header", H('<a title="{{menu}}">x</a>'), /\{\{menu\}\} can't be used inside a tag/);
+    rejects("header", H("{{nope}} {{ site.name }} {{{brand}}}"), /unknown placeholder \{\{nope\}\}[\s\S]*malformed placeholder/);
+    rejects("header", H("{{#if site.name}}x"), /without \{\{\/if\}\}/);
+    rejects("header", "<header>{{brand}}</header>", /must include \{\{menu\}\}/);
+    rejects("layout", "<div></div>", /must include \{\{content\}\}/);
+    rejects("footer", "<footer>{{year}}</footer>", /must include \{\{footer\.links\}\}/);
+
+    // Rendering: escaped by default, html placeholders as given, {{#if}} (nested) on non-empty values only.
+    assert.strictEqual(tpl.render("<b>{{site.name}}</b>{{content}}", { "site.name": `<i>"Bob's"</i>`, content: { html: "<p>ok</p>" } }), "<b>&lt;i&gt;&quot;Bob&#39;s&quot;&lt;/i&gt;</b><p>ok</p>");
+    assert.strictEqual(tpl.render('{{#if a}}A{{#if b}}B{{/if}}{{/if}}{{#if c}}C{{/if}}', { a: "1", b: { html: "" }, c: "" }), "A");
+    assert.strictEqual(tpl.render("{{x}}", { x: "{{y}}", y: "no" }), "{{y}}", "values aren't rendered again");
+
+    // A theme with a header template builds with it; an invalid one falls back with a clear message.
+    const sample = tb.sampleSite({}, "tpl");
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-tpl-site-"));
+    const header = '<header class="site-header custom-head"><div class="wrap"><a class="brand" href="/">{{brand}}</a><span class="tagline">{{page.title}} at {{site.name}}</span>{{menu}}</div></header>';
+    const layout = '<div class="layout-box">{{content}}</div>';
+    assert.deepStrictEqual(await tb.writeTheme(path.join(sdir, "theme"), { templates: { header, "layout-contact": layout, section: '<div class="sec sec-{{section.type}}">{{content}}</div>' } }), []);
+    const back = await tb.listLocal(sdir);
+    assert(back.theme.templates && back.theme.controls.templates.header === header, "templates read back as controls");
+    const tout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-tpl-built-"));
+    const warn = console.warn; const warned = []; console.warn = (m) => warned.push(m);
+    try {
+      await build({ ...sample, name: "Bob's <Shop>" }, sdir, tout);
+      const home = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+      assert(home.includes('<span class="tagline">Home at Bob&#39;s &lt;Shop&gt;</span><button type="button" class="nav-toggle"'), "header template rendered, escaped");
+      assert(home.includes('<div class="sec sec-hero"><section class="hero">') && !home.includes("layout-box"), "section wrapper on every section, layout template only on its layout");
+      assert(fs.readFileSync(path.join(tout, "public/contact.html"), "utf8").includes('<main><div class="layout-box">'), "layout template wraps the contact page's main");
+      assert.deepStrictEqual(warned, []);
+      fs.writeFileSync(path.join(sdir, "theme", "footer.html"), '<footer onclick="x()">{{footer.links}}</footer>');
+      await build(sample, sdir, tout);
+      const fallback = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+      assert(!fallback.includes("custom-head") && !fallback.includes("onclick=\"x()\"") && fallback.includes('<header class="site-header"><div class="wrap"><a class="brand" href="/">'), "invalid templates fall back to the built-in ones");
+      assert.match(warned.join(), /HTML templates can't be used, so the built-in ones were used instead: footer\.html: event-handler attributes/);
+    } finally { console.warn = warn; }
+    assert.match(validateTheme(path.join(sdir, "theme")).join(), /footer\.html: event-handler/, "and the package is invalid");
+    assert.match((await tb.writeTheme(path.join(sdir, "t2"), { templates: { header: "<script></script>" } })).join(), /header\.html: <script> is not allowed/, "the builder can't save a bad template");
+    assert.deepStrictEqual(tb.clean({ templates: { header: tpl.DEFAULTS.header, evil: "x", footer: 1 } }).templates, {}, "only changed, known templates are kept");
   }
 
   // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
