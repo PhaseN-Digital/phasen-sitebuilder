@@ -402,7 +402,8 @@ published always-pass test secret, so that one step needs internet access.
   `cssRule` in `lib/theme-builder.js`, which splits top-level rules
   properly (comments, strings, `@media` blocks).
   "Advanced HTML" edits the theme's templates (#200): pick a template, edit it
-  in a monospace textarea with line numbers (no highlighting yet, #226),
+  in a monospace textarea with line numbers and syntax highlighting (#226: a
+  `<pre>` behind the transparent textarea, no editor library),
   insert placeholders from the palette, or "Reset to default template".
   Only templates that differ from the defaults are saved, as `<name>.html`.
   The sample preview has a page per main layout (home, standard, services, contact).
@@ -423,6 +424,15 @@ published always-pass test secret, so that one step needs internet access.
   existing fork), syncs the fork, commits on a new branch and opens a PR
   titled with the theme's name, its description as the body; the themes
   repo's CI and PhaseN's review do the rest.
+  The sign-in is an OAuth App's user token, which doesn't expire and has no
+  refresh token; GitHub only stops accepting it when the user revokes the
+  app or it goes unused for a year (#253). Every use of it goes through
+  `withGithub()` in main.js (publishing, GitHub sync's create, push, pull
+  and restore, and the check Settings makes each time it opens). A 401 from
+  the API or git host marks `settings.github.expired`. Settings then says
+  "You've been signed out of GitHub" with "Sign in to GitHub again", and
+  publishing and sync refuse with the same message until the user signs
+  in again.
 
 ## Privacy page
 
@@ -514,6 +524,20 @@ robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 The import log warns that search engines are blocked only when robots.txt
 disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
 groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
+
+## Business details and local SEO
+
+Site settings › Business details (#80, `site.business`: street, town,
+postcode, country, phone, email, opening hours, social links) feed three
+things in `lib/build.js` (`businessOf`): a `.site-business` block just above
+the theme's footer on every built page (outside the footer template, so it
+shows with every theme), the "Contact details" section type (the same details
+plus a "View on a map" link to Google Maps; no embedded map, so nothing loads
+from Google), and LocalBusiness JSON-LD in the home page's `<head>`
+(`businessJsonLd`, only with an address, phone or email). Social links must be
+https, the email must look like one, and `tel:` keeps only digits and `+`.
+Nothing shows when everything is blank. Exact-copy pages keep their own
+footer and don't get the block.
 
 ## Importing a website
 
@@ -855,7 +879,11 @@ site's local files until taking it offline has fully worked.
   are plain text, and Quill splits their lines into paragraphs once edited.
   Tested on Linux only; the file and folder pickers are stubbed in
   `test/drive.js`, so the real dialogs haven't been tried on Windows/macOS.
-
+- Business details (#80): opening hours are free text, so they're left out
+  of the LocalBusiness JSON-LD (#247); the Contact details section links to a
+  map instead of embedding one (#248); theme footer templates can't place the
+  details themselves (#249). Checked in the built HTML and the app's preview
+  headlessly, not yet with Google's Rich Results Test on a published site.
 - GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
   Tested against real git smart HTTP (`git http-backend` in test/fakes.js
   `startGitHost`) and the IPC channels driven in the app headlessly once,
@@ -911,7 +939,7 @@ site's local files until taking it offline has fully worked.
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
-- HTML templates (#200): the editor has no syntax highlighting (#226); a
+- HTML templates (#200): a
   build that falls back to the built-in templates only logs why (#225); the
   public themes repo's CI rejects template files until its vendored
   validator is re-synced (#224). External images in templates are allowed
@@ -930,7 +958,10 @@ site's local files until taking it offline has fully worked.
   rule whose selector matches exactly (not one inside a selector list or
   `@media`).
 - GitHub publishing (#60): tested against a fake GitHub API only (device
-  flow, git data API, fork, PR), not yet the real one. Signing out only
+  flow, git data API, fork, PR), not yet the real one. Noticing a revoked
+  sign-in (#253) was tested only with the fake answering 401, not with a
+  token revoked on github.com; a theme source using the sign-in token
+  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
   secret to revoke it with). A file dropped from a theme (an old
   `preview.png`) stays in the target repo, since a push only adds or

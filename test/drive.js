@@ -352,7 +352,8 @@ app.on("browser-window-created", (_e, win) => {
       await shot("history");
       // Restore the version before the edit.
       await run(`window.confirm = () => true; [...document.querySelectorAll("details.version")][1].querySelector("button").click(); 0`);
-      const restored = await waitFor(() => run(`site?.pages[0].sections[0].heading !== "Headline from history" && document.querySelector("details.version summary b")?.textContent`));
+      // Done once the re-rendered list shows the new version: until then the old list (topped by "Edited page Home") is still on screen (#215).
+      const restored = await waitFor(() => run(`site?.pages[0].sections[0].heading !== "Headline from history" && /^Restored the version from/.test(document.querySelector("details.version summary b")?.textContent) && document.querySelector("details.version summary b").textContent`));
       check("history: restore adds a version and reloads the editor", /^Restored the version from/.test(restored || "") && JSON.parse(read(path.join(dir, "site.json"))).pages[0].sections[0].heading === "Edited headline", restored);
       check("history: restored content previewed", await waitFor(() => inFrame(`document.querySelector("h1")?.textContent === "Edited headline"`)));
       await shot("history-restored");
@@ -935,6 +936,11 @@ app.on("browser-window-created", (_e, win) => {
       check("copy image link: panel shows the logo's target", logoShown === "/", logoShown);
       await setLink("/contact-us/"); await settle(); await shot("copy-image-link");
       check("copy image link: saved on every page", all.every((f) => /<a href="\/contact-us\/"><img [^>]*alt="Acme"/.test(read(path.join(M, f)))));
+      // #202: a link edit made while the preview is reloading still reaches the preview.
+      const logoHref = (href) => waitFor(() => inFrame(`document.querySelector(".elementor-location-header a > img")?.parentElement.getAttribute("href") === ${JSON.stringify(href)}`), 5000);
+      await setLink("/about/"); await settle(); await logoHref("/about/");
+      await run(`refreshPreview(); setCopyLink("/contact-us/").then(() => 0)`);
+      check("copy link: edit during a reload shows in the preview (#202)", await logoHref("/contact-us/"));
     }
   });
 });

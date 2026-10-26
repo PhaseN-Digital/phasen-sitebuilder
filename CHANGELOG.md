@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.9.0...phasen-sitebuilder-v0.9.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **github:** notice a revoked sign-in and ask to sign in again ([#253](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/253)) ([#257](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/257)) ([8c4fdba](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/8c4fdba102fd65fe26e9646d1327cdc187e4cc5d))
+* **themes:** a rejected GitHub token no longer blocks a public theme source ([#251](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/251)) ([#252](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/252)) ([7dafad2](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/7dafad2d2ba4a87810c68a0b4395f93c8e9775bf))
+
 ## [0.9.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.8.4...phasen-sitebuilder-v0.9.0) (2026-10-26)
 
 

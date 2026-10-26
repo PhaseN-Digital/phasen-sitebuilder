@@ -127,18 +127,45 @@ function renderThemeEditor() {
 }
 
 // Advanced HTML (#200): one template at a time in a plain textarea with line
-// numbers (no editor library: offline, no dependency). Validated in main on
+// numbers (no editor library: offline, no dependency). Highlighting (#226) is
+// a <pre> behind the textarea, whose text is transparent; both use the same
+// font, padding and border, and the <pre>'s content is moved with the
+// textarea's scroll offsets so the caret lines up. Validated in main on
 // every preview and save (lib/theme-validate.js); errors show in #tb-errors.
+const HL = { tag: "#1d4ed8", attr: "#9333ea", str: "#15803d", ph: "#c2410c", comment: "#64748b" };
+const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const span = (kind, t) => `<span style="color:${HL[kind]}">${esc(t)}</span>`;
+const PH = /(\{\{[^}]*\}\})/;
+const phs = (t) => t.split(PH).map((p, i) => (i % 2 ? span("ph", p) : esc(p))).join("");
+function highlightHtml(src) {
+  return src.split(/(<!--[\s\S]*?(?:-->|$)|\{\{[^}]*\}\}|<\/?[a-zA-Z][^>]*>?)/).map((p, i) => {
+    if (i % 2 === 0) return esc(p);
+    if (p.startsWith("<!--")) return span("comment", p);
+    if (p.startsWith("{{")) return span("ph", p);
+    // a tag: its name, then attribute names and quoted values (placeholders inside them too)
+    const [, name, rest] = p.match(/^(<\/?[a-zA-Z][\w-]*)([\s\S]*)$/);
+    return span("tag", name) + rest.split(/("[^"]*"?|'[^']*'?|[^\s=<>"'/]+(?=\s*=))/).map((q, j) =>
+      j % 2 === 0 ? (q.endsWith(">") ? esc(q.slice(0, -1)) + span("tag", ">") : esc(q))
+        : /^["']/.test(q) ? q.split(PH).map((r, k) => span(k % 2 ? "ph" : "str", r)).join("") : span("attr", q)).join("");
+  }).join("") + "\n";
+}
 function templateEditor(changed) {
   const { defaults, placeholders } = tbTplInfo;
   const label = (name) => ({ header: "Header", footer: "Footer", section: "Section wrapper" })[name] || `Page layout: ${LAYOUTS.find((l) => `layout-${l.id}` === name)?.label}`;
+  const font = "font:13px/1.5 monospace;tab-size:4;padding:8px;white-space:pre;";
   const lines = h("pre", { "aria-hidden": "true",
-    style: "margin:0;padding:8px 6px;text-align:right;color:#94a3b8;user-select:none;overflow:hidden;font:13px/1.5 monospace;background:#f1f5f9;border-radius:6px 0 0 6px" });
+    style: "margin:0;padding:9px 6px;text-align:right;color:#94a3b8;user-select:none;overflow:hidden;font:13px/1.5 monospace;background:#f1f5f9;border-radius:6px 0 0 6px" });
+  const code = h("div", { style: "will-change:transform" });
+  const hl = h("pre", { "aria-hidden": "true", style: `${font}position:absolute;inset:0;margin:0;overflow:hidden;pointer-events:none;border:1px solid transparent;color:#0f172a` }, code);
   const box = h("textarea", { id: "tb-html", wrap: "off", spellcheck: false, "aria-label": "Template HTML", value: tbEdit.templates[tbTpl] ?? defaults[tbTpl],
-    style: "flex:1;margin:0;min-height:220px;padding:8px;font:13px/1.5 monospace;white-space:pre;overflow:auto;border-radius:0 6px 6px 0;resize:vertical",
-    onscroll: () => { lines.scrollTop = box.scrollTop; },
+    style: `${font}position:relative;flex:1;margin:0;min-height:220px;overflow:auto;border-radius:0 6px 6px 0;resize:vertical;background:transparent;color:transparent;caret-color:#0f172a`,
+    onscroll: () => sync(),
     oninput: changed((v) => { tbEdit.templates[tbTpl] = v; numberLines(); }) });
-  const numberLines = () => { lines.textContent = Array.from({ length: box.value.split("\n").length }, (_, i) => i + 1).join("\n"); lines.scrollTop = box.scrollTop; };
+  const sync = () => { lines.scrollTop = box.scrollTop; code.style.transform = `translate(${-box.scrollLeft}px,${-box.scrollTop}px)`; };
+  const numberLines = () => {
+    lines.textContent = Array.from({ length: box.value.split("\n").length }, (_, i) => i + 1).join("\n");
+    code.innerHTML = highlightHtml(box.value); sync();
+  };
   const insert = (p) => { box.focus(); box.setRangeText(`{{${p}}}`, box.selectionStart, box.selectionEnd, "end"); box.dispatchEvent(new Event("input")); };
   const reopen = () => { renderThemes(); $("#tb-html").closest("details").open = true; };
   numberLines();
@@ -149,7 +176,8 @@ function templateEditor(changed) {
       Object.keys(defaults).map((name) => h("option", { value: name, selected: name === tbTpl }, label(name) + (tbEdit.templates[name] !== undefined ? " (changed)" : ""))))),
     h("div", { className: "inline", style: "flex-wrap:wrap;gap:4px;margin:4px 0 8px", role: "group", "aria-label": "Insert a placeholder" },
       placeholders[tbTpl].map((p) => h("button", { type: "button", title: "Insert at the cursor", onclick: () => insert(p) }, h("code", {}, `{{${p}}}`)))),
-    h("div", { style: "display:flex;align-items:stretch" }, lines, box),
+    h("div", { style: "display:flex;align-items:stretch" }, lines,
+      h("div", { style: "position:relative;display:flex;flex:1;min-width:0;background:#fff;border-radius:0 6px 6px 0" }, hl, box)),
     h("div", { className: "inline", style: "margin-top:8px" },
       h("button", { type: "button", onclick: () => { delete tbEdit.templates[tbTpl]; reopen(); previewThemeDraft(); } }, "Reset to default template")));
 }

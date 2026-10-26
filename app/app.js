@@ -362,6 +362,23 @@ function siteSettingsTab() {
     overridable("How long you keep messages", "retention", "Shown on the privacy page.", {}, "textarea"),
     overridable("Delete messages after (days)", "inboxDays", "", { type: "number", min: 1 }),
     overridable("Google Analytics measurement ID (optional)", "analyticsId", "", { placeholder: "G-XXXXXXXXXX" }),
+    businessDetails(),
+  ];
+}
+
+// Business details (#80): shown above the footer on every page, by the Contact
+// details section, and to Google as LocalBusiness data (lib/build.js businessOf).
+function businessDetails() {
+  const b = (site.business ||= {});
+  return [
+    h("h3", { className: "section-title" }, "Business details"),
+    h("p", { className: "hint" }, "Shown at the bottom of every page and in Contact details sections, and given to Google so your business can show up in local searches. Leave blank anything you don't want shown."),
+    area("Street address", b, "street", "One line each, e.g. unit and street."),
+    h("div", { className: "grid2" }, text("Town or city", b, "town"), text("Postcode", b, "postcode")),
+    text("Country", b, "country", "", { placeholder: "United Kingdom" }),
+    h("div", { className: "grid2" }, text("Phone", b, "phone", "", { type: "tel" }), text("Email", b, "email", "", { type: "email", placeholder: "you@example.com" })),
+    area("Opening hours", b, "hours", "One line each, e.g. Monday to Friday: 9am to 5pm"),
+    area("Social media links", b, "social", "One web address each, starting https://, e.g. https://www.instagram.com/yourbusiness"),
   ];
 }
 
@@ -508,6 +525,7 @@ const SECTION_TYPES = {
   richtext: { label: "Rich text", make: () => ({ html: "<h2>A heading</h2><p>Your text here.</p>" }) },
   gallery: { label: "Photo gallery", make: () => ({ heading: "Gallery", images: [] }) },
   form: { label: "Form", make: () => ({ heading: "Get in touch", text: "", formId: site.forms[0]?.id || "", buttonText: "Send" }) },
+  contact: { label: "Contact details", make: () => ({ heading: "Find us", text: "" }) },
 };
 
 function sectionEditor(s) {
@@ -542,6 +560,9 @@ function sectionEditor(s) {
     case "form":
       return [select("Which form", s, "formId", site.forms.map((f) => [f.id, f.name])), text("Heading", s, "heading"), area("Text above the form", s, "text"), text("Button text", s, "buttonText"),
         h("p", { className: "hint" }, "Edit the form's questions under Forms.")];
+    case "contact":
+      return [text("Heading", s, "heading"), area("Text", s, "text"),
+        h("p", { className: "hint" }, "Shows your address (with a map link), phone, email, opening hours and social links from Business details in Site settings.")];
   }
 }
 
