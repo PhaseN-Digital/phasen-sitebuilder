@@ -640,7 +640,9 @@ const site = {
     assert(pub.themes.retro.preview.startsWith("data:image/png;base64,") && pub.themes.retro.label === "Retro");
     assert(pub.themes.broken.errors.join().includes("evil.js") && !pub.themes.broken.label);
     await assert.rejects(ts.fetchSource(fakeGh.privateSpec, opts), /private repository, add an access token/);
-    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /token has Contents/);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /didn't accept the access token.*sign out and sign in again/);
+    // A rejected token (e.g. an expired sign-in) doesn't block a public repo (#251).
+    assert.deepStrictEqual(Object.keys((await ts.fetchSource(ts.PUBLIC_SOURCE, { ...opts, token: "expired" })).themes).sort(), ["broken", "clean", "retro"]);
     await assert.rejects(ts.fetchSource("limited/repo", opts), /download limit/);
     await assert.rejects(ts.fetchSource(`${ts.PUBLIC_SOURCE}/nope`, opts), /no theme folders in nope\//);
     fakeGh.requests.length = 0;
@@ -745,6 +747,7 @@ const site = {
       assert.strictEqual(token, fake.token);
       assert.strictEqual((await gh.user(fake.url, token)).login, "octo");
       assert(await gh.canPush(fake.url, token, gh.PRIVATE_DEFAULT) && !(await gh.canPush(fake.url, "nope", gh.PRIVATE_DEFAULT)));
+      await assert.rejects(gh.user(fake.url, "revoked"), (e) => e.status === 401 && e.message === gh.SIGNED_OUT, "a rejected sign-in says to sign in again (#253)");
 
       fs.mkdirSync(path.join(lroot, "bad-one"));
       fs.cpSync(path.join(lroot, "sunny-days"), path.join(lroot, "bad-one"), { recursive: true });
@@ -1154,7 +1157,7 @@ const site = {
       await sync.connect(A, host.url, spec);
       assert.strictEqual(await sync.remote(A, host.url), spec);
       assert.strictEqual(await sync.remote(A, "https://elsewhere.example"), null, "a remote on another host isn't trusted with the token");
-      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), /didn't accept your sign-in/);
+      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), (e) => e.status === 401 && e.message === require("./lib/github").SIGNED_OUT, "a rejected sign-in token says signed out (#253)");
       assert.deepStrictEqual(await sync.sync(A, o), { status: "pushed" });
       assert.deepStrictEqual(await sync.sync(A, o), { status: "up to date" });
       assert(!/secrets/.test(host.git(spec, "ls-tree", "-r", "--name-only", "main")), "secrets never pushed");
