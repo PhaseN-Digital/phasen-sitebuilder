@@ -11,6 +11,7 @@ const ALLOWED_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "ST
   "IMG", "FIGURE", "FIGCAPTION", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
 const DROPPED_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "FORM", "NOSCRIPT", "SVG", "MATH", "TEMPLATE", "BUTTON",
   "INPUT", "SELECT", "TEXTAREA", "LINK", "META", "VIDEO", "AUDIO", "CANVAS", "HEAD", "TITLE"]);
+const INLINE_TAGS = new Set(["STRONG", "EM", "B", "I", "U", "S", "A", "BR", "IMG"]);
 const SAFE_HREF = /^(https?:|mailto:|tel:|#page:[a-z0-9]+$)/i;
 const SAFE_SRC = /^(https?:\/\/|assets\/[a-f0-9]+\.webp$)/i;
 // The rich text editor's video placeholder; lib/build.js turns it into a click-to-load player.
@@ -49,6 +50,17 @@ function cleanFragment(html, base) {
     }
   };
   walk(doc.body);
+  // Imports: text and images left loose by unwrapped <div>s (a block theme's cover, #24) go in
+  // paragraphs, or the rich text editor folds them into the next heading.
+  if (base) {
+    let p = null;
+    for (const n of [...doc.body.childNodes]) {
+      if (n.nodeType === Node.ELEMENT_NODE && !INLINE_TAGS.has(n.tagName)) { p = null; continue; }
+      if (!p && !n.textContent.trim() && n.nodeName !== "IMG") continue;
+      if (!p) n.before((p = doc.createElement("p")));
+      p.append(n);
+    }
+  }
   return doc.body;
 }
 const sanitizeHtml = (html) => cleanFragment(html).innerHTML.trim();
