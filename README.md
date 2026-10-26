@@ -425,7 +425,9 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  also deletes theme files the theme no longer has (an old `preview.png`)
+  from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -974,9 +976,8 @@ site's local files until taking it offline has fully worked.
   sign-in (#253) was tested only with the fake answering 401, not with a
   token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
-  secret to revoke it with). A file dropped from a theme (an old
-  `preview.png`) stays in the target repo, since a push only adds or
-  replaces files.
+  secret to revoke it with). Deleting files dropped from a theme (#159) is
+  skipped when GitHub truncates the repo's file listing (100k+ files).
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

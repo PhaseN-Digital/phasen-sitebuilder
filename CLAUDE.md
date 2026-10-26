@@ -229,7 +229,8 @@ are not, so add them yourself.
   rename a class in `renderPage`/`renderSection`, update `STABLE` too.
 - GitHub publishing (#60, `lib/github.js`): only the files of a theme that
   passes `lib/theme-validate.js` (so only the names it allows) may ever be
-  sent (`themeFiles`). The sign-in token stays in the main process
+  sent (`themeFiles`), and a push may only delete theme file names directly
+  in that theme's own folder (`commitFiles`, #159). The sign-in token stays in the main process
   (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
