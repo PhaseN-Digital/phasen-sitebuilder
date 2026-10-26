@@ -174,9 +174,11 @@ async function saveHistory(id, message) {
   return oid;
 }
 // A renamed site's folder follows its name (#177), once its edits are committed and
-// nothing else is running: every IPC call and commit counts as busy, so a publish,
-// a folder move or a flush is never left holding the old path, and IPC calls and
-// previews wait for a rename in progress. Only after a commit (a pause in editing,
+// nothing else is running: every IPC call, preview request (#246) and commit counts
+// as busy, so a publish, a folder move, a flush or a preview is never left holding
+// the old path, and IPC calls and previews wait for a rename in progress. Requests
+// take milliseconds and a skipped rename is retried at the next commit, so this
+// doesn't starve renames or slow the preview. Only after a commit (a pause in editing,
 // or quitting), so typing a name doesn't rename the folder letter by letter.
 // ponytail: one app-wide busy count, per-site counts if renames ever wait too long.
 let busy = 0, renaming = null;
@@ -341,7 +343,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
+  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
+    oldKeyId = state.sendingKeyId;
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -369,6 +373,7 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
+  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -470,7 +475,7 @@ const publicAccounts = (a) => ({
 });
 const publicSettings = (s) => ({
   ...publicAccounts(s), defaults: s.defaults, autoUpdate: s.autoUpdate !== false,
-  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired) } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
+  github: s.github?.token ? { login: s.github.login, privateRepos: s.github.privateRepos, expired: Boolean(s.github.expired), settingsRepo: s.github.settingsRepo || null } : null, githubConfigured: Boolean(GITHUB_CLIENT_ID),
   version: app.getVersion(), releasesUrl: update.LATEST_URL.replace("/download/latest.json", ""), dataDir: data(),
   sitesFolder: SITES, portable: { on: keyring.portable, locked: keyring.portable && !keyring.key }, secretsProblem: secrets.problems()[0] || null,
 });
@@ -851,6 +856,8 @@ const handlers = {
     sites.set(id, dir);
     return readSite(id);
   },
+  "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
+  "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
@@ -1039,51 +1046,53 @@ app.whenReady().then(() => {
   protocol.handle("preview", async (request) => {
     await ready;
     while (renaming) await renaming;
-    const { host, pathname } = new URL(request.url);
-    if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
-    const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
-    const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
-    if (frameScript) {
-      return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
-    }
-    // Uploaded images come straight from the site folder so a fresh upload
-    // shows before the next preview build finishes; exact-copy pages are
-    // served from the site folder too rather than copied on every save.
-    // A copied site's own /assets/ files sit in mirror/ (#163).
-    const mirror = path.join(siteDir(host), "mirror");
-    const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
-    const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
-    const find = async (candidates) => {
-      for (const name of candidates) for (const root of roots) {
-        const file = path.join(root, path.normalize(name));
-        if (file.startsWith(root + path.sep) && (await fs.stat(file).catch(() => null))?.isFile()) return file;
+    return whileBusy(async () => { // so a folder rename can't start mid-request (#246)
+      const { host, pathname } = new URL(request.url);
+      if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
+      const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder
+      const frameScript = { "/__sb-edit.js": "copy-edit-frame.js", "/__sb-pick.js": "content-pick-frame.js", "/__sb-theme.js": "theme-builder-frame.js" }[p];
+      if (frameScript) {
+        return new Response(await fs.readFile(path.join(__dirname, "app", frameScript)), { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-store" } });
       }
-    };
-    const found = await find(names);
-    const file = found || (await find(["/404.html"]));
-    if (!file) return new Response("Not found", { status: 404 });
-    // Copied pages get the provenance marker the published copy will have (#145),
-    // and open in edit mode on the Pages tab (app/copied.js). The editor reads
-    // and writes the file itself (mirror:read/write), so neither ends up in it.
-    if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
-      let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
-      const params = new URL(request.url).searchParams;
-      if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
-      // The editable import's review step (#161): only our script runs, so the page shows exactly the HTML being imported.
-      const nonce = found && params.has("sb-pick") && hex(16);
-      if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
-      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
-    }
-    // The Theme Builder's preview gets its right-click menu script (#156).
-    if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
-      const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
-      return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-    }
-    const res = await net.fetch(pathToFileURL(file).href);
-    // Every save rewrites these files, so the preview must never cache them.
-    const headers = new Headers(res.headers);
-    headers.set("Cache-Control", "no-store");
-    return new Response(res.body, { status: found ? 200 : 404, headers });
+      // Uploaded images come straight from the site folder so a fresh upload
+      // shows before the next preview build finishes; exact-copy pages are
+      // served from the site folder too rather than copied on every save.
+      // A copied site's own /assets/ files sit in mirror/ (#163).
+      const mirror = path.join(siteDir(host), "mirror");
+      const roots = p.startsWith("/assets/") ? [siteDir(host), mirror] : [mirror, path.join(previewDir(host), "public")];
+      const names = p.endsWith("/") ? [`${p}index.html`] : path.extname(p) ? [p] : [`${p}.html`, `${p}/index.html`];
+      const find = async (candidates) => {
+        for (const name of candidates) for (const root of roots) {
+          const file = path.join(root, path.normalize(name));
+          if (file.startsWith(root + path.sep) && (await fs.stat(file).catch(() => null))?.isFile()) return file;
+        }
+      };
+      const found = await find(names);
+      const file = found || (await find(["/404.html"]));
+      if (!file) return new Response("Not found", { status: 404 });
+      // Copied pages get the provenance marker the published copy will have (#145),
+      // and open in edit mode on the Pages tab (app/copied.js). The editor reads
+      // and writes the file itself (mirror:read/write), so neither ends up in it.
+      if (file.endsWith(".html") && file.startsWith(mirror + path.sep)) {
+        let html = stampHtml(await fs.readFile(file, "utf8"), (await readSite(host).catch(() => null))?.importProvenance);
+        const params = new URL(request.url).searchParams;
+        if (found && params.has("sb-edit")) html = html.replace(/<\/body>|$/i, (m) => `<script src="/__sb-edit.js"></script>${m}`);
+        // The editable import's review step (#161): only our script runs, so the page shows exactly the HTML being imported.
+        const nonce = found && params.has("sb-pick") && hex(16);
+        if (nonce) html = html.replace(/<\/body>|$/i, (m) => `<script nonce="${nonce}" src="/__sb-pick.js"></script>${m}`);
+        return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...(nonce && { "Content-Security-Policy": `script-src 'nonce-${nonce}'; object-src 'none'` }) } });
+      }
+      // The Theme Builder's preview gets its right-click menu script (#156).
+      if (file.endsWith(".html") && host === SAMPLE_ID && new URL(request.url).searchParams.has("sb-theme")) {
+        const html = (await fs.readFile(file, "utf8")).replace(/<\/body>|$/i, (m) => `<script src="/__sb-theme.js"></script>${m}`);
+        return new Response(html, { status: found ? 200 : 404, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+      }
+      const res = await net.fetch(pathToFileURL(file).href);
+      // Every save rewrites these files, so the preview must never cache them.
+      const headers = new Headers(res.headers);
+      headers.set("Cache-Control", "no-store");
+      return new Response(res.body, { status: found ? 200 : 404, headers });
+    });
   });
 
   const win = mainWindow = new BrowserWindow({

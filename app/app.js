@@ -337,7 +337,97 @@ function dashboardTab() {
     h("div", { className: "adders" },
       [["pages", "Edit pages"], ["design", "Change the design"], ["publish", publishedUrl ? "Publish changes" : "Publish website"]].map(([id, label]) => h("button", { onclick: () => showSection(id) }, label)),
       publishedUrl && h("button", { onclick: () => call("open", publishedUrl) }, "Open the live website")),
+    h("h3", { className: "section-title" }, "GitHub sync"),
+    syncCard(),
   ];
+}
+
+// ---------- GitHub sync (#235; main.js sync:*, lib/sync.js) ----------
+// The renderer only names repositories: the sign-in token stays in main.js.
+// key is a site id, or "settings" for the shared settings (Settings page).
+const syncState = {}; // key -> { remote, note, error, conflict (GitHub's branch), busy }
+const redrawSync = () => { if (site ? tab === "dashboard" && $("#tab") : $("#settings-page")) renderTab(); };
+
+// What to do first when sync can't work yet (not signed in, signed out #253, no private repos), else null.
+function githubNeeded(what) {
+  const g = settings.github;
+  const signIn = (label) => h("button", { className: "primary", onclick: async () => { await openSettings(); githubSignIn(true); } }, label);
+  if (g?.expired) return [h("p", { className: "error", role: "alert" }, `You've been signed out of GitHub (${g.login}). Sign in again to ${what}.`), signIn("Sign in to GitHub again")];
+  if (!g) return [h("p", { className: "hint" }, `Sign in with GitHub to ${what}.`), settings.githubConfigured && signIn("Sign in with GitHub")];
+  if (!g.privateRepos) return [h("p", { className: "hint" }, `To ${what}, sign in to GitHub again with private repositories allowed.`), signIn("Sign in to GitHub again")];
+  return null;
+}
+
+// Runs fn() (sync:* calls) for key and records the outcome. Every sync commits and may
+// rewrite the site's files, so the last edit is saved first (#143).
+async function runSync(key, fn) {
+  const st = (syncState[key] ||= {});
+  if (st.busy) return;
+  Object.assign(st, { busy: true, note: "Syncing with GitHub…", error: "" });
+  redrawSync();
+  try {
+    await flushSave();
+    const r = await fn();
+    st.conflict = r?.status === "conflict" ? r.branch : null;
+    st.note = { "up to date": "Up to date with GitHub.", pushed: "Your changes are on GitHub.", pulled: "Brought in the changes from GitHub." }[r?.status] || "";
+    if (r?.status === "pulled" && site?.id === key) await openSite(key); // the files changed under the editor
+  } catch (e) {
+    st.note = "";
+    st.error = errorText(e);
+  }
+  settings = await call("settings:get"); // a rejected sign-in marks it expired (#253); settingsRepo may have changed
+  if (key !== "settings") st.remote = await call("sync:remote", key).catch(() => null);
+  st.busy = false;
+  redrawSync();
+}
+
+// A repository field with "Create private repository" and "Use an existing repository".
+function repoPicker(suggested, busy, create, use) {
+  const input = h("input", { value: suggested, spellcheck: false, placeholder: "owner/name" });
+  const parts = () => { const v = input.value.trim(); return v.includes("/") ? v.split("/") : [settings.github.login, v]; };
+  return [
+    labelled("GitHub repository", input, "Your GitHub name (or an organisation's) and a name for the repository. A new one is private."),
+    h("div", { className: "inline", style: "flex-wrap:wrap" },
+      h("button", { className: "primary", disabled: busy, onclick: () => { const [owner, name] = parts(); create(owner, name); } }, "Create private repository"),
+      h("button", { disabled: busy, onclick: () => use(parts().join("/")) }, "Use an existing repository")),
+  ];
+}
+
+// Shown after a sync found changes both here and on GitHub: resolve(keep) with "mine" or "theirs".
+const conflictChoice = (busy, resolve) => [
+  h("div", { className: "warn", role: "alert" }, "This changed both on this computer and on GitHub since the last sync. Which version do you want to keep? Nothing is lost: both stay in the history."),
+  h("div", { className: "inline", style: "flex-wrap:wrap" },
+    h("button", { disabled: busy, onclick: () => resolve("mine") }, "Keep this computer's version"),
+    h("button", { disabled: busy, onclick: () => resolve("theirs") }, "Keep GitHub's version")),
+];
+const syncStatus = (st) => h("p", { className: st.error ? "error" : "hint", role: "status" }, st.error || st.note || "");
+const repoLink = (spec) => link(spec, `https://github.com/${spec}`);
+
+// Dashboard: back this website up to its own GitHub repository and sync it between computers.
+function syncCard() {
+  const id = site.id, st = (syncState[id] ||= {});
+  if (!("remote" in st)) {
+    st.remote = undefined;
+    call("sync:remote", id).catch(() => null).then((r) => { st.remote = r; if (site?.id === id) redrawSync(); });
+  }
+  const needed = githubNeeded("back up this website to GitHub and work on it from other computers");
+  const run = (fn) => runSync(id, fn);
+  const slug = (site.name || "website").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "website";
+  return h("div", { className: "sync-card" },
+    st.remote === undefined ? h("p", { className: "hint" }, "Checking…")
+      : st.remote ? h("p", {}, "Synced with ", repoLink(st.remote), ".")
+      : h("p", { className: "hint" }, "Keep a copy of this website and its history in a private GitHub repository, and sync it to work on it from another computer. Passwords and keys never leave this computer."),
+    needed || (st.remote === undefined ? null
+      : st.conflict ? conflictChoice(st.busy, (keep) => run(() => call("sync:resolve", id, st.conflict, keep)))
+      : st.remote ? h("div", { className: "inline", style: "flex-wrap:wrap" },
+        h("button", { className: "primary", disabled: st.busy, onclick: () => run(() => call("sync:now", id)) }, "Sync now"),
+        h("button", { disabled: st.busy, onclick: () => {
+          if (confirm(`Stop syncing with ${st.remote}? The repository stays on GitHub.`)) run(() => call("sync:disconnect", id));
+        } }, "Disconnect"))
+      : repoPicker(`${settings.github.login}/site-${slug}`, st.busy,
+        (owner, name) => run(async () => call("sync:connect", id, await call("sync:create", owner, name))),
+        (spec) => run(() => call("sync:connect", id, spec)))),
+    syncStatus(st));
 }
 
 // ---------- SEO (#74): search and sharing for each page ----------
@@ -804,22 +894,12 @@ function pagesTab() {
   const index = site.pages.indexOf(page);
   const copied = page.mirror && copiedPageCard(page);
   return [
-    h("div", { className: "chips" },
-      site.pages.map((p) => h("button", { className: p === page ? "active" : "", onclick: () => { pageId = p.id; selectedCopyImage = null; renderTab(); refreshPreview(); } }, p.title || "Untitled")),
-      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page"),
-      h("button", { onclick: addMarkdownPages }, "Import Markdown…")), // app/markdown.js (#255)
+    pagePicker(page, index),
     choosingLayout && layoutChooser(),
     copied || [h("div", { className: "card" },
       text("Page name", page, "title", index === 0 ? "This is your home page. Its name appears in the menu." : "Appears in the menu and the page address."),
       select("Layout", page, "layout", LAYOUTS.map((l) => [l.id, l.label]), renderTab),
       h("p", { className: "hint" }, `${LAYOUT[page.layout]?.description || ""} Changing it keeps this page's sections.`),
-      h("div", { className: "inline" },
-        h("button", { disabled: index === 0, onclick: () => move(site.pages, index, -1) }, "Move left in menu"),
-        h("button", { disabled: index === site.pages.length - 1, onclick: () => move(site.pages, index, 1) }, "Move right"),
-        h("button", { className: "danger", disabled: site.pages.length === 1, onclick: () => {
-          if (!confirm(`Delete the "${page.title}" page?`)) return;
-          site.pages.splice(index, 1); pageId = site.pages[0].id; save(); renderTab();
-        } }, "Delete page")),
       index === 0 && h("p", { className: "hint", style: "margin-top:8px" }, "The first page in the menu is always the home page.")),
     page.layout === "blog-post" && postCard(page),
     page.layout === "blog-index" && h("p", { className: "hint" }, "Your blog posts (pages with the Blog post layout) are listed on this page automatically, newest first, ten to a page. Sections added here appear above the list."),
@@ -838,6 +918,89 @@ function pagesTab() {
     h("div", { className: "adders" }, Object.entries(SECTION_TYPES).map(([type, t]) =>
       h("button", { onclick: () => { page.sections.push({ id: rid(), type, ...t.make() }); save(); renderTab(); } }, `+ ${t.label}`)))],
   ];
+}
+
+// Which page to edit (#261): a labelled <select> (native keyboard support and
+// type-ahead), with a filter box once there are too many pages to scan.
+const PAGE_FILTER_FROM = 8;
+const pageLabel = (p, i) => `${i + 1}. ${p.title || "Untitled"}`;
+function pagePicker(page, index) {
+  const go = async (id) => {
+    if (!id || id === page.id) return;
+    await flushSave(); // a copied page's pending edit lands (and goes on its undo stack) before the page changes
+    pageId = id; selectedCopyImage = null; choosingLayout = false;
+    renderTab(); refreshPreview();
+    $("#page-picker")?.focus();
+  };
+  const picker = h("select", { id: "page-picker", onchange: (e) => go(e.target.value) });
+  const fill = (q = "") => {
+    q = q.trim().toLowerCase();
+    picker.replaceChildren(...site.pages.map((p, i) => (p === page || !q || (p.title || "Untitled").toLowerCase().includes(q)) && h("option", { value: p.id }, pageLabel(p, i))).filter(Boolean));
+    picker.value = page.id;
+  };
+  fill();
+  const filter = site.pages.length > PAGE_FILTER_FROM && h("input", { type: "search", className: "page-filter", placeholder: `Filter ${site.pages.length} pages…`, "aria-label": "Filter pages by name", "aria-controls": "page-picker",
+    oninput: (e) => fill(e.target.value),
+    onkeydown: (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); picker.focus(); }
+      if (e.key === "Enter") go([...picker.options].find((o) => o.value !== page.id)?.value); // first match
+    } });
+  return [
+    h("div", { className: "page-picker" },
+      h("label", { htmlFor: "page-picker" }, "Page to edit"), filter,
+      h("div", { className: "inline" }, picker,
+      h("button", { className: choosingLayout ? "active" : "", onclick: () => { choosingLayout = !choosingLayout; renderTab(); } }, "+ Add page"),
+      h("button", { className: "danger", disabled: site.pages.length === 1 || Boolean(page.mirror), title: page.mirror ? "Copied pages can't be deleted here" : "", onclick: async () => {
+        if (!confirm(`Delete the "${page.title}" page?`)) return;
+        await flushSave();
+        site.pages.splice(site.pages.indexOf(page), 1); pageId = site.pages[0].id; save(); renderTab(); refreshPreview();
+      } }, "Delete page"))),
+    h("div", { className: "inline page-actions" },
+      h("button", { disabled: site.pages.length < 2, onclick: reorderPages }, "Reorder pages…"),
+      h("button", { onclick: addMarkdownPages }, "Import Markdown…")), // app/markdown.js (#255)
+  ];
+}
+
+// "Reorder pages" (#261): works on a copy of the order; Save writes it, Cancel or Esc drops it.
+// The menu and home page follow site.pages' order. For nesting (#190), give each row a
+// depth with indent/outdent buttons and keep `order` flat in menu order.
+function reorderPages() {
+  const order = [...site.pages];
+  let dragged = null;
+  const list = h("ol", { className: "reorder" });
+  const shift = (from, to, focus) => {
+    order.splice(to, 0, ...order.splice(from, 1));
+    draw();
+    if (focus) (list.children[to].querySelector(`[data-dir="${focus}"]:not(:disabled)`) || list.children[to].querySelector("button:not(:disabled)"))?.focus();
+  };
+  const draw = () => list.replaceChildren(...order.map((p, i) => {
+    const name = p.title || "Untitled";
+    return h("li", { draggable: true,
+      ondragstart: (e) => { dragged = i; e.dataTransfer.effectAllowed = "move"; },
+      ondragover: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
+      ondrop: (e) => { e.preventDefault(); if (dragged != null && dragged !== i) shift(dragged, i); dragged = null; } },
+      h("span", { className: "grip", "aria-hidden": "true" }, "⠿"),
+      h("span", { className: "name" }, name, i === 0 && h("small", {}, " · home page")),
+      h("button", { type: "button", className: "icon", "data-dir": "up", "aria-label": `Move ${name} up`, title: "Move up", disabled: i === 0, onclick: () => shift(i, i - 1, "up") }, "↑"),
+      h("button", { type: "button", className: "icon", "data-dir": "down", "aria-label": `Move ${name} down`, title: "Move down", disabled: i === order.length - 1, onclick: () => shift(i, i + 1, "down") }, "↓"));
+  }));
+  draw();
+  const dialog = h("dialog", { className: "reorder-pages" },
+    h("form", { method: "dialog" },
+      h("h2", {}, "Reorder pages"),
+      h("p", { className: "hint" }, "Your menu lists pages in this order, and the first page is your home page. Drag a page, or use its arrows."),
+      list,
+      h("div", { className: "inline", style: "justify-content:flex-end;margin-top:16px" },
+        h("button", { value: "" }, "Cancel"), h("button", { className: "primary", value: "save" }, "Save order"))));
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (dialog.returnValue !== "save" || order.every((p, i) => p === site.pages[i])) return;
+    site.pages.splice(0, site.pages.length, ...order);
+    save(); renderTab();
+  });
+  document.body.append(dialog);
+  dialog.returnValue = "";
+  dialog.showModal();
 }
 
 // "Add page" (#169): pick a layout (lib/layouts.js); the page starts with its sections.
