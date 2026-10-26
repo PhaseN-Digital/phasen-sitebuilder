@@ -198,7 +198,7 @@ published always-pass test secret, so that one step needs internet access.
   default (Settings › Data › Change folder… moves the sites there, or points
   at a folder that already has some; the choice is in `userData/location.json`).
   One sub-folder per site, named from its name (renamed with the site, #177,
-  once the edit is committed and nothing else is running; if a file in it is
+  once the edit is committed and nothing else, preview requests included, is running; if a file in it is
   open on Windows it keeps its old name until the next commit), each its
   own git repo (`lib/site-repo.js`, through
   [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
