@@ -175,7 +175,7 @@ function renderSettings() {
     h("p", { className: "hint" }, "Previews, caches and the app's own files are in ", h("code", {}, settings.dataDir), "."),
     h("div", { className: "inline", style: "flex-wrap:wrap" },
       h("button", { onclick: () => call("settings:open-data") }, "Open data folder"),
-      soon("Backup/restore (coming)"), soon("Diagnostics (coming)")),
+      soon("Backup/restore (coming)"), h("button", { onclick: () => call("diagnostics:copy") }, "Copy diagnostic report")),
 
     h("h2", { className: "section-title" }, "About"),
     h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), ". ", link("Documentation", DOCS_URL)),
