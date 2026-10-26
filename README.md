@@ -522,6 +522,20 @@ The import log warns that search engines are blocked only when robots.txt
 disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
 groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
 
+## Business details and local SEO
+
+Site settings › Business details (#80, `site.business`: street, town,
+postcode, country, phone, email, opening hours, social links) feed three
+things in `lib/build.js` (`businessOf`): a `.site-business` block just above
+the theme's footer on every built page (outside the footer template, so it
+shows with every theme), the "Contact details" section type (the same details
+plus a "View on a map" link to Google Maps; no embedded map, so nothing loads
+from Google), and LocalBusiness JSON-LD in the home page's `<head>`
+(`businessJsonLd`, only with an address, phone or email). Social links must be
+https, the email must look like one, and `tel:` keeps only digits and `+`.
+Nothing shows when everything is blank. Exact-copy pages keep their own
+footer and don't get the block.
+
 ## Importing a website
 
 "Import a website…" takes any address, and any site can come in editable or
@@ -821,6 +835,11 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Business details (#80): opening hours are free text, so they're left out
+  of the LocalBusiness JSON-LD (#247); the Contact details section links to a
+  map instead of embedding one (#248); theme footer templates can't place the
+  details themselves (#249). Checked in the built HTML and the app's preview
+  headlessly, not yet with Google's Rich Results Test on a published site.
 - GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
   Tested against real git smart HTTP (`git http-backend` in test/fakes.js
   `startGitHost`) and the IPC channels driven in the app headlessly once,
