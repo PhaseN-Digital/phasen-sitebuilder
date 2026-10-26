@@ -98,7 +98,8 @@ app.on("browser-window-created", (_e, win) => {
         createSendingKey: async () => ({ id: "key-1", token: "re_sending" }),
         ensureD1: async (token, accountId, workerName) => ({ id: "db-1", name: `${workerName}-inbox` }),
         deployWorker: async (out, creds) => calls.deploy.push({ ...creds, forms: JSON.parse(read(path.join(out, "worker", "forms.json"))), privacy: read(path.join(out, "public", "privacy.html")) }),
-        unpublish: async (token, resendKey, state) => (calls.unpublish.push({ token, resendKey }), { state: {}, failed: [] }),
+        // Like the real one: keeps the inbox unless deleteInbox (#126).
+        unpublish: async (token, resendKey, state, log, opts) => (calls.unpublish.push({ token, resendKey, opts }), { state: opts?.deleteInbox ? { accountId: state.accountId } : { accountId: state.accountId, d1: state.d1 }, failed: [] }),
       });
       const connect = (scope, placeholder, value) => run(`{ const i = document.querySelector(${JSON.stringify(`${scope} input[placeholder="${placeholder}"]`)}); i.value = ${JSON.stringify(value)}; i.nextSibling.click(); } 0`);
       const setField = (label, value, tag = "input") => run(`{ const i = ${fieldInput(label, tag)}; i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("change")); } 0`);
@@ -153,16 +154,20 @@ app.on("browser-window-created", (_e, win) => {
       // Back to the app's account: offline must still go through the account the site is live on, never the app's.
       await clickButton("Reset to the app's account");
       await waitFor(() => run(`!siteAccounts.cloudflare`));
-      await run(`window.confirm = () => true; 0`);
       await clickButton("Take website offline");
+      await clickButton("Take offline");
       const err = await waitFor(() => run(`[...document.querySelectorAll(".error")].map((e) => e.textContent).find(Boolean)`));
       check("unpublish: refuses another account than the one that published", /isn't connected any more/.test(err || "") && !calls.unpublish.length, err);
       await run(`[...document.querySelectorAll(".step")][0].querySelector("button:nth-child(2)").click()`);
       await connect(".step", "Paste your Cloudflare API token", "site");
       await waitFor(() => run(`siteAccounts.cloudflare?.accountId === "acct-site"`));
       await clickButton("Take website offline");
+      await clickButton("Take offline");
       await waitFor(() => calls.unpublish.length);
       check("unpublish: uses the account that published", calls.unpublish[0]?.token === "site" && calls.unpublish[0].resendKey === "re_app", calls.unpublish[0]);
+      // #126: the inbox is kept by default, and a kept inbox alone doesn't offer "Take website offline" again.
+      await waitFor(() => run(`!canUnpublish && ![...document.querySelectorAll("button")].some((b) => b.textContent === "Take website offline")`));
+      check("unpublish: keeps the inbox unless asked", calls.unpublish[0]?.opts?.deleteInbox === false && JSON.parse(read(path.join(S(id), "publish.json"))).d1?.id === "db-1", calls.unpublish[0]?.opts);
     }
 
     // ---------- Theme Builder (#130): a theme from the created site's design, saved, then used by that site ----------

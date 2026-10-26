@@ -674,7 +674,9 @@ const site = {
   assert.deepStrictEqual(await pub.d1Query("t", "a1", "kept", "SELECT 1"), [{ id: 1 }]);
   d1Calls.length = 0;
   const off = await pub.unpublish("t", "k", { accountId: "a1", d1: { id: "kept", name: "x" } }, () => {});
-  assert(d1Calls.includes("DELETE /accounts/a1/d1/database/kept") && !off.state.d1 && !off.failed.length, "taking offline deletes the inbox");
+  assert(!d1Calls.length && off.state.d1?.id === "kept" && !off.failed.length, "taking offline keeps the inbox by default (#126)");
+  const offAll = await pub.unpublish("t", "k", { accountId: "a1", d1: { id: "kept", name: "x" } }, () => {}, { deleteInbox: true });
+  assert(d1Calls.includes("DELETE /accounts/a1/d1/database/kept") && !offAll.state.d1 && !offAll.failed.length, "deleteInbox deletes it");
   globalThis.fetch = async (url) => ({ status: url.includes("/d1/") ? 403 : 200, json: async () => (url.includes("/d1/") ? { success: false, errors: [] } : { success: true, result: [{ id: "a1", name: "A" }] }) });
   assert((await pub.checkCloudflareToken("t")).warnings.some((w) => w.includes("D1")), "missing D1 permission warned");
   globalThis.fetch = realFetch;
