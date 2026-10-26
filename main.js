@@ -10,6 +10,7 @@ const { mirrorSite, verifyOwnership } = require("./lib/mirror");
 const update = require("./lib/update");
 const themeSources = require("./lib/theme-sources");
 const { loadTheme } = require("./lib/themes");
+const templates = require("./lib/templates");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
 const { migrateLayouts } = require("./lib/layouts");
@@ -150,14 +151,37 @@ function autosave(id) {
 async function saveHistory(id, message) {
   clearTimeout(pendingCommits.get(id));
   pendingCommits.delete(id);
+  let oid = null;
   try {
-    return await repo.commit(siteDir(id), message, await author());
+    oid = await whileBusy(async () => repo.commit(siteDir(id), message, await author()));
   } catch (e) {
     console.error(`Couldn't save the history of ${id}:`, e);
-    return null;
   }
+  await renameFolder(id);
+  return oid;
 }
-const saveAllHistory = () => Promise.all([...pendingCommits.keys()].map((id) => saveHistory(id)));
+// A renamed site's folder follows its name (#177), once its edits are committed and
+// nothing else is running: every IPC call and commit counts as busy, so a publish,
+// a folder move or a flush is never left holding the old path, and IPC calls and
+// previews wait for a rename in progress. Only after a commit (a pause in editing,
+// or quitting), so typing a name doesn't rename the folder letter by letter.
+// ponytail: one app-wide busy count, per-site counts if renames ever wait too long.
+let busy = 0, renaming = null;
+async function whileBusy(fn) {
+  busy++;
+  try { return await fn(); } finally { busy--; }
+}
+async function renameFolder(id) {
+  const name = sites.has(id) && (await readSite(id).catch(() => null))?.name;
+  if (!name || busy || renaming) return;
+  renaming = folder.renameToMatch(sites.get(id), name)
+    .then((dir) => sites.set(id, dir), (e) => console.error(`Couldn't rename the folder of ${id}; it keeps its name:`, e))
+    .finally(() => { renaming = null; });
+  await renaming;
+}
+const saveAllHistory = async () => { // one at a time, so each can rename its folder (#177)
+  for (const id of [...pendingCommits.keys()]) await saveHistory(id);
+};
 const pad = (n) => String(n).padStart(2, "0");
 const liveTag = (d = new Date()) => `live-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 // Channels that change files in a site folder (their first argument is the site, or its id).
@@ -280,11 +304,13 @@ async function publish(id, log) {
   const labelError = site.domain && cf.labelError(site.domain.label, site.domain.zoneName);
   if (labelError) throw new Error(`Web address: ${labelError}`);
   const www = site.domain && !site.domain.label && { id: site.domain.zoneId, name: site.domain.zoneName }; // the www redirect is apex-only (#135)
-  Object.assign(state, { accountId, worker: site.workerName }, www && { www });
+  // An earlier apex's www stays recorded until leaveHostname() removes it (#139).
+  Object.assign(state, { accountId, worker: site.workerName }, www && !state.www && { www });
 
   log("Preparing…\n");
-  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
   const hostname = site.domain ? cf.domainHostname(site.domain) : await cf.workersDevHostname(token, accountId, site.workerName);
+  await cf.reclaimHostname(token, state, hostname, log);
+  if (site.domain) for (const w of await cf.hostnameWarnings(token, accountId, site.domain, site.workerName)) log(`Warning: ${w}\n`);
   // A secret that isn't a real one (still sealed the pre-#136 way, or empty) is never uploaded (#218):
   // the Turnstile secret is rotated and the sending key re-created instead.
   if (state.turnstile?.secret && looksSealed(state.turnstile.secret)) {
@@ -329,7 +355,10 @@ async function publish(id, log) {
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
 
-  // The site is already live by now, so a missing token permission only costs the www redirect.
+  // The site is already live by now, so nothing after this blocks it. A changed
+  // hostname (#139) leaves the old one redirecting here unless the site opts out.
+  await cf.leaveHostname(token, state, hostname, www || null, site.redirectOldAddress !== false, log);
+  await writeState(id, state);
   if (site.domain) await cf.ensureWwwRedirect(token, site.domain, log).catch((e) =>
     log(`Couldn't set up the www redirect (${e.message}). Add Zone · Single Redirect · Edit to your Cloudflare token and publish again.\n`));
 
@@ -359,7 +388,7 @@ async function unpublish(id, log) {
   if (failed.length) throw new Error(`Couldn't remove ${failed.join(", ")}. See the log, then try again.`);
   log("\nDone. The website is offline.\n");
 }
-const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1);
+const canUnpublish = (s) => Boolean(s.url || s.worker || s.www || s.turnstile || s.sendingKeyId || s.d1 || s.moved?.length);
 
 // Form inbox (#75): read straight from the site's D1 database with the user's
 // token, so no public endpoint ever serves messages. Returns null when the
@@ -479,13 +508,14 @@ async function githubToken() {
 }
 const publishable = (id) => {
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");
-  return github.themeFiles(path.join(localThemes(), id)); // validated; only theme.json/theme.css/preview.png
+  return github.themeFiles(path.join(localThemes(), id)); // validated; only the files lib/theme-validate.js allows
 };
 
 const handlers = {
   themes: () => ({ themes, fonts }),
   "builder:list": () => builder.listLocal(localThemes()),
   "builder:new": () => builder.clean({}),
+  "builder:templates": () => ({ defaults: templates.DEFAULTS, placeholders: templates.PLACEHOLDERS }),
   "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
   // Selectors come from the preview's frame script: classes and tag names only.
   "builder:css-rule": (css, selectors) => {
@@ -852,7 +882,8 @@ const handlers = {
 for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, async (event, ...args) => {
     await ready;
-    const result = await fn(...args, event);
+    while (renaming) await renaming; // no await when idle, so nothing slips in between this and busy++
+    const result = await whileBusy(() => fn(...args, event));
     if (EDITS.has(channel)) {
       const id = channel === "sites:save" ? args[0]?.id : channel.startsWith("settings:") ? args.at(-1) : args[0];
       if (typeof id === "string" && sites.has(id)) autosave(id);
@@ -881,6 +912,7 @@ app.whenReady().then(() => {
     .catch((e) => console.error("Couldn't remove unused images:", e));
   protocol.handle("preview", async (request) => {
     await ready;
+    while (renaming) await renaming;
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
     const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder

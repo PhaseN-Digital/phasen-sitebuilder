@@ -222,11 +222,25 @@ app.on("browser-window-created", (_e, win) => {
       await run(`document.querySelector(".tb-menu").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0`);
       await clickButton("Pick element");
       if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
+      // Advanced HTML (#200): a bad header template is refused, Reset brings back the default, an edited one reaches the preview.
+      const setHtml = (v) => run(`{ const b = document.querySelector("#tb-html"); b.value = ${JSON.stringify(v)}; b.dispatchEvent(new Event("input")); } 0`);
+      await run(`document.querySelector("#tb-html").closest("details").open = true; 0`);
+      check("advanced html: header template shown with its placeholders", await run(`document.querySelector("#tb-html").value.includes("{{menu}}") && [...document.querySelectorAll("[aria-label='Insert a placeholder'] code")].map((c) => c.textContent).join() === "{{brand}},{{menu}},{{site.name}},{{page.title}},{{layout}},{{site.logo}}"`));
+      await setHtml('<header class="site-header"><script>alert(1)</script>{{menu}}</header>');
+      check("advanced html: forbidden markup refused", await waitFor(() => run(`document.querySelector("#tb-errors").textContent.includes("header.html: <script> is not allowed")`)));
+      await clickButton("Reset to default template");
+      check("advanced html: reset to default", await waitFor(() => run(`!document.querySelector("#tb-errors").textContent && !tbEdit.templates.header && document.querySelector("#tb-html").value.startsWith('<header class="site-header"><div class="wrap">')`)));
+      await setHtml('<header class="site-header"><div class="wrap"><a class="brand" href="/">{{brand}}</a><p class="tb-tagline">Hand-made at </p>{{menu}}</div></header>');
+      // The palette inserts at the cursor: after "Hand-made at ".
+      await run(`{ const b = document.querySelector("#tb-html"); const at = b.value.indexOf("</p>"); b.setSelectionRange(at, at); } [...document.querySelectorAll("[aria-label='Insert a placeholder'] button")].find((b) => b.textContent === "{{site.name}}").click(); 0`);
+      check("advanced html: edited header in the preview", await waitFor(() => inFrame(`document.querySelector(".site-header .tb-tagline")?.textContent === "Hand-made at Regression Bikes"`)), await run(`document.querySelector("#tb-errors").textContent`));
+      await shot("theme-html");
       await clickButton("Save theme");
       const dir = path.join(UD, "themes-local", "regression-bikes-theme");
       const ok = await waitFor(() => fs.existsSync(path.join(dir, "theme.css")) && run(`document.querySelector(".save-state").textContent.startsWith("Saved")`));
       const { validateTheme } = require("../lib/theme-validate");
       check("theme builder: saved as a valid package", ok && validateTheme(dir).length === 0 && read(path.join(dir, "theme.css")).includes("var(--primary-text)"), ok && validateTheme(dir));
+      check("advanced html: header template saved", fs.existsSync(path.join(dir, "header.html")) && read(path.join(dir, "header.html")).includes("Hand-made at {{site.name}}"));
       const png = fs.existsSync(path.join(dir, "preview.png")) && fs.readFileSync(path.join(dir, "preview.png"));
       if (png) check("theme builder: preview.png is 640x400", png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 400);
       else console.log("preview.png not captured (capturePage unavailable here, #87)");
@@ -235,11 +249,13 @@ app.on("browser-window-created", (_e, win) => {
       await run(`tab = "design"; renderEditor(); 0`);
       const btn = await waitFor(() => run(`[...document.querySelectorAll("button.theme")].some((b) => b.querySelector("strong").textContent === "Regression Bikes theme")`));
       check("theme builder: listed in the Design tab picker", btn);
+      check("advanced html: picker says it uses HTML templates", await run(`[...document.querySelectorAll("button.theme")].find((b) => b.querySelector("strong").textContent === "Regression Bikes theme").textContent.includes("Uses HTML templates.")`));
       await run(`[...document.querySelectorAll("button.theme")].find((b) => b.querySelector("strong").textContent === "Regression Bikes theme").click()`);
       await waitFor(() => run(`site.themeSource === "local"`));
       await saved();
       const s = JSON.parse(read(path.join(S(id), "site.json")));
       check("theme builder: site uses the local theme", s.themeSource === "local" && s.theme === "regression-bikes-theme" && read(path.join(UD, "preview", id, "public", "styles.css")).includes("/* theme-builder "), { theme: s.theme, themeSource: s.themeSource });
+      check("advanced html: site build uses the header template", read(path.join(UD, "preview", id, "public", "index.html")).includes('<p class="tb-tagline">Hand-made at Regression Bikes</p>'));
       await shot("theme-builder-design");
     }
 
