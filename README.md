@@ -95,6 +95,16 @@ use `scripts/check-commit.js`.
   writes it into `lib/github-config.json` (gitignored). Without it the
   installers say "GitHub sign-in isn't configured". Local runs read the
   environment variable of the same name instead.
+- Licences (#182): the app is proprietary (`LICENSE`, `"license": "SEE
+  LICENSE IN LICENSE"`; the EULA wording in `LICENSE` is still a placeholder).
+  `npm run dist` first runs `scripts/licences.js` (`predist`), which writes
+  `THIRD-PARTY-NOTICES.txt` (gitignored) from the licence and NOTICE files of
+  the production dependencies electron-builder packages, and fails if any is
+  copyleft (GPL/LGPL/AGPL/MPL/SSPL…). `npm test` runs the same check from the
+  lockfile. sharp/libvips (LGPL) stays out via the `!node_modules/...`
+  exclusions in `build.files`, which the script reads; a justified exception
+  goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
+  next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
 
 ## Regression tests
 
@@ -173,7 +183,9 @@ published always-pass test secret, so that one step needs internet access.
 - Sites folder, secrets and history (#136): `<Documents>/PhaseN Sites/` by
   default (Settings › Data › Change folder… moves the sites there, or points
   at a folder that already has some; the choice is in `userData/location.json`).
-  One sub-folder per site, named from its name when it was made, each its
+  One sub-folder per site, named from its name (renamed with the site, #177,
+  once the edit is committed and nothing else is running; if a file in it is
+  open on Windows it keeps its old name until the next commit), each its
   own git repo (`lib/site-repo.js`, through
   [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
   no git), plus `.phasen/` for the app's settings. On start, and with
@@ -699,6 +711,18 @@ When the address isn't a WordPress site, the site is first copied exactly
    redirect rules are left alone (logged, not overwritten). If this step fails,
    e.g. the token lacks the permission, publishing still succeeds and the log
    says why.
+8. If the site was last published at a different hostname (#139): detaches
+   the old hostname's Custom Domain from the Worker, removes the old apex's
+   `www` record and rule (only ones publishing made), and 301s the old
+   hostname to the new one with a proxied placeholder `AAAA 100::` record and
+   a Single Redirect rule (`ref` `sitebuilder_moved_<host>`), if its zone is
+   still on the same Cloudflare account and has no other records or redirect
+   rules there. A workers.dev address can't redirect, and a site with
+   `"redirectOldAddress": false` in its site.json skips it (no UI toggle yet).
+   Every part is logged and never stops the publish. The Turnstile widget's
+   allowed hostname follows the new one (step 2). Publishing back to a
+   hostname that redirects removes that redirect first. Redirects made this
+   way are listed in `publish.json` (`moved`).
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
 Account › Turnstile › Edit, Account › D1 › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
@@ -734,8 +758,9 @@ when deleting a site, undoes publishing (`unpublish` in `lib/publish.js`),
 using what `sites/<id>/publish.json` recorded at publish time:
 
 1. Deletes the Worker and its Custom Domains.
-2. Deletes the `www` record and redirect rule, but only ones publishing made
-   (matched by the record's comment and the rule's `ref`).
+2. Deletes the `www` record and redirect rule, and any old-hostname
+   redirects (#139), but only ones publishing made (matched by the record's
+   comment and the rule's `ref`).
 3. Deletes the Turnstile widget, the form inbox's D1 database (with its
    messages; the confirmation says to export them first) and the site's
    Resend sending key.
@@ -765,11 +790,12 @@ site's local files until taking it offline has fully worked.
   players without an http(s) referrer); they play on the published site.
   Vimeo's player was only checked to load in Electron, not played in a real
   browser.
-- Subdomains (#135): moving a published site from the apex to a subdomain
-  (or between hostnames) doesn't remove its old www redirect or old Custom
-  Domain until it's taken offline (#139). The hostname warnings and the
-  Custom Domain on a subdomain are only tested against a stubbed Cloudflare
-  API, not the real one.
+- Subdomains (#135): the hostname warnings and the Custom Domain on a
+  subdomain are only tested against a stubbed Cloudflare API, not the real
+  one. So is the hostname-change cleanup and old-address 301 (#139); whether
+  Cloudflare removes a Custom Domain's DNS record in time for the placeholder
+  record to be added is unverified (if not, the log says the redirect was
+  skipped). The redirect can only be turned off by editing site.json.
 - Taking a site offline (#71) leaves the domain registered with Resend and
   Resend's DNS records in the zone, since they may predate the app or be
   shared. Sites published before 0.5 didn't record their Resend key's id, so
@@ -787,8 +813,8 @@ site's local files until taking it offline has fully worked.
   placeholders.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
-  Windows/macOS keychains or with a synced folder (OneDrive/iCloud). Site
-  folders keep the name they were made with when a site is renamed. A lost
+  Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
+  a site's folder (#177) likewise only on Linux. A lost
   sending key is re-created without deleting the old one at Resend. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
