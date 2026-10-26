@@ -1,4 +1,4 @@
-// Theme Builder UI (#130), opened from "Themes…" in the sidebar. Themes are
+// Theme Builder UI (#130), opened from "Themes…" in the top bar. Themes are
 // made from a few controls by lib/theme-builder.js (via main.js "builder:*")
 // and saved to the user's local themes, which the Design tab lists under
 // "Your themes". Uses app.js's helpers (h, call, labelled, loadSites…).
@@ -7,10 +7,8 @@
 let tbThemes = {}, tbSites = [], tbEdit = null, tbOn = "", tbTimer, tbPicking = false, tbTpl = "header", tbTplInfo = null;
 
 async function openThemes() {
-  await flushSave();
-  site = null;
+  await leaveSite($("#open-themes"));
   tbEdit = null;
-  loadSites();
   [tbThemes, tbSites, settings, tbTplInfo] = await Promise.all([call("builder:list"), call("sites:list"), call("settings:get"), call("builder:templates")]);
   renderThemes();
 }
@@ -21,7 +19,7 @@ function renderThemes() {
   const from = h("select", {}, tbSites.map((s) => h("option", { value: s.id }, s.name || "Untitled")));
   $("#main").replaceChildren(h("div", { className: "import-wrap" }, h("div", { className: "import theme-list" },
     h("h1", {}, "Your themes"),
-    h("p", { className: "hint" }, "Make your own themes here, separately from any website. They appear in every website's Design tab under \"Your themes\"."),
+    h("p", { className: "hint" }, "Make your own themes here, separately from any website. They appear in every website's Design section under \"Your themes\"."),
     h("div", { className: "inline", style: "margin:16px 0" }, h("button", { className: "primary", onclick: async () => editTheme(await call("builder:new")) }, "New theme")),
     tbSites.length > 0 && h("div", { className: "inline", style: "align-items:center;margin-bottom:16px" }, h("span", { style: "white-space:nowrap" }, "New theme from a website's design:"), from,
       h("button", { onclick: async () => editTheme(await call("builder:from-site", from.value)) }, "Start")),
@@ -253,7 +251,7 @@ async function publishDialog(id, t, kind) {
         labelled("Repository", repo, "owner/repo, or owner/repo/folder@branch. Add it as a theme source in Settings to use the theme in other copies of the app."),
         !settings.github.privateRepos && h("p", { className: "hint" }, "For a private repository, sign out and sign in again in Settings with private repositories allowed."),
       ] : [
-        h("p", { className: "hint" }, "Opens a pull request to PhaseN-Digital/phasen-sitebuilder-themes from your own copy (fork) of it on GitHub, with this theme's name and description. Once PhaseN accepts it, everyone can choose it in the Design tab."),
+        h("p", { className: "hint" }, "Opens a pull request to PhaseN-Digital/phasen-sitebuilder-themes from your own copy (fork) of it on GitHub, with this theme's name and description. Once PhaseN accepts it, everyone can choose it under Design."),
         h("p", { className: "hint" }, "Only theme.json, theme.css and preview.png are sent."),
       ],
       h("div", { className: "inline" }, go, close),

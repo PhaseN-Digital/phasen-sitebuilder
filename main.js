@@ -583,7 +583,7 @@ const handlers = {
   "sites:get": async (id) => {
     await saveAllHistory(); // switching sites ends a batch of edits
     const state = await readState(id);
-    return { site: await readSite(id), url: state.url || null, canUnpublish: canUnpublish(state), accounts: publicAccounts(await settingsStore.loadSite(siteDir(id))) };
+    return { site: await readSite(id), url: state.url || null, publishedAt: state.publishedAt || null, canUnpublish: canUnpublish(state), accounts: publicAccounts(await settingsStore.loadSite(siteDir(id))) };
   },
   "sites:save": async (site) => {
     await json.write(path.join(siteDir(site.id), "site.json"), site);

@@ -6,7 +6,7 @@
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; color: var(--text);
 }
 * { box-sizing: border-box; }
-body { margin: 0; display: flex; height: 100vh; background: var(--bg); overflow: hidden; }
+body { margin: 0; display: flex; flex-direction: column; height: 100vh; background: var(--bg); overflow: hidden; }
 h1, h2, h3 { margin: 0 0 12px; }
 button, input, select, textarea { font: inherit; color: inherit; }
 input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
@@ -22,19 +22,45 @@ button.danger { color: var(--danger); }
 button.icon { padding: 4px 9px; }
 button.big { padding: 12px 22px; font-size: 1.05rem; }
 a { color: var(--primary); cursor: pointer; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+button.linkish { border: 0; padding: 0; background: none; color: var(--primary); text-decoration: underline; }
 
-.sidebar { width: 240px; flex: none; display: flex; flex-direction: column; background: var(--side); color: var(--text); padding: 20px 14px; border-right: 1px solid var(--line); }
-.sidebar .brand { display: grid; gap: 6px; margin-bottom: 24px; }
-.sidebar .brand img { width: 200px; height: auto; display: block; }
-.sidebar .brand span { font-size: 1.05rem; font-weight: 700; color: var(--primary); }
-.sidebar h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-#site-list { flex: 1; overflow: auto; }
-#site-list button { display: block; width: 100%; text-align: left; margin-bottom: 4px; background: transparent; border: 0; color: inherit; padding: 9px 10px; }
-#site-list button:hover { background: var(--tint); }
-#site-list button.active { background: var(--primary); color: var(--primary-text); }
-.new-site { display: grid; gap: 8px; }
-.update-banner { margin-top: 12px; padding: 10px; border-radius: 6px; background: var(--tint); display: grid; gap: 8px; overflow-wrap: anywhere; }
-.import-button { margin-top: 8px; }
+/* App shell (#185): top bar, the current site's menu, main area. */
+.topbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; background: var(--side); border-bottom: 1px solid var(--line); }
+.topbar .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+.topbar .brand img { height: 26px; width: auto; display: block; }
+.switcher { position: relative; }
+#site-switcher { display: flex; gap: 10px; justify-content: space-between; min-width: 220px; max-width: 320px; font-weight: 600; text-align: left; }
+#switcher-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switcher-panel { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 320px; max-height: calc(100vh - 70px); overflow: auto; display: grid; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 30px #0003; }
+.switcher-panel[hidden] { display: none; }
+.switcher-panel h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 6px 0 0; }
+#recent-sites, #site-list { display: grid; gap: 2px; }
+#recent-sites:empty { display: none; }
+#site-list { max-height: 40vh; overflow: auto; }
+:is(#recent-sites, #site-list) button { text-align: left; background: transparent; border: 0; padding: 8px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#recent-sites, #site-list, .side-menu) button:hover { background: var(--tint); }
+:is(#recent-sites, #site-list) button.active { background: var(--primary); color: var(--primary-text); }
+:is(#recent-sites, #site-list, .side-menu) button:focus-visible { outline-offset: -2px; }
+.new-site { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.app-nav { margin-left: auto; display: flex; gap: 6px; }
+.app-nav button[aria-current="page"] { border-color: var(--primary); background: var(--tint); color: var(--primary); font-weight: 600; }
+.topbar .update-banner { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; border-radius: 6px; background: var(--tint); white-space: nowrap; }
+.topbar .update-banner button { padding: 4px 10px; }
+.notices .update-banner { margin: 8px 14px 0; padding: 10px; border-radius: 6px; background: var(--tint); display: grid; gap: 8px; overflow-wrap: anywhere; }
+.shell { flex: 1; display: flex; min-height: 0; }
+.side-menu { width: 190px; flex: none; display: flex; flex-direction: column; padding: 10px 8px; background: var(--side); border-right: 1px solid var(--line); overflow: auto; }
+.side-menu[hidden] { display: none; }
+.side-menu ul { list-style: none; margin: 0; padding: 0; flex: 1; display: grid; gap: 2px; align-content: start; }
+.side-menu button { position: relative; display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; padding: 9px 10px; }
+.side-menu button[aria-current="page"] { background: var(--primary); color: var(--primary-text); font-weight: 600; }
+.side-menu .icon { width: 18px; flex: none; text-align: center; font-size: 1.05rem; }
+.side-menu .count { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--danger); color: #fff; font-size: .75rem; font-weight: 600; text-align: center; }
+.side-menu .collapse { color: var(--muted); }
+.side-menu.collapsed { width: 54px; padding-inline: 6px; }
+.side-menu.collapsed .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.side-menu.collapsed .count { position: absolute; top: 1px; right: 1px; min-width: 16px; padding: 0 4px; }
 .import-wrap { flex: 1; overflow: auto; padding: 40px; }
 .import { max-width: 560px; }
 /* Rich text editor (Quill's snow theme, restyled to match; its own link tooltip is replaced by .rich-panel). */
@@ -73,12 +99,16 @@ a { color: var(--primary); cursor: pointer; }
 #main { flex: 1; display: flex; min-width: 0; }
 .welcome { margin: auto; text-align: center; color: var(--muted); }
 .editor-panel { width: 460px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
-.panel-head { padding: 16px 20px 0; border-bottom: 1px solid var(--line); }
-.panel-head .row { display: flex; justify-content: space-between; align-items: baseline; }
+.panel-head { padding: 14px 20px 10px; border-bottom: 1px solid var(--line); }
+.panel-head .row { display: flex; gap: 12px; align-items: center; }
+.panel-head .row h1 { flex: 1; margin: 0; font-size: 1.4rem; }
+.preview-toggle { padding: 5px 10px; }
+.editor-panel.wide { flex: 1; width: auto; }
+.preview[hidden] { display: none; }
+.dash { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; margin: 0 0 8px; }
+.dash dt { font-weight: 600; }
+.dash dd { margin: 0; overflow-wrap: anywhere; }
 .save-state { color: var(--muted); font-size: .85rem; }
-.tabs { display: flex; gap: 2px; margin-top: 8px; }
-.tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: 10px 9px; color: var(--muted); font-weight: 600; }
-.tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
 .panel-body { flex: 1; overflow: auto; padding: 20px; }
 
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
