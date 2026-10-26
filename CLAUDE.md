@@ -112,8 +112,14 @@ are not, so add them yourself.
   `project-manager` agent owns issue intake, the project board, labels,
   milestones, the roadmap, and deciding which issues are safe to start next.
   Workers declare `Depends on #n` and
-  `Files:` in their PR bodies. GitHub can't enforce any of this yet
-  (branch protection needs a paid plan for this private repo, see #5).
+  `Files:` in their PR bodies. The `main` ruleset (#5) enforces part of
+  it, with no bypass: changes only through a squash-merged PR, `test` and
+  `commits` green on a head that's up to date with main, no force push or
+  deletion. It requires no approving review, since GitHub doesn't let the
+  maintainer approve their own PRs and Actions can't. Release PRs get those
+  two checks from `release-please.yml`'s `ci` job, which runs them on the
+  release head and posts them as statuses, because ci.yml never runs there.
+  Anything that pushes to main directly (rather than merging a PR) is refused.
 - Commit messages and PR titles must be Conventional Commits (`feat:`,
   `fix(scope):`, `feat!:` …). PRs are squash merged (`gh pr merge <n>
   --squash --delete-branch`; the repo allows squash merges only, with

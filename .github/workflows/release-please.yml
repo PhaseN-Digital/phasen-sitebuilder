@@ -93,8 +93,39 @@ jobs:
     with:
       ref: ${{ needs.release-please.outputs.pr_sha }}
 
+  # main's ruleset requires `test` and `commits` (#5), but ci.yml never runs on
+  # release PRs (GITHUB_TOKEN) and Actions can't bypass a repo ruleset. So run
+  # the same checks on the release head here and post them as its statuses.
+  ci:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.pr_sha != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.release-please.outputs.pr_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.pr_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/check-commit.js --range "$(git merge-base origin/main "$SHA")..$SHA"
+      - run: |
+          for c in test commits; do
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context="$c" \
+              -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+          done
+
   release-gate:
-    needs: [release-please, regression]
+    needs: [release-please, regression, ci]
     if: ${{ !cancelled() && needs.release-please.outputs.pr_sha != '' }}
     runs-on: ubuntu-latest
     outputs:
@@ -106,7 +137,7 @@ jobs:
       SHA: ${{ needs.release-please.outputs.pr_sha }}
       BRANCH: ${{ needs.release-please.outputs.pr_branch }}
       START_MAIN: ${{ needs.release-please.outputs.main_sha }}
-      RESULT: ${{ needs.regression.result }}
+      RESULT: ${{ needs.regression.result == 'success' && needs.ci.result || needs.regression.result }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -141,7 +172,7 @@ jobs:
           if [ "$RESULT" != success ]; then
             gh label create regression-failed --color d73a4a --description "Release PR failed the regression suite" --force
             gh pr edit "$PR" --add-label regression-failed
-            gh pr comment "$PR" --body "Regression suite result: **$RESULT** on $SHA ([run]($run)). Not merging."
+            gh pr comment "$PR" --body "Regression suite / CI result: **$RESULT** on $SHA ([run]($run)). Not merging."
             exit 0
           fi
           gh pr edit "$PR" --remove-label regression-failed 2>/dev/null || true
