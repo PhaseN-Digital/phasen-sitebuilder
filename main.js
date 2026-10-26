@@ -14,7 +14,7 @@ const { loadTheme } = require("./lib/themes");
 const templates = require("./lib/templates");
 const builder = require("./lib/theme-builder");
 const config = require("./lib/settings");
-const { migrateLayouts } = require("./lib/layouts");
+const { migrateLayouts, layoutOf } = require("./lib/layouts");
 const json = require("./lib/json-store");
 const github = require("./lib/github");
 const secrets = require("./lib/secrets");
@@ -517,18 +517,26 @@ async function previewTheme(controls, siteId) {
       else await builder.sampleAssets(path.join(dir, "assets"));
       sampleAssetsFrom = from;
     }
-    if (!errors.length) await build(site, dir, previewDir(SAMPLE_ID), { preview: true });
-    return { id: SAMPLE_ID, errors, warnings: builder.warnings(controls) };
+    const hrefs = errors.length ? {} : await build(site, dir, previewDir(SAMPLE_ID), { preview: true });
+    // The first page of each layout, for the layout switcher (#171).
+    const layouts = {};
+    site.pages.forEach((p, i) => { if (hrefs[p.id]) layouts[layoutOf(p, i).id] ??= hrefs[p.id]; });
+    return { id: SAMPLE_ID, errors, warnings: builder.warnings(controls), layouts };
   });
 }
-// preview.png: the sample preview at 1280x800 in a hidden window, downscaled to 640x400.
-async function capturePreview() {
+// preview.png and preview-<layout>.png (#171): each of the sample's layouts
+// at 1280x800 in a hidden window, downscaled to 640x400. Returns { <layout>: png }.
+async function capturePreviews(layouts) {
   const win = new BrowserWindow({ show: false, width: 1280, height: 800, webPreferences: { offscreen: true } });
+  const shots = {};
   try {
-    await win.loadURL(`preview://${SAMPLE_ID}/`);
-    await win.webContents.insertCSS("::-webkit-scrollbar { display: none; }");
-    await new Promise((r) => setTimeout(r, 500)); // images and fonts
-    return (await win.webContents.capturePage()).resize({ width: 640, height: 400, quality: "best" }).toPNG();
+    for (const [id, href] of Object.entries(layouts)) {
+      await win.loadURL(`preview://${SAMPLE_ID}${href}`);
+      await win.webContents.insertCSS("::-webkit-scrollbar { display: none; }");
+      await new Promise((r) => setTimeout(r, 500)); // images and fonts
+      shots[id] = (await win.webContents.capturePage()).resize({ width: 640, height: 400, quality: "best" }).toPNG();
+    }
+    return shots;
   } finally {
     win.destroy();
   }
@@ -581,7 +589,7 @@ const handlers = {
   themes: () => ({ themes, fonts }),
   "builder:list": () => builder.listLocal(localThemes()),
   "builder:new": () => builder.clean({}),
-  "builder:templates": () => ({ defaults: templates.DEFAULTS, placeholders: templates.PLACEHOLDERS }),
+  "builder:templates": () => ({ defaults: templates.DEFAULTS, placeholders: templates.PLACEHOLDERS, layoutControls: builder.layoutControls() }),
   "builder:preview": (controls, siteId) => previewTheme(controls, siteId),
   // Selectors come from the preview's frame script: classes and tag names only.
   "builder:css-rule": (css, selectors) => {
@@ -589,11 +597,11 @@ const handlers = {
     return builder.cssRule(css, { selectors });
   },
   "builder:save": async (controls) => {
-    const { errors } = await previewTheme(controls);
+    const { errors, layouts } = await previewTheme(controls);
     if (errors.length) return { errors };
-    const png = await capturePreview().catch((e) => (console.error("Couldn't capture the theme preview:", e), null));
+    const { home, ...shots } = await capturePreviews(layouts).catch((e) => (console.error("Couldn't capture the theme previews:", e), {}));
     await fs.mkdir(localThemes(), { recursive: true });
-    return builder.saveLocal(localThemes(), controls, png);
+    return builder.saveLocal(localThemes(), controls, home || null, shots);
   },
   "builder:delete": (id) => {
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) throw new Error("Bad theme id");

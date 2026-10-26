@@ -822,6 +822,9 @@ const site = {
     const tb = require("./lib/theme-builder");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-local-themes-"));
     const combos = Object.entries(tb.CHOICES).flatMap(([k, opts]) => Object.keys(opts).map((v) => ({ [k]: v })));
+    // Page layout controls (#171): every option of every control on every layout it applies to.
+    for (const [id, ctl] of Object.entries(tb.layoutControls())) for (const [k, opts] of Object.entries(ctl)) for (const v of opts.slice(1)) combos.push({ layouts: { [id]: { [k]: v } } });
+    combos.push({ layouts: { "blog-post": { band: "coloured", meta: "coloured", width: "wide" }, services: { cards: "shadow", band: "tinted" } } });
     for (const [i, extra] of [{ radius: 0 }, { radius: 99, font: "serif" }, { font: '"Courier New", monospace' }, ...combos].entries()) {
       const controls = tb.clean({ ...extra, colors: themes.clean.colors, css: ".hero { letter-spacing: .01em; }" });
       assert.deepStrictEqual(await tb.writeTheme(path.join(root, `c${i}`), controls), [], JSON.stringify(extra));
@@ -829,6 +832,18 @@ const site = {
       assert.deepStrictEqual(back, { ...controls, id: undefined, css: ".hero { letter-spacing: .01em; }\n" }, JSON.stringify(extra));
     }
     assert.strictEqual(tb.clean({ radius: 99 }).radius, 32, "radius clamped");
+    assert.deepStrictEqual(tb.clean({ layouts: { home: { meta: "caps", width: "narrow", band: "coloured" }, legal: { width: "normal" }, nope: { width: "wide" }, services: { cards: "<x>" } } }).layouts,
+      { home: { width: "narrow" } }, "layout controls: only ones that apply, known and not the default");
+    assert(tb.generate({ layouts: { services: { cards: "shadow" } } }).css.includes(".layout-services .card { border: 0;"), "layout controls are scoped to their layout");
+    {
+      const lp = path.join(root, "lp");
+      const png = fs.readFileSync(path.join(__dirname, "build", "icon.png"));
+      assert.deepStrictEqual(await tb.writeTheme(lp, {}, { png, shots: { standard: png, "blog-post": png, nope: png } }), [], "per-layout previews are valid");
+      assert.deepStrictEqual(fs.readdirSync(lp).filter((f) => f.startsWith("preview")).sort(), ["preview-blog-post.png", "preview-standard.png", "preview.png"]);
+      fs.writeFileSync(path.join(lp, "preview-legal.png"), "not a png");
+      fs.writeFileSync(path.join(lp, "preview-nope.png"), png);
+      assert.deepStrictEqual(validateTheme(lp).map((e) => e.split(" (")[0]), ["unexpected file preview-nope.png", "preview-legal.png: not a PNG"]);
+    }
     assert.deepStrictEqual(tb.clean({ header: "evil", colors: { text: "red" }, font: "x;}body{" }), tb.clean({}), "bad controls fall back to defaults");
     assert.deepStrictEqual(tb.warnings({}), [], "default colours pass WCAG AA");
     assert.match(tb.warnings({ colors: { background: "#ffffff", text: "#bbbbbb" } }).join(), /Text may be hard to read/);
@@ -932,7 +947,7 @@ const site = {
       // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
       const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
       const x = Buffer.from("x");
-      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days", { ...files, "header.html": x, "preview-legal.png": x, "notes.md": x }); // notes.md: not a theme file
       await push("sunny-days/sub", { "preview.png": x }); // a subfolder
       await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
       await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });

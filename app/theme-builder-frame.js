@@ -6,11 +6,11 @@
 // Selectors use only the classes and landmarks lib/build.js's renderPage and
 // renderSection generate, never ids or nth-child, so a rule works on any
 // site. test.js checks STABLE against that output; this is the one list.
-// The body's layout-<id> classes (#184) are known too but deliberately not
-// suggested: a "this layout only" scope is #171.
+// The body's layout-<id> class (#184) isn't a candidate: it's reported as
+// `layout`, and the builder offers "this layout only" with it (#171).
 const STABLE = ["site-header", "title-band", "brand", "nav-toggle", "site-footer", "hero", "has-image", "text", "image-left", "wrap", "split",
   "richtext", "gallery", "gallery-grid", "contact-details", "site-business", "business-grid", "form", "hp", "cf-turnstile", "form-status", "button", "video-embed", "notfound",
-  "cookie-banner", "cookie-banner-actions"];
+  "cookie-banner", "cookie-banner-actions", "has-cards", "cards", "card", "post", "post-meta", "featured-image", "post-list", "post-card", "post-card-image"];
 const LANDMARKS = ["header", "nav", "main", "footer"];
 
 // From specific to broad, e.g. [".hero h1", "main h1", "h1"]. chain is the
@@ -27,7 +27,8 @@ function candidates(chain) {
 
 if (typeof document === "undefined") module.exports = { STABLE, candidates };
 else (() => {
-  const send = (msg) => parent.postMessage({ sbTheme: true, ...msg }, "*");
+  const layout = [...document.body.classList].find((c) => c.startsWith("layout-"))?.slice(7) || null;
+  const send = (msg) => parent.postMessage({ sbTheme: true, layout, ...msg }, "*");
   const style = document.createElement("style");
   style.textContent = `.sb-pick-on * { cursor: crosshair !important; } .sb-picked { outline: 2px solid #2563eb !important; outline-offset: 2px; }`;
   document.head.append(style);

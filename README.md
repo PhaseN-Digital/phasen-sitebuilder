@@ -140,9 +140,11 @@ checks the whole app end to end with no accounts, against fake sites in
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
   a site's design, contrast hint, preview on that site, right-click the hero
   heading to add a rule and again to select it, edit it and see the preview
-  change, Pick element + Enter, an Advanced HTML header template refused with
+  change, Pick element + Enter, switch the sample preview to the Services
+  layout, give its cards a shadow and add a Services-only rule from the
+  right-click menu, an Advanced HTML header template refused with
   a script, reset, then edited with a placeholder and seen in the preview and
-  the site's build, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
+  the site's build, save (with a preview of every layout), pick it in the Design tab), GitHub sign-in through the device flow and both ways of
   publishing that theme (push to PhaseN's private themes repo, PR to the
   public one; the suite checks only the theme's own files arrived, header template included) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
@@ -326,7 +328,8 @@ published always-pass test secret, so that one step needs internet access.
   then a PR there; it inlines `LAYOUT_IDS`, so it needs no other file).
   A package may also carry HTML templates (#200): `header.html`,
   `footer.html`, `section.html` (wraps every section) and `layout-<id>.html`
-  (the inside of `<main>` for that layout). `lib/templates.js` renders them:
+  (the inside of `<main>` for that layout), and `preview-<layout>.png`
+  screenshots (#171, checked like `preview.png`). `lib/templates.js` renders them:
   `{{name}}` placeholders (escaped, except the app-built `{{brand}}`,
   `{{menu}}`, `{{content}}`, `{{footer.links}}`, `{{footer.business}}`) and `{{#if name}} … {{/if}}`,
   nothing else; its `DEFAULTS` reproduce the built-in markup, so a theme
@@ -415,8 +418,9 @@ published always-pass test secret, so that one step needs internet access.
   controls are stored as the first-line comment of `theme.css`, so a package
   stays in the plain #57 format. Every save is validated with
   `lib/theme-validate.js` (nothing is replaced if it fails) and bumps the
-  patch version; `preview.png` is the sample preview captured in a hidden
-  1280x800 window and scaled to 640x400. The live preview builds built-in
+  patch version; `preview.png` is the sample home page captured in a hidden
+  1280x800 window and scaled to 640x400, and `preview-<layout>.png` the same
+  for each other layout (#171). The live preview builds built-in
   sample content (or one of the user's sites) as a hidden pseudo-site
   (`sites/00000000-0000-4000-8000-000000000000`, no `site.json`, so never
   listed) served through `preview://`. Contrast hints use `lib/build.js`'s
@@ -439,7 +443,16 @@ published always-pass test secret, so that one step needs internet access.
   `<pre>` behind the transparent textarea, no editor library),
   insert placeholders from the palette, or "Reset to default template".
   Only templates that differ from the defaults are saved, as `<name>.html`.
-  The sample preview has a page per main layout (home, standard, services, contact).
+  Page layouts (#171): the sample preview has a page for every layout in
+  `lib/layouts.js` (with its starter sections, plus a blog post), and the
+  switcher beside "Preview with" shows each layout's first page (for one of
+  the user's sites, the layouts it has). The "Page layout" controls style the
+  shown layout only (title band, column width, cards, post date and author;
+  `LAYOUT_CHOICES` in `lib/theme-builder.js`, each written as CSS scoped to
+  `.layout-<id>` and saved in the `theme.css` comment as `layouts`). The
+  right-click menu also offers "Style it on <layout> pages only…", which adds
+  the rule with a `.layout-<id>` prefix; Advanced CSS rules written that way
+  apply to one layout, anything else to all.
   Each valid theme in the list can be published to GitHub (#60):
 - GitHub sign-in and theme publishing (`lib/github.js`, Settings › Accounts,
   Themes… › "Push to repo…"/"Submit to public repo…", #60). Sign-in is the
@@ -449,7 +462,7 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  `theme.css`, `preview.png`, `preview-<layout>.png` and HTML templates), as one commit through the git data API. That commit
   also deletes theme files the theme no longer has (an old `preview.png`)
   from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
@@ -1025,7 +1038,10 @@ site's local files until taking it offline has fully worked.
   local theme can be used and deleted, not edited). Editing a local theme
   doesn't change websites already using it until they press "Update theme".
   `preview.png` capture is tested headlessly on Linux only; if capture fails
-  the theme is saved without one. The right-click menu (#156) only finds a
+  the theme is saved without one. Per-layout previews (#171) make saving take
+  a few seconds (one capture per layout), aren't shown anywhere in the app
+  yet, and a theme carrying them is rejected by app versions before #171 and
+  by the public themes repo's CI until its vendored validator is re-synced. The right-click menu (#156) only finds a
   rule whose selector matches exactly (not one inside a selector list or
   `@media`).
 - GitHub publishing (#60): tested against a fake GitHub API only (device

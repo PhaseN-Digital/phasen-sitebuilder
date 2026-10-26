@@ -190,12 +190,12 @@ app.on("browser-window-created", (_e, win) => {
       // Real clicks hit whatever is on top: an earlier step's declaration dialog, opened when pendingEdits
       // switched sites by script, is still open over the page (a user couldn't get here past the modal).
       await run(`document.querySelectorAll("dialog[open]").forEach((d) => d.close()); 0`);
-      const rightClick = async () => {
+      const rightClick = async (target = ".hero h1") => {
         // The menu's script (app/theme-builder-frame.js) is at the end of the body: its <script> tag and the page's content are
         // there before it has run and can see a right-click (#264). It blocks the parser, so a complete document has run it.
         await waitFor(() => inFrame(`document.readyState === "complete" && Boolean(document.querySelector("script[src='/__sb-theme.js']"))`));
         const { x, y } = await run(`(() => { const r = document.querySelector("#preview").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
-        const at = await inFrame(`(() => { const r = document.querySelector(".hero h1").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
+        const at = await inFrame(`(() => { const r = document.querySelector(${JSON.stringify(target)}).getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
         const pos = { x: Math.round(x + at.x), y: Math.round(y + at.y) };
         // Real mouse input through CDP: sendInputEvent stops at the <iframe> and never reaches the preview's document.
         const dbg = win.webContents.debugger;
@@ -228,6 +228,23 @@ app.on("browser-window-created", (_e, win) => {
       check("rule menu: Pick element + Enter", await waitFor(() => run(`document.querySelector(".tb-menu [role=menuitem]") === document.activeElement`)));
       await run(`document.querySelector(".tb-menu").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0`);
       await clickButton("Pick element");
+      // Page layouts (#171): on the sample content the switcher shows the Services layout, its card control
+      // restyles it, and the rule menu offers a rule for that layout only.
+      await run(`{ const s = document.querySelector(".preview-bar select"); s.value = ""; s.dispatchEvent(new Event("change")); } 0`);
+      await waitFor(() => run(`!document.querySelector("#tb-layout option[value=services]").disabled`));
+      await run(`{ const s = document.querySelector("#tb-layout"); s.value = "services"; s.dispatchEvent(new Event("change")); } 0`);
+      check("layouts: switcher shows the layout", await waitFor(() => inFrame(`document.body.classList.contains("layout-services") && Boolean(document.querySelector(".card h3"))`)), "no services page");
+      check("layouts: controls for the shown layout", await run(`[...document.querySelectorAll("#tb-layout-controls select")].map((s) => s.dataset.layoutControl).join()`) === "band,width,cards");
+      await run(`{ const s = document.querySelector("[data-layout-control=cards]"); s.value = "shadow"; s.dispatchEvent(new Event("change")); } 0`);
+      check("layouts: card style reaches the preview", await waitFor(() => inFrame(`document.body.classList.contains("layout-services") && getComputedStyle(document.querySelector(".card")).boxShadow !== "none"`)), "cards have no shadow");
+      check("layouts: switcher marks the changed layout", await run(`document.querySelector("#tb-layout option[value=services]").textContent`) === "Services (changed)");
+      await shot("theme-layouts");
+      check("layouts: rule menu offers this layout only", /Style it on Services pages only/.test(await rightClick(".card h3") || ""));
+      await run(`[...document.querySelectorAll(".tb-menu button")].find((b) => b.textContent === "Style it on Services pages only…").click(); 0`);
+      c = await waitFor(() => css().then((v) => v.value.includes(".layout-services .card h3 {") && v));
+      check("layouts: adds a rule scoped to the layout", c && c.focused, c);
+      await run(`{ const s = document.querySelector(".preview-bar select"); s.value = ${JSON.stringify(id)}; s.dispatchEvent(new Event("change")); } 0`);
+      await waitFor(() => inFrame(`document.querySelector(".site-header .brand")?.textContent.includes("Regression Bikes")`));
       if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
       // Advanced HTML (#200): a bad header template is refused, Reset brings back the default, an edited one reaches the preview.
       const setHtml = (v) => run(`{ const b = document.querySelector("#tb-html"); b.value = ${JSON.stringify(v)}; b.dispatchEvent(new Event("input")); } 0`);
@@ -251,6 +268,9 @@ app.on("browser-window-created", (_e, win) => {
       const png = fs.existsSync(path.join(dir, "preview.png")) && fs.readFileSync(path.join(dir, "preview.png"));
       if (png) check("theme builder: preview.png is 640x400", png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 400);
       else console.log("preview.png not captured (capturePage unavailable here, #87)");
+      if (png) check("layouts: saved with a preview of every other layout", fs.readdirSync(dir).filter((f) => /^preview-/.test(f)).sort().join() ===
+        require("../lib/layouts").LAYOUTS.filter((l) => l.id !== "home").map((l) => `preview-${l.id}.png`).sort().join(), fs.readdirSync(dir));
+      check("layouts: card style saved", read(path.join(dir, "theme.css")).includes(".layout-services .card { border: 0; box-shadow"));
       await run(`document.querySelector("#site-switcher").click(); document.querySelector('#site-list [data-id="${id}"]').click()`);
       await siteOpened(`site?.id === ${JSON.stringify(id)}`);
       await run(`tab = "design"; renderEditor(); 0`);
