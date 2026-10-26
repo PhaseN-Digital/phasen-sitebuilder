@@ -287,6 +287,27 @@ const site = {
     assert.deepStrictEqual(fetched, ["https://bob.test/forum/", "https://bob.test/gone/"], "only the site's own empty pages are fetched, and the home page reuses homeHtml");
   }
 
+  // SVG logos (#282): downloadImage lets image/svg+xml through as bytes only (other types still
+  // refused); app/wordpress.js rasterises them in an <img>, so none of this markup reaches a site.
+  {
+    const http = require("node:http");
+    const { downloadImage } = require("./lib/wordpress");
+    const hostile = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 200 100" onload="document.title='pwned'">`
+      + `<script>document.title='pwned'</script><image href="http://127.0.0.1:9/beacon.png" width="10" height="10"/><use xlink:href="http://127.0.0.1:9/x.svg#a"/>`
+      + `<foreignObject width="200" height="100"><div xmlns="http://www.w3.org/1999/xhtml"><img src="x" onerror="document.title='pwned'"/></div></foreignObject>`
+      + `<rect width="200" height="100" fill="#c00"/></svg>`;
+    const types = { "/logo.svg": "image/svg+xml", "/page": "text/html" };
+    const server = http.createServer((req, res) => { res.writeHead(200, { "Content-Type": types[req.url] }); res.end(hostile); });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      assert.strictEqual(Buffer.from(await downloadImage(base + "/logo.svg")).toString(), hostile, "an SVG comes back as bytes, for the renderer to rasterise");
+      await assert.rejects(downloadImage(base + "/page"), /Couldn't download/, "markup that isn't image/svg+xml is refused");
+    } finally {
+      server.close();
+    }
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {

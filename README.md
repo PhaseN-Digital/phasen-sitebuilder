@@ -1040,6 +1040,6 @@ site's local files until taking it offline has fully worked.
   application password), but not yet against a client site. Known problems
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
-  Divi conditional form (#22); editable import of Divi/WPBakery pages and block-theme pages is tested only against fixtures (#24); SVG logos aren't copied (#282);
+  Divi conditional form (#22); editable import of Divi/WPBakery pages and block-theme pages is tested only against fixtures (#24); SVG images (a block theme's logo, #282) are rasterised to WebP through an `<img>`, so nothing of the SVG but its pixels reaches the site, and one using `<foreignObject>` is dropped (it taints the canvas);
   Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
   self-hosting (#45) are tested only against a fake Elementor site.
