@@ -150,14 +150,37 @@ function autosave(id) {
 async function saveHistory(id, message) {
   clearTimeout(pendingCommits.get(id));
   pendingCommits.delete(id);
+  let oid = null;
   try {
-    return await repo.commit(siteDir(id), message, await author());
+    oid = await whileBusy(async () => repo.commit(siteDir(id), message, await author()));
   } catch (e) {
     console.error(`Couldn't save the history of ${id}:`, e);
-    return null;
   }
+  await renameFolder(id);
+  return oid;
 }
-const saveAllHistory = () => Promise.all([...pendingCommits.keys()].map((id) => saveHistory(id)));
+// A renamed site's folder follows its name (#177), once its edits are committed and
+// nothing else is running: every IPC call and commit counts as busy, so a publish,
+// a folder move or a flush is never left holding the old path, and IPC calls and
+// previews wait for a rename in progress. Only after a commit (a pause in editing,
+// or quitting), so typing a name doesn't rename the folder letter by letter.
+// ponytail: one app-wide busy count, per-site counts if renames ever wait too long.
+let busy = 0, renaming = null;
+async function whileBusy(fn) {
+  busy++;
+  try { return await fn(); } finally { busy--; }
+}
+async function renameFolder(id) {
+  const name = sites.has(id) && (await readSite(id).catch(() => null))?.name;
+  if (!name || busy || renaming) return;
+  renaming = folder.renameToMatch(sites.get(id), name)
+    .then((dir) => sites.set(id, dir), (e) => console.error(`Couldn't rename the folder of ${id}; it keeps its name:`, e))
+    .finally(() => { renaming = null; });
+  await renaming;
+}
+const saveAllHistory = async () => { // one at a time, so each can rename its folder (#177)
+  for (const id of [...pendingCommits.keys()]) await saveHistory(id);
+};
 const pad = (n) => String(n).padStart(2, "0");
 const liveTag = (d = new Date()) => `live-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 // Channels that change files in a site folder (their first argument is the site, or its id).
@@ -857,7 +880,8 @@ const handlers = {
 for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, async (event, ...args) => {
     await ready;
-    const result = await fn(...args, event);
+    while (renaming) await renaming; // no await when idle, so nothing slips in between this and busy++
+    const result = await whileBusy(() => fn(...args, event));
     if (EDITS.has(channel)) {
       const id = channel === "sites:save" ? args[0]?.id : channel.startsWith("settings:") ? args.at(-1) : args[0];
       if (typeof id === "string" && sites.has(id)) autosave(id);
@@ -886,6 +910,7 @@ app.whenReady().then(() => {
     .catch((e) => console.error("Couldn't remove unused images:", e));
   protocol.handle("preview", async (request) => {
     await ready;
+    while (renaming) await renaming;
     const { host, pathname } = new URL(request.url);
     if (!ID_RE.test(host) || (host !== SAMPLE_ID && !sites.has(host))) return new Response("Not found", { status: 404 });
     const p = path.posix.normalize(decodeURIComponent(pathname)); // so "/assets/..%2F" can't reach the site folder

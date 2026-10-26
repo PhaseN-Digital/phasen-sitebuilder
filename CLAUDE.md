@@ -249,7 +249,11 @@ are not, so add them yourself.
   `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. `lib/site-repo.js` must keep refusing to stage
   `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
   it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
-  so they can be interrupted: keep that order. A channel that changes files
+  so they can be interrupted: keep that order. A renamed site's folder is
+  renamed (one atomic `fs.rename`, `renameToMatch`) only from `saveHistory`
+  in main.js when no IPC call or commit is in flight (`busy`), and IPC calls
+  wait for it (`renaming`), so never cache a `siteDir()` across awaits outside
+  a handler. A channel that changes files
   in a site folder belongs in `EDITS` in main.js, so it's committed.
 - JSON stores (#147): settings.json, accounts.json, site.json and
   publish.json are read and written only through `lib/json-store.js`
