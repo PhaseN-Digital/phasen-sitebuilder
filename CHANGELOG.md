@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.0...phasen-sitebuilder-v0.10.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **github:** delete files dropped from a theme when publishing it ([#159](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/159)) ([#274](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/274)) ([420d77b](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/420d77ba501fe9ec6b405990cedec977dffe4cf4))
+* **mirror:** list an exact copy's pages in crawl order, home first ([#95](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/95)) ([#272](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/272)) ([16efdcb](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/16efdcba4e1296041f363722b10db66c2f6b39b9))
+
 ## [0.10.0](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.9.1...phasen-sitebuilder-v0.10.0) (2026-10-26)
 
 
