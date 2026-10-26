@@ -736,6 +736,15 @@ already signed in"). They're only sent over https and aren't stored.
   themes and other page builders mostly don't expose these, so they get a
   built-in theme's defaults.
 - Some plugins print HTML before the REST API's JSON; that's skipped.
+- Divi and WPBakery shortcodes (`[et_pb_…]`, `[vc_…]`, which the REST API
+  returns as text) are stripped and what's between them kept; a Divi image
+  module becomes an image (#24, `stripShortcodes` in `lib/wordpress.js`).
+  Text held only in a module's settings (button labels, call-to-action
+  titles), WPBakery images (stored by media ID) and raw HTML blocks are lost.
+- Pages with no content of their own, which block themes build from
+  templates (often the front page), get the `<main>` of the page as
+  WordPress shows it instead, minus its title heading (`fromTemplates`).
+  Text and images left loose by the layout's `<div>`s are put in paragraphs.
 - Posts (#180, `/wp/v2/posts`) become Blog post pages (keeping their
   address, date, author, excerpt and featured image), listed by one Blog
   page: the home page when WordPress shows posts there, else an empty page
@@ -1031,6 +1040,6 @@ site's local files until taking it offline has fully worked.
   application password), but not yet against a client site. Known problems
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
-  Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
+  Divi conditional form (#22); editable import of Divi/WPBakery pages and block-theme pages is tested only against fixtures (#24); SVG logos aren't copied (#282);
   Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
   self-hosting (#45) are tested only against a fake Elementor site.

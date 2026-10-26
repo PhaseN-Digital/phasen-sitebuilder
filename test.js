@@ -250,6 +250,43 @@ const site = {
     assert.strictEqual(c("Join", `<form method="post"><input name="user_login"><input type="password" name="pass1"></form>`).wpOnly, true);
   }
 
+  // Editable import: Divi/WPBakery shortcodes stripped, inner content kept; block-theme pages built by templates (#24).
+  {
+    const { stripShortcodes, fromTemplates } = require("./lib/wordpress");
+    // Divi with the builder off, as the REST API returns it: wpautop'd and wptexturized.
+    const divi = `<p>[et_pb_section fb_built=&#8221;1&#8243; _builder_version=&#8221;4.9.4&#8243; _module_preset=&#8221;default&#8221;][et_pb_row _builder_version=&#8221;4.9.4&#8243;][et_pb_column type=&#8221;4_4&#8243;][et_pb_text _builder_version=&#8221;4.9.4&#8243;]</p>
+<h2>Welcome to Bob&#8217;s Bikes</h2>
+<p>We fix bikes. [Est. 1999]</p>
+<p>[/et_pb_text][et_pb_image src=&#8221;https://bob.test/wp-content/uploads/2021/04/shop.jpg&#8221; title_text=&#8221;shop&#8221; _builder_version=&#8221;4.9.4&#8243;][/et_pb_image][et_pb_button button_url=&#8221;/contact/&#8221; button_text=&#8221;Contact&#8221;][/et_pb_button][/et_pb_column][/et_pb_row][/et_pb_section]</p>`;
+    assert.strictEqual(stripShortcodes(divi).replace(/\s+/g, " ").trim(),
+      `<h2>Welcome to Bob&#8217;s Bikes</h2> <p>We fix bikes. [Est. 1999]</p> <p><img src="https://bob.test/wp-content/uploads/2021/04/shop.jpg" alt=""></p>`);
+    const vc = `<p>[vc_row full_width=&#8221;stretch_row&#8221;][vc_column width=&#8221;1/2&#8243;][vc_column_text css=&#8221;.vc_custom_1{margin-top: 0px !important;}&#8221;]</p>
+<h3>Opening hours</h3>
+<p>Mon&#8211;Fri 9&#8211;5</p>
+<p>[/vc_column_text][vc_raw_html]JTNDc2NyaXB0JTNFYWxlcnQoMSklM0MlMkZzY3JpcHQlM0U=[/vc_raw_html][vc_single_image image=&#8221;42&#8243;][/vc_column][/vc_row]</p>
+<p>[contact-form-7 id="7"]</p>`;
+    assert.strictEqual(stripShortcodes(vc).replace(/\s+/g, " ").trim(), `<h3>Opening hours</h3> <p>Mon&#8211;Fri 9&#8211;5</p> <p>[contact-form-7 id="7"]</p>`, "only builder shortcodes go");
+    // WordPress-only pages are still recognised by their shortcodes.
+    assert.strictEqual(stripShortcodes("<p>[woocommerce_my_account]</p>"), "<p>[woocommerce_my_account]</p>");
+
+    const home = `<body class="home page-template-default page page-id-5 wp-custom-logo"><div class="wp-site-blocks"><header class="wp-block-template-part"><nav>Menu</nav></header>
+<main class="wp-block-group is-layout-constrained"><h1 class="wp-block-post-title">Home</h1><div class="wp-block-cover"><h2 class="wp-block-heading">Bikes, fixed</h2></div></main>
+<footer class="wp-block-template-part">Footer</footer></div></body>`;
+    const fetched = [];
+    const text = async (url) => { fetched.push(url); if (url.endsWith("/gone/")) throw new Error("404"); return `<main><h1 class="entry-title">Forum</h1><p>Threads</p></main>`; };
+    const pages = await fromTemplates("https://bob.test", home, [
+      { id: 5, title: "Home", html: "\n", link: "https://bob.test/" },
+      { id: 6, title: "About", html: "<p>Us</p>", link: "https://bob.test/about/" },
+      { id: 7, title: "Forum", html: "", link: "https://bob.test/forum/" },
+      { id: 8, title: "Gone", html: "", link: "https://bob.test/gone/" },
+      { id: 9, title: "Elsewhere", html: "", link: "https://evil.test/x/" },
+      { id: "blog", title: "Blog", html: "", link: "https://bob.test/blog/", layout: "blog-index" },
+    ], text);
+    assert.deepStrictEqual(pages.map((p) => p.html.replace(/\s+/g, " ").trim()),
+      [`<div class="wp-block-cover"><h2 class="wp-block-heading">Bikes, fixed</h2></div>`, "<p>Us</p>", "<p>Threads</p>", "", "", ""]);
+    assert.deepStrictEqual(fetched, ["https://bob.test/forum/", "https://bob.test/gone/"], "only the site's own empty pages are fetched, and the home page reuses homeHtml");
+  }
+
   // WordPress import with an application password fetches anonymously while it can (#43).
   // Credentials need https; the fakes are http, so rewrite the scheme under fetch.
   {
