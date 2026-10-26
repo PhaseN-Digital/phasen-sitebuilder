@@ -261,6 +261,14 @@ are not, so add them yourself.
   wait for it (`renaming`), so never cache a `siteDir()` across awaits outside
   a handler. A channel that changes files
   in a site folder belongs in `EDITS` in main.js, so it's committed.
+- GitHub sync (#137, `lib/sync.js`): the token may only be sent to
+  `<GITHUB_LOGIN>/<owner>/<repo>.git`, which is why `remote()` treats any
+  other origin URL as not connected; keep building URLs with `urlOf`. Sync
+  never overwrites either side: a diverged history becomes a `github-<date>`
+  branch and a question, and the answer is a merge commit, never a force
+  push. Shared settings are the `shared()` allowlist; never sync
+  settings.json itself. Sync runs inside `lib/site-repo.js`'s per-repo queue
+  (`queued`/`commitNow`), so it can't race a history commit.
 - JSON stores (#147): settings.json, accounts.json, site.json and
   publish.json are read and written only through `lib/json-store.js`
   (per-file queue, atomic temp+fsync+rename, `<file>.bak` fallback when a
