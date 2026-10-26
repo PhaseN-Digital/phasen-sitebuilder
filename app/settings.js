@@ -1,12 +1,10 @@
-// The app-wide Settings page (#134), opened from "Settings" in the sidebar:
+// The app-wide Settings page (#134), opened from "Settings" in the top bar:
 // accounts, defaults for every website, theme sources, updates, data and
 // about. Websites can override the accounts and defaults (app.js overridable
 // and siteAccount; main.js settingsFor resolves them). Uses app.js's helpers.
 
 async function openSettings() {
-  await flushSave();
-  site = null;
-  loadSites();
+  await leaveSite($("#open-settings"));
   settings = await call("settings:get");
   $("#main").replaceChildren(h("div", { className: "import-wrap" }, h("div", { className: "import settings-page", id: "settings-page" })));
   renderSettings();
@@ -84,7 +82,7 @@ function renderSettings() {
 
   page.replaceChildren(
     h("h1", {}, "Settings"),
-    h("p", { className: "hint" }, "These apply to all your websites. A website can use its own accounts (Publish tab) or override a default where that setting appears."),
+    h("p", { className: "hint" }, "These apply to all your websites. A website can use its own accounts (its Site settings) or override a default where that setting appears."),
 
     h("h2", { className: "section-title" }, "Accounts"),
     step("Cloudflare (hosting)", Boolean(settings.cloudflare), cloudflareAccount()),

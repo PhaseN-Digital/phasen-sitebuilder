@@ -472,6 +472,63 @@ const site = {
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
   globalThis.fetch = realFetch;
 
+  // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
+  const moveStub = (routes, writes) => async (url, { method, body }) => {
+    url = url.replace("https://api.cloudflare.com/client/v4", "");
+    if (method !== "GET") { writes.push([`${method} ${url}`, body && JSON.parse(body)]); return { status: 200, json: async () => ({ success: true, result: {} }) }; }
+    const hit = Object.entries(routes).find(([k]) => url.includes(k));
+    if (hit?.[1] === 403) return { status: 403, json: async () => ({ success: false, errors: [{ message: "denied" }] }) };
+    return { status: 200, json: async () => ({ success: true, result: hit ? hit[1] : [] }) };
+  };
+  const move = async (state, to, www, redirect, routes) => {
+    const writes = [], logs = [];
+    globalThis.fetch = moveStub(routes, writes);
+    await pub135.leaveHostname("t", state, to, www, redirect, (l) => logs.push(l));
+    return { writes, logs: logs.join(""), state };
+  };
+  const apexRoutes = {
+    "/workers/domains?service=bob-1": [{ id: "d1", hostname: "bob.com" }, { id: "d2", hostname: "shop.bob.com" }],
+    "/zones?account.id=a1": [{ id: "z0", name: "com.example" }, { id: "z1", name: "bob.com" }],
+    "dns_records?name=www.bob.com": [{ id: "r1", comment: "PhaseN Site Builder: redirects to the apex" }, { id: "r2", comment: "theirs" }],
+    "dns_records?name=bob.com": [],
+    "/entrypoint": { id: "rs1", rules: [{ id: "x1", ref: "sitebuilder_www_to_apex" }] },
+  };
+  let mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "shop.bob.com", null, true, apexRoutes);
+  assert.deepStrictEqual(mv.writes.map((w) => w[0]), ["DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/workers/domains/d1",
+    "POST /zones/z1/rulesets/rs1/rules", "POST /zones/z1/dns_records"], mv.logs);
+  assert.deepStrictEqual(mv.writes[3][1].ref, "sitebuilder_moved_bob_com");
+  assert.deepStrictEqual(mv.writes[3][1].action_parameters.from_value.target_url, { expression: 'concat("https://shop.bob.com", http.request.uri.path)' });
+  assert.deepStrictEqual(mv.writes[4][1], { type: "AAAA", name: "bob.com", content: "100::", ttl: 1, proxied: true, comment: "PhaseN Site Builder: redirects to the website's new address" });
+  assert.deepStrictEqual(mv.state, { accountId: "a1", worker: "bob-1", url: "https://bob.com", moved: [{ zoneId: "z1", hostname: "bob.com" }] }, "old www dropped, redirect recorded");
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "bob.com", { id: "z1", name: "bob.com" }, true, apexRoutes);
+  assert(!mv.writes.length && mv.state.www.id === "z1", "same hostname: nothing removed");
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://shop.bob.com" }, "bob.com", { id: "z1", name: "bob.com" }, false, apexRoutes);
+  assert.deepStrictEqual(mv.writes.map((w) => w[0]), ["DELETE /accounts/a1/workers/domains/d2"]);
+  assert(mv.state.www.id === "z1" && !mv.state.moved && mv.logs.includes("redirecting it is turned off"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob-1.x.workers.dev" }, "bob.com", null, true, apexRoutes);
+  assert(!mv.writes.length && mv.logs.includes("workers.dev address, which can't redirect"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://old.gone.com" }, "bob.com", null, true, apexRoutes);
+  assert(!mv.writes.length && !mv.state.moved && mv.logs.includes("old.gone.com isn't on this Cloudflare account"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com" }, "shop.bob.com", null, true, { ...apexRoutes, "dns_records?name=bob.com": [{ id: "r9", comment: "" }] });
+  assert(mv.writes.length === 1 && !mv.state.moved && mv.logs.includes("still has other DNS records"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com" }, "shop.bob.com", null, true, { ...apexRoutes, "/entrypoint": { id: "rs1", rules: [{ id: "y", ref: "theirs" }] } });
+  assert(mv.writes.length === 1 && !mv.state.moved && mv.logs.includes("already has redirect rules"), mv.logs);
+  mv = await move({ accountId: "a1", worker: "bob-1", url: "https://bob.com", www: { id: "z1", name: "bob.com" } }, "shop.bob.com", null, true, { ...apexRoutes, "dns_records?name=www.bob.com": 403, "/workers/domains?service=bob-1": 403 });
+  assert(mv.logs.includes("Couldn't remove the www redirect for bob.com (Cloudflare: denied)") && mv.logs.includes("Couldn't detach bob.com") && mv.state.moved, "failures are logged, not thrown");
+  // Moving back to a hostname that redirects: the redirect goes first. Taking offline removes any left.
+  const movedBack = { moved: [{ zoneId: "z1", hostname: "bob.com" }, { zoneId: "z2", hostname: "old.net" }] }, mvWrites = [];
+  globalThis.fetch = moveStub({ "dns_records?name=bob.com": [{ id: "m1", comment: "PhaseN Site Builder: redirects to the website's new address" }],
+    "/entrypoint": { id: "rs1", rules: [{ id: "x1", ref: "sitebuilder_www_to_apex" }, { id: "x2", ref: "sitebuilder_moved_bob_com" }] } }, mvWrites);
+  await pub135.reclaimHostname("t", movedBack, "bob.com", () => {});
+  assert.deepStrictEqual(mvWrites.map((w) => w[0]), ["DELETE /zones/z1/dns_records/m1", "DELETE /zones/z1/rulesets/rs1/rules/x2"]);
+  assert.deepStrictEqual(movedBack.moved, [{ zoneId: "z2", hostname: "old.net" }]);
+  mvWrites.length = 0;
+  globalThis.fetch = moveStub({ "/entrypoint": { id: "rs2", rules: [{ id: "x3", ref: "sitebuilder_moved_old_net" }] } }, mvWrites);
+  const offMoved = await pub135.unpublish("t", "k", { accountId: "a1", ...movedBack }, () => {});
+  assert.deepStrictEqual(mvWrites.map((w) => w[0]), ["DELETE /zones/z2/rulesets/rs2/rules/x3"]);
+  assert.deepStrictEqual(offMoved, { state: { accountId: "a1" }, failed: [] });
+  globalThis.fetch = realFetch;
+
   // Form inbox D1 API (#75), against a stub: reuse by name, create otherwise, table made either way.
   const pub = require("./lib/publish");
   const d1Calls = [];
@@ -503,6 +560,14 @@ const site = {
     { id: 1, form: "gone", fields: JSON.stringify([{ label: "Phone", value: "0123" }]), created_at: "2026-10-23 09:00:00", email_status: "sent" },
   ], { f1: "Contact" });
   assert.strictEqual(csv, 'Received (UTC),Form,Email,Name,Message,Phone\r\n2026-10-24 10:00:00,Contact,failed (403),\'=HYPERLINK(1),"Hi, ""there""\nbye",\r\n2026-10-23 09:00:00,gone,sent,,,0123\r\n');
+
+  // #182: nothing copyleft gets packaged; sharp/libvips (LGPL) stays excluded by build.files.
+  const licences = require("./scripts/licences");
+  const shipped = licences.packaged();
+  assert.deepStrictEqual(licences.copyleft(shipped), [], "copyleft production dependency would be packaged");
+  assert(shipped.some((p) => p.name === "wrangler") && !shipped.some((p) => /^node_modules\/(@img|sharp)\b/.test(p.key)));
+  for (const [lic, want] of [["MIT", false], ["(MIT OR GPL-3.0)", false], ["Apache-2.0 AND LGPL-3.0-or-later", true],
+    ["GPL-2.0 OR AGPL-3.0", true], ["MPL-2.0", true], ["BSD-3-Clause", false]]) assert.strictEqual(licences.isCopyleft(lic), want, lic);
 
   const { bump } = require("./scripts/release-bump");
   for (const [from, to, want] of [["0.3.0", "0.3.1", "patch"], ["0.3.9", "0.3.10", "patch"], ["0.3.1", "0.4.0", "minor"],
@@ -687,7 +752,7 @@ const site = {
       await assert.rejects(gh.themeFiles(path.join(lroot, "bad-one")), /can't be published: unexpected file notes.txt/);
       fs.writeFileSync(path.join(lroot, "sunny-days", "preview.png"), require("./test/fakes").PNG);
       const { files, json } = await gh.themeFiles(path.join(lroot, "sunny-days"));
-      assert.deepStrictEqual(Object.keys(files), gh.FILES);
+      assert.deepStrictEqual(Object.keys(files).sort(), ["preview.png", "theme.css", "theme.json"]);
       const theme = { id: "sunny-days", files, version: json.version };
 
       const pushed = await gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, ...theme });
@@ -841,6 +906,85 @@ const site = {
       'theme.json: unknown layout "shop" (one of home, standard, landing, services, contact, blog-post, blog-index, legal)',
       'theme.json: layouts.home may only have "notes", a string up to 500 characters',
       "theme.css: unknown layout class .layout-shop"]);
+  }
+
+  // HTML templates (#200): the validator rejects each forbidden construct, placeholders are escaped,
+  // a theme's templates reach the build, and an invalid one falls back to the built-in templates.
+  {
+    const { validateTemplate } = require("./lib/theme-validate");
+    const tpl = require("./lib/templates");
+    const tb = require("./lib/theme-builder");
+    for (const [name, html] of Object.entries(tpl.DEFAULTS)) assert.deepStrictEqual(validateTemplate(name.startsWith("layout-") ? "layout" : name, html), [], `default ${name} is valid`);
+    const ok = '<header class="site-header"><div class="wrap"><a class="brand" href="/">{{brand}}</a>{{#if site.logo}}<img src="{{site.logo}}" alt="{{site.name}}">{{/if}}{{menu}}</div></header>';
+    assert.deepStrictEqual(validateTemplate("header", ok), []);
+    assert.deepStrictEqual(validateTemplate("layout", '<div class="cols"><aside>Hi</aside>{{content}}<a href="https://example.com/x?a=1&amp;b=2">x</a><img src="https://images.unsplash.com/p.jpg" alt=""><iframe src="https://www.youtube-nocookie.com/embed/abcdefghijk"></iframe></div>'), []);
+    const rejects = (kind, html, re) => assert.match(validateTemplate(kind, html).join("\n"), re, html);
+    const H = (x) => `{{menu}}${x}`;
+    rejects("header", H("<script>alert(1)</script>"), /<script> is not allowed/);
+    rejects("header", H("<SCRIPT src=x></SCRIPT>"), /<script> is not allowed/);
+    rejects("header", H("<style>a{background:url(javascript:x)}</style>"), /<style> is not allowed/);
+    rejects("header", H('<div style="background:url(javascript:x)">'), /style=: no url\(\)/);
+    rejects("header", H('<img src="/a.png" onerror="x()">'), /event-handler attributes \(onerror=\)/);
+    rejects("header", H('<a href="#" OnClick="x()">'), /event-handler attributes \(onclick=\)/);
+    rejects("header", H('<a href="javascript:alert(1)">x</a>'), /javascript: URLs are not allowed/);
+    rejects("header", H('<a href=" JaVa\tScRiPt:alert(1)">x</a>'), /javascript: URLs are not allowed/);
+    rejects("header", H('<a href="jav&#x61;script:alert(1)">x</a>'), /character references/);
+    rejects("header", H('<img src="data:image/svg+xml,<svg>">'), /data: URLs are not allowed/);
+    rejects("header", H('<img src="https://evil.example/t.gif">'), /external images must be https from images\.unsplash\.com/);
+    rejects("header", H('<img src="//evil.example/t.gif">'), /external images/);
+    rejects("header", H('<img srcset="/a.png 1x, http://images.unsplash.com/b.png 2x">'), /external images/);
+    rejects("header", H('<iframe src="https://evil.example/embed"></iframe>'), /<iframe> may only embed YouTube/);
+    rejects("header", H('<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe>'), /<iframe> may only embed YouTube/);
+    rejects("header", H('<iframe srcdoc="<script>x</script>"></iframe>'), /attribute srcdoc= is not allowed/);
+    for (const t of ["object", "embed"]) rejects("header", H(`<${t} data="x.swf"></${t}>`), new RegExp(`<${t}> is not allowed`));
+    for (const t of ["form", "input", "button", "textarea", "select"]) rejects("header", H(`<${t}>`), /forms are not allowed/);
+    rejects("header", H('<link rel="stylesheet" href="https://fonts.example/x.css">'), /<link> is not allowed/);
+    rejects("header", H('<base href="https://evil.example/">'), /<base> is not allowed/);
+    rejects("header", H("<svg><script>x</script></svg>"), /<svg> is not allowed/);
+    rejects("header", H("<!-- x --><b>x</b>"), /comments/);
+    rejects("header", H('<?x <a title="> <img src=x onerror=alert(1)> ">'), /<\?…>/);
+    rejects("header", H("</ x>"), /comments/);
+    rejects("header", H("<b <script>"), /<script/);
+    rejects("header", H('<a href="{{site.name}}">x</a>'), /href= may only be a whole URL placeholder/);
+    rejects("header", H("<a class={{site.name}}>x</a>"), /put placeholders in quotes/);
+    rejects("header", H('<a title="{{menu}}">x</a>'), /\{\{menu\}\} can't be used inside a tag/);
+    rejects("header", H("{{nope}} {{ site.name }} {{{brand}}}"), /unknown placeholder \{\{nope\}\}[\s\S]*malformed placeholder/);
+    rejects("header", H("{{#if site.name}}x"), /without \{\{\/if\}\}/);
+    rejects("header", "<header>{{brand}}</header>", /must include \{\{menu\}\}/);
+    rejects("layout", "<div></div>", /must include \{\{content\}\}/);
+    rejects("footer", "<footer>{{year}}</footer>", /must include \{\{footer\.links\}\}/);
+
+    // Rendering: escaped by default, html placeholders as given, {{#if}} (nested) on non-empty values only.
+    assert.strictEqual(tpl.render("<b>{{site.name}}</b>{{content}}", { "site.name": `<i>"Bob's"</i>`, content: { html: "<p>ok</p>" } }), "<b>&lt;i&gt;&quot;Bob&#39;s&quot;&lt;/i&gt;</b><p>ok</p>");
+    assert.strictEqual(tpl.render('{{#if a}}A{{#if b}}B{{/if}}{{/if}}{{#if c}}C{{/if}}', { a: "1", b: { html: "" }, c: "" }), "A");
+    assert.strictEqual(tpl.render("{{x}}", { x: "{{y}}", y: "no" }), "{{y}}", "values aren't rendered again");
+
+    // A theme with a header template builds with it; an invalid one falls back with a clear message.
+    const sample = tb.sampleSite({}, "tpl");
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-tpl-site-"));
+    const header = '<header class="site-header custom-head"><div class="wrap"><a class="brand" href="/">{{brand}}</a><span class="tagline">{{page.title}} at {{site.name}}</span>{{menu}}</div></header>';
+    const layout = '<div class="layout-box">{{content}}</div>';
+    assert.deepStrictEqual(await tb.writeTheme(path.join(sdir, "theme"), { templates: { header, "layout-contact": layout, section: '<div class="sec sec-{{section.type}}">{{content}}</div>' } }), []);
+    const back = await tb.listLocal(sdir);
+    assert(back.theme.templates && back.theme.controls.templates.header === header, "templates read back as controls");
+    const tout = fs.mkdtempSync(path.join(os.tmpdir(), "sb-tpl-built-"));
+    const warn = console.warn; const warned = []; console.warn = (m) => warned.push(m);
+    try {
+      await build({ ...sample, name: "Bob's <Shop>" }, sdir, tout);
+      const home = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+      assert(home.includes('<span class="tagline">Home at Bob&#39;s &lt;Shop&gt;</span><button type="button" class="nav-toggle"'), "header template rendered, escaped");
+      assert(home.includes('<div class="sec sec-hero"><section class="hero">') && !home.includes("layout-box"), "section wrapper on every section, layout template only on its layout");
+      assert(fs.readFileSync(path.join(tout, "public/contact.html"), "utf8").includes('<main><div class="layout-box">'), "layout template wraps the contact page's main");
+      assert.deepStrictEqual(warned, []);
+      fs.writeFileSync(path.join(sdir, "theme", "footer.html"), '<footer onclick="x()">{{footer.links}}</footer>');
+      await build(sample, sdir, tout);
+      const fallback = fs.readFileSync(path.join(tout, "public/index.html"), "utf8");
+      assert(!fallback.includes("custom-head") && !fallback.includes("onclick=\"x()\"") && fallback.includes('<header class="site-header"><div class="wrap"><a class="brand" href="/">'), "invalid templates fall back to the built-in ones");
+      assert.match(warned.join(), /HTML templates can't be used, so the built-in ones were used instead: footer\.html: event-handler attributes/);
+    } finally { console.warn = warn; }
+    assert.match(validateTheme(path.join(sdir, "theme")).join(), /footer\.html: event-handler/, "and the package is invalid");
+    assert.match((await tb.writeTheme(path.join(sdir, "t2"), { templates: { header: "<script></script>" } })).join(), /header\.html: <script> is not allowed/, "the builder can't save a bad template");
+    assert.deepStrictEqual(tb.clean({ templates: { header: tpl.DEFAULTS.header, evil: "x", footer: 1 } }).templates, {}, "only changed, known templates are kept");
   }
 
   // Secrets at rest (#136): split out of the JSON files into secrets.enc, OS keystore or portable passphrase.
@@ -1037,6 +1181,26 @@ const site = {
     let switched = false;
     assert.strictEqual(await folder.moveAll(root, to, async () => { switched = true; assert.strictEqual((await folder.scan(root)).size, 2, "originals still there at the switch"); }), 2);
     assert(switched && (await folder.scan(to)).size === 2 && (await folder.scan(root)).size === 0 && fs.existsSync(path.join(to, ".phasen", "secrets.enc")));
+
+    // Renaming a site renames its folder (#177): a no-op when it already matches, a suffix on a clash, the repo intact.
+    const bikes = path.join(to, "bob-s-bikes"), bikes2 = path.join(to, "bob-s-bikes-2");
+    assert.strictEqual(await folder.renameToMatch(bikes, "Bob's Bikes!"), bikes);
+    assert.strictEqual(await folder.renameToMatch(bikes2, "Bob's bikes"), bikes2, "a numbered folder still matches");
+    fs.mkdirSync(path.join(to, "cycles"));
+    const cycles = await folder.renameToMatch(bikes2, "Cycles");
+    assert.strictEqual(cycles, path.join(to, "cycles-2"));
+    const moved = await folder.scan(to);
+    assert(moved.size === 2 && [...moved.values()].includes(cycles) && (await repo.log(cycles))[0].message === "Moved into the PhaseN Sites folder");
+    // Interrupted: a rename that fails (a file open on Windows, a power cut) leaves the folder whole under its old name.
+    const rename = fs.promises.rename;
+    fs.promises.rename = async () => { throw Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" }); };
+    await assert.rejects(folder.renameToMatch(cycles, "Wheels"), /EBUSY/);
+    fs.promises.rename = rename;
+    assert.deepStrictEqual(await folder.scan(to), moved, "nothing moved, nothing lost");
+    // Killed after the rename but before the app recorded it: the next scan finds the site at its new name, once.
+    const wheels = await folder.renameToMatch(cycles, "Wheels");
+    const rescanned = await folder.scan(to);
+    assert(rescanned.size === 2 && [...rescanned.values()].includes(wheels) && !fs.existsSync(cycles) && await repo.isRepo(wheels));
     fs.rmSync(base, { recursive: true, force: true });
   }
 

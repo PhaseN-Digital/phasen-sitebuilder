@@ -516,8 +516,6 @@ function renderImport() {
 }
 
 $("#import-wp").addEventListener("click", async () => {
-  await flushSave();
-  site = null;
-  loadSites();
+  await leaveSite(null); // in the site switcher, not the top bar's app screens
   renderImport();
 });

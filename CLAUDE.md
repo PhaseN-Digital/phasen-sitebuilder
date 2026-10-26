@@ -213,13 +213,19 @@ are not, so add them yourself.
   Theme Builder themes (`lib/theme-builder.js`) are the `local` source, from
   `userData/themes-local/`; their `theme.css` must keep passing
   `lib/theme-validate.js` (test.js checks every control combination).
+  HTML templates (#200, `lib/templates.js`): never add expressions, loops or
+  raw output to the engine; new markup goes in as an app-built `{ html }`
+  placeholder listed in `TEMPLATES` in `lib/theme-validate.js`. Widening
+  that file's allowlists is a security change: add a rejecting test for
+  anything it still forbids. `templates.DEFAULTS` must keep building the
+  same markup as before (test.js and the regression suite check it).
   The preview's right-click menu (#156, `app/theme-builder-frame.js`) may
   only offer selectors built from its `STABLE` classes, which test.js
   requires to equal the classes `lib/build.js` generates: when you add or
   rename a class in `renderPage`/`renderSection`, update `STABLE` too.
-- GitHub publishing (#60, `lib/github.js`): only `theme.json`, `theme.css`
-  and `preview.png` of a theme that passes `lib/theme-validate.js` may ever
-  be sent (`themeFiles`). The sign-in token stays in the main process
+- GitHub publishing (#60, `lib/github.js`): only the files of a theme that
+  passes `lib/theme-validate.js` (so only the names it allows) may ever be
+  sent (`themeFiles`). The sign-in token stays in the main process
   (`settings.github.token`, encrypted in `.phasen/secrets.enc`), only goes to the API host, and never to the
   device flow endpoints. `SITEBUILDER_GITHUB_API` also stands in for
   github.com's login host and, like `SITEBUILDER_GITHUB_CLIENT_ID`, is
@@ -249,7 +255,11 @@ are not, so add them yourself.
   `deployWorker`; `test/legacy.js` checks both against a v0.7.0 fixture. `lib/site-repo.js` must keep refusing to stage
   `.secrets/` and `secrets.enc` regardless of `.gitignore` (test.js checks
   it). Moves (`lib/sites-folder.js`) are copy, verify, rename, then remove,
-  so they can be interrupted: keep that order. A channel that changes files
+  so they can be interrupted: keep that order. A renamed site's folder is
+  renamed (one atomic `fs.rename`, `renameToMatch`) only from `saveHistory`
+  in main.js when no IPC call or commit is in flight (`busy`), and IPC calls
+  wait for it (`renaming`), so never cache a `siteDir()` across awaits outside
+  a handler. A channel that changes files
   in a site folder belongs in `EDITS` in main.js, so it's committed.
 - JSON stores (#147): settings.json, accounts.json, site.json and
   publish.json are read and written only through `lib/json-store.js`
@@ -260,6 +270,10 @@ are not, so add them yourself.
   main.js takes `app.requestSingleInstanceLock()` (#149, per userData dir:
   test harnesses with their own userData never block each other or a
   running app); keep it before anything writes.
+- Licences (#182): a new production dependency must not be copyleft
+  (`npm test` and `npm run dist` fail via `scripts/licences.js`); exclude it
+  in `build.files` or add a justified `ALLOW` entry. Keep `LICENSE` and
+  `THIRD-PARTY-NOTICES.txt` in `build.files`.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
@@ -310,6 +324,12 @@ are not, so add them yourself.
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
+- App layout (#185): a website's screens are entries in `SECTIONS` in
+  `app/app.js` (the left menu is built from it); add new ones there. App-wide
+  screens (Settings, Themes, Import, and any new one) are entered through
+  `leaveSite()`, which does the `flushSave()` above, clears `site` and marks
+  the top bar entry `aria-current`. `localStorage` holds only per-computer UI
+  memory (`recall`/`remember`), never site data or secrets.
 - Rich text is Quill 2 (`richTextEditor` in `app/app.js`), loaded from
   `node_modules/quill/dist` by `app/index.html`. Everything it saves goes
   through the same sanitizer, so a new Quill format needs a matching

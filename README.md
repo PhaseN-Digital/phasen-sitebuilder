@@ -76,7 +76,7 @@ use `scripts/check-commit.js`.
   that repo only). The app fetches
   `releases/latest/download/latest.json` from it at startup, at most once a
   day (`updateCheck` in settings.json), and if that version is newer shows a
-  dismissible "Version X is available" banner in the sidebar whose Download
+  dismissible "Version X is available" notice in the top bar whose Download
   button opens the installer for this platform in the browser (only https
   github.com URLs). Offline or any error, it stays silent and tries again
   next time. `SITEBUILDER_UPDATE_URL` overrides the URL in unpackaged runs
@@ -95,6 +95,16 @@ use `scripts/check-commit.js`.
   writes it into `lib/github-config.json` (gitignored). Without it the
   installers say "GitHub sign-in isn't configured". Local runs read the
   environment variable of the same name instead.
+- Licences (#182): the app is proprietary (`LICENSE`, `"license": "SEE
+  LICENSE IN LICENSE"`; the EULA wording in `LICENSE` is still a placeholder).
+  `npm run dist` first runs `scripts/licences.js` (`predist`), which writes
+  `THIRD-PARTY-NOTICES.txt` (gitignored) from the licence and NOTICE files of
+  the production dependencies electron-builder packages, and fails if any is
+  copyleft (GPL/LGPL/AGPL/MPL/SSPL…). `npm test` runs the same check from the
+  lockfile. sharp/libvips (LGPL) stays out via the `!node_modules/...`
+  exclusions in `build.files`, which the script reads; a justified exception
+  goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
+  next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
 
 ## Regression tests
 
@@ -121,9 +131,11 @@ checks the whole app end to end with no accounts, against fake sites in
   edit + rebuild, theme switch, image upload, Theme Builder (new theme from
   a site's design, contrast hint, preview on that site, right-click the hero
   heading to add a rule and again to select it, edit it and see the preview
-  change, Pick element + Enter, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
+  change, Pick element + Enter, an Advanced HTML header template refused with
+  a script, reset, then edited with a placeholder and seen in the preview and
+  the site's build, save, pick it in the Design tab), GitHub sign-in through the device flow and both ways of
   publishing that theme (push to PhaseN's private themes repo, PR to the
-  public one; the suite checks only the theme's three files arrived) (theme sources point at a fake
+  public one; the suite checks only the theme's own files arrived, header template included) (theme sources point at a fake
   GitHub API with a public and a token-protected repo, so nothing reaches
   GitHub); editable WordPress import from
   a fake WordPress (REST, global styles, hostile HTML) and of a fake
@@ -171,7 +183,9 @@ published always-pass test secret, so that one step needs internet access.
 - Sites folder, secrets and history (#136): `<Documents>/PhaseN Sites/` by
   default (Settings › Data › Change folder… moves the sites there, or points
   at a folder that already has some; the choice is in `userData/location.json`).
-  One sub-folder per site, named from its name when it was made, each its
+  One sub-folder per site, named from its name (renamed with the site, #177,
+  once the edit is committed and nothing else is running; if a file in it is
+  open on Windows it keeps its old name until the next commit), each its
   own git repo (`lib/site-repo.js`, through
   [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
   no git), plus `.phasen/` for the app's settings. On start, and with
@@ -267,7 +281,38 @@ published always-pass test secret, so that one step needs internet access.
   repo for its CI, so **keep the two copies in sync**: change both together
   (`cp lib/theme-validate.js ../phasen-sitebuilder-themes/scripts/theme-validate.js`,
   then a PR there; it inlines `LAYOUT_IDS`, so it needs no other file).
-- Settings (`app/settings.js`, sidebar › Settings, #134): app-wide accounts
+  A package may also carry HTML templates (#200): `header.html`,
+  `footer.html`, `section.html` (wraps every section) and `layout-<id>.html`
+  (the inside of `<main>` for that layout). `lib/templates.js` renders them:
+  `{{name}}` placeholders (escaped, except the app-built `{{brand}}`,
+  `{{menu}}`, `{{content}}`, `{{footer.links}}`) and `{{#if name}} … {{/if}}`,
+  nothing else; its `DEFAULTS` reproduce the built-in markup, so a theme
+  without templates builds exactly as before. `validateTemplate` in
+  `lib/theme-validate.js` is an allowlist (elements, attributes, URL schemes,
+  placeholders per template; no scripts, styles, event handlers,
+  javascript:/data: URLs, forms, external resources except https images
+  from `IMAGE_HOSTS`, iframes only for YouTube-nocookie/Vimeo), and
+  `{{menu}}`, `{{content}}` and `{{footer.links}}` are required. It runs on
+  install, on save in the Theme Builder and at every build; a build falls
+  back to the built-in templates if any fail (`console.warn` only for now, #225).
+  The Design tab and Theme Builder label themes that use templates.
+- App layout (#185, `app/index.html`, `app/app.js`): a top bar with the
+  site switcher (search, recent sites once there are more than six, New
+  website, Import a website…, a disabled Archive placeholder for #164),
+  Themes…, Settings, Documentation and the update notice; a WordPress-style
+  left menu for the open website (`SECTIONS` in `app/app.js`: one entry per
+  screen, so new screens like a media library or menu editor are one line;
+  collapsible to icons); and the main area with the preview beside it
+  (hideable). The Dashboard shows the live address, last publish time
+  (`publishedAt` in publish.json), unread messages and quick actions. SEO
+  holds each page's search and sharing settings, and Site settings gathers
+  the website's accounts and overrides (they also stay where they're used).
+  Menu state, recent sites, the last section per site and which Inbox
+  messages count as read are remembered per computer in the window's
+  `localStorage`, never in the site. Menus and the switcher work from the
+  keyboard (Tab, arrow keys, Escape, Enter in the search opens the first
+  match), mark the current item with `aria-current` and show a focus ring.
+- Settings (`app/settings.js`, top bar › Settings, #134): app-wide accounts
   (Cloudflare, Resend, GitHub), defaults for every website
   (form-message email, business name, message retention days and wording,
   analytics ID), theme sources, updates, data and about. A website can
@@ -277,7 +322,7 @@ published always-pass test secret, so that one step needs internet access.
   and use its own Cloudflare/Resend accounts (Publish tab; in
   `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
   never in `site.json`).
-- Documentation (#165): the sidebar's Documentation button and a link in
+- Documentation (#165): the top bar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
   in `app/app.js`, its only copy.
@@ -309,7 +354,7 @@ published always-pass test secret, so that one step needs internet access.
   `site.themeSource`, so builds and publishes never need the repo or the
   cache; "Update theme" downloads the source again and replaces the copy
   (colours and font stay as the user set them).
-- Theme Builder (`lib/theme-builder.js`, `app/theme-builder.js`, sidebar ›
+- Theme Builder (`lib/theme-builder.js`, `app/theme-builder.js`, top bar ›
   Themes…, #130): makes theme packages from controls (colours, font, corner
   radius, header/button/link style, section spacing, plus Advanced CSS) and
   keeps them in `userData/themes-local/<id>/`, apart from any website. The
@@ -335,6 +380,11 @@ published always-pass test secret, so that one step needs internet access.
   checked against built output by test.js); rules are found and added by
   `cssRule` in `lib/theme-builder.js`, which splits top-level rules
   properly (comments, strings, `@media` blocks).
+  "Advanced HTML" edits the theme's templates (#200): pick a template, edit it
+  in a monospace textarea with line numbers (no highlighting yet, #226),
+  insert placeholders from the palette, or "Reset to default template".
+  Only templates that differ from the defaults are saved, as `<name>.html`.
+  The sample preview has a page per main layout (home, standard, services, contact).
   Each valid theme in the list can be published to GitHub (#60):
 - GitHub sign-in and theme publishing (`lib/github.js`, Settings › Accounts,
   Themes… › "Push to repo…"/"Submit to public repo…", #60). Sign-in is the
@@ -343,8 +393,8 @@ published always-pass test secret, so that one step needs internet access.
   "Also allow private repositories" is ticked. The token is app-wide,
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
-  `lib/theme-validate.js` and sends only `theme.json`, `theme.css` and
-  `preview.png`, as one commit through the git data API. "Push to repo"
+  `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -682,6 +732,18 @@ When the address isn't a WordPress site, the site is first copied exactly
    redirect rules are left alone (logged, not overwritten). If this step fails,
    e.g. the token lacks the permission, publishing still succeeds and the log
    says why.
+8. If the site was last published at a different hostname (#139): detaches
+   the old hostname's Custom Domain from the Worker, removes the old apex's
+   `www` record and rule (only ones publishing made), and 301s the old
+   hostname to the new one with a proxied placeholder `AAAA 100::` record and
+   a Single Redirect rule (`ref` `sitebuilder_moved_<host>`), if its zone is
+   still on the same Cloudflare account and has no other records or redirect
+   rules there. A workers.dev address can't redirect, and a site with
+   `"redirectOldAddress": false` in its site.json skips it (no UI toggle yet).
+   Every part is logged and never stops the publish. The Turnstile widget's
+   allowed hostname follows the new one (step 2). Publishing back to a
+   hostname that redirects removes that redirect first. Redirects made this
+   way are listed in `publish.json` (`moved`).
 
 The Cloudflare token needs the "Edit Cloudflare Workers" template plus
 Account › Turnstile › Edit, Account › D1 › Edit, Zone › DNS › Edit and Zone › Single Redirect ›
@@ -717,8 +779,9 @@ when deleting a site, undoes publishing (`unpublish` in `lib/publish.js`),
 using what `sites/<id>/publish.json` recorded at publish time:
 
 1. Deletes the Worker and its Custom Domains.
-2. Deletes the `www` record and redirect rule, but only ones publishing made
-   (matched by the record's comment and the rule's `ref`).
+2. Deletes the `www` record and redirect rule, and any old-hostname
+   redirects (#139), but only ones publishing made (matched by the record's
+   comment and the rule's `ref`).
 3. Deletes the Turnstile widget, the form inbox's D1 database (with its
    messages; the confirmation says to export them first) and the site's
    Resend sending key.
@@ -739,7 +802,9 @@ site's local files until taking it offline has fully worked.
   against a stubbed API in test.js, and the Worker's storage only under
   `wrangler dev`'s local D1, not yet against real Cloudflare. A changed
   "Delete messages after" value reaches the Worker only on the next publish.
-  The Inbox loads every message at once.
+  The Inbox loads every message at once. Its unread count (#185) is per
+  computer: a message counts as read once the Inbox has been opened on
+  this computer after it arrived.
 - Rich text (#120): Quill has no header cells or line breaks inside a
   paragraph, so imported `<th>`s become ordinary cells and `<br>` starts a
   new paragraph; a quote with several paragraphs becomes several quotes, and
@@ -748,11 +813,12 @@ site's local files until taking it offline has fully worked.
   players without an http(s) referrer); they play on the published site.
   Vimeo's player was only checked to load in Electron, not played in a real
   browser.
-- Subdomains (#135): moving a published site from the apex to a subdomain
-  (or between hostnames) doesn't remove its old www redirect or old Custom
-  Domain until it's taken offline (#139). The hostname warnings and the
-  Custom Domain on a subdomain are only tested against a stubbed Cloudflare
-  API, not the real one.
+- Subdomains (#135): the hostname warnings and the Custom Domain on a
+  subdomain are only tested against a stubbed Cloudflare API, not the real
+  one. So is the hostname-change cleanup and old-address 301 (#139); whether
+  Cloudflare removes a Custom Domain's DNS record in time for the placeholder
+  record to be added is unverified (if not, the log says the redirect was
+  skipped). The redirect can only be turned off by editing site.json.
 - Taking a site offline (#71) leaves the domain registered with Resend and
   Resend's DNS records in the zone, since they may predate the app or be
   shared. Sites published before 0.5 didn't record their Resend key's id, so
@@ -770,13 +836,18 @@ site's local files until taking it offline has fully worked.
   placeholders.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
-  Windows/macOS keychains or with a synced folder (OneDrive/iCloud). Site
-  folders keep the name they were made with when a site is renamed. A lost
+  Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
+  a site's folder (#177) likewise only on Linux. A lost
   sending key is re-created without deleting the old one at Resend. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
+- HTML templates (#200): the editor has no syntax highlighting (#226); a
+  build that falls back to the built-in templates only logs why (#225); the
+  public themes repo's CI rejects template files until its vendored
+  validator is re-synced (#224). External images in templates are allowed
+  only from images.unsplash.com (`IMAGE_HOSTS`).
 - Theme sources: a public-repo theme with the same id as a built-in one is
   hidden (the built-in wins), so built-in themes can't be updated from the
   repo. Sources are only downloaded when first listed, on "Refresh" and on
