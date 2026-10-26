@@ -534,6 +534,11 @@ card. Blog post pages have `date` (YYYY-MM-DD), `author`, `featuredImage` and
 `excerpt` (else the start of the first text). A Blog page lists them newest
 first (undated last), ten to a page, at `<blog>/page/2/` and so on, all in the
 sitemap with their own canonical; with a Blog page, posts leave the menu.
+With a published hostname, a Blog page also gets an RSS 2.0 feed at
+`/feed.xml` (#183: the newest 20 posts with title, link, date and excerpt),
+linked from every page's head; there's no feed in the preview or an export
+without a domain, and an exact copy's own `feed.xml` is kept. Page files are
+`<slug>.html` or `<path>/index.html`, so no page can take the feed's file.
 `base.css` styles every layout, and each bundled theme restyles them with
 `.layout-<id>` rules; a theme without any still looks right. A theme package
 may add `"layouts": { "<id>": { "notes": "…" } }` to theme.json, and
