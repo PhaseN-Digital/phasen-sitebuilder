@@ -1359,6 +1359,33 @@ const site = {
     fs.rmSync(empty, { recursive: true });
   }
 
+  { // Diagnostic report (#86): no secret, declaredBy, secrets.enc content or inbox email, wherever they turn up.
+    const diag = require("./lib/diagnostics");
+    const S = { cf: "cfTokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", resend: "re_ResendKey123", gh: "gho_GithubTok", turnstile: "0x4TurnstileSecret",
+      sending: "re_SendingKey456", password: "hunter2-wp-pass", siteCf: "siteCfTok", siteResend: "siteResendKey", vault: "djEwSecretsEncBlobXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==",
+      name: "Jane Q Owner", email: "jane.owner@example.org", inbox: "visitor42@mail.example.com", defaultEmail: "forms@bobs-bikes.example" };
+    const settings = { defaults: { email: S.defaultEmail }, cloudflare: { token: S.cf, accountId: "acc1", accounts: [{ id: "acc1" }] }, resendKey: S.resend,
+      github: { token: S.gh, login: "janeq" }, wp: { password: S.password }, secretsEnc: S.vault, name: S.name };
+    const fixtureSite = { id: "11111111-2222-3333-4444-555555555555", name: "Bob", theme: "bold", pages: [{ id: "a" }, { id: "b", mirror: true }], forms: [{ id: "f" }], domain: "bobs.example",
+      importProvenance: { source: "https://bobs.example", appVersion: "0.9.0", declaredBy: { name: S.name, email: S.email }, verification: { status: "verified" } } };
+    const text = diag.report({
+      app: { version: "1.2.3", electron: "30", chrome: "124", node: "20", platform: "darwin", arch: "arm64", osRelease: "23.0", packaged: true, locale: "en-GB",
+        dataDir: "/Users/jane/Library/Application Support/PhaseN", portable: false, secretsProblem: `Couldn't decrypt ${S.vault}` },
+      settings,
+      sites: [{ site: fixtureSite, accounts: { cloudflare: { token: S.siteCf }, resendKey: S.siteResend }, state: { publishedAt: "2026-01-01T00:00:00Z", secret: S.turnstile, sendingKey: S.sending } }],
+      log: [`Deploying with ${S.cf}\n`, `New message from ${S.inbox} for ${S.defaultEmail}`, `Resend said: bad key ${S.sending} / ${S.siteResend}`, `Signed by ${S.name}`],
+      errors: [{ at: "2026-01-01T00:00:00Z", channel: "publish:run", message: `401 for ${S.siteCf} (${S.turnstile}) ${S.password} ${S.gh} ${S.email}` }],
+      home: "/Users/jane",
+    });
+    for (const [k, v] of Object.entries(S)) assert(!text.includes(v), `diagnostic report leaks ${k}`);
+    assert(!text.includes("/Users/jane"), "home folder replaced");
+    for (const want of ["App version: 1.2.3", "darwin 23.0 (arm64)", "Cloudflare connected: yes (1 accounts)", "GitHub connected: yes", fixtureSite.id,
+      "2 pages, 1 forms, 1 copied pages", "verification verified", "published: 2026-01-01T00:00:00Z", "publish:run: 401 for [redacted]", "New message from [email]"]) {
+      assert(text.includes(want), `diagnostic report has ${want}`);
+    }
+    assert(diag.report({}).includes("Sites (0)"), "empty inputs still make a report");
+  }
+
   const { execFileSync } = require("node:child_process");
   for (const dir of [".", "app", "lib", "runtime", "scripts", "test"]) {
     for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) execFileSync(process.execPath, ["--check", path.join(dir, f)]);

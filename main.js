@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, protocol, net, safeStorage, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, protocol, net, safeStorage, dialog, shell, Menu, clipboard } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { build, pruneAssets, stampHtml, themes, fonts, inboxDays } = require("./lib/build");
@@ -21,6 +22,7 @@ const repo = require("./lib/site-repo");
 const folder = require("./lib/sites-folder");
 const sync = require("./lib/sync");
 const markdown = require("./lib/markdown");
+const diagnostics = require("./lib/diagnostics");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -980,11 +982,34 @@ const handlers = {
   open: (url) => /^https:\/\//.test(url) && shell.openExternal(url),
 };
 
+// Help > Copy diagnostic report (#86, lib/diagnostics.js): recent errors and
+// publish/import log lines, kept in memory only, and settings via settingsFor().
+const recentErrors = [], recentLog = [];
+async function copyDiagnostics() {
+  await ready;
+  const ids = [...sites.keys()];
+  const report = diagnostics.report({
+    app: { version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node,
+      platform: process.platform, arch: process.arch, osRelease: os.release(), packaged: app.isPackaged, locale: app.getLocale(), dataDir: data(),
+      portable: keyring.portable, secretsProblem: secrets.problems()[0] || null },
+    settings: await loadSettings(),
+    sites: await Promise.all(ids.map((id) => settingsFor(id).catch(() => ({ site: { id } })))),
+    log: recentLog, errors: recentErrors, home: os.homedir(),
+  });
+  clipboard.writeText(report);
+  await dialog.showMessageBox(mainWindow, { type: "info", message: "Diagnostic report copied", detail: "Paste it into your message to support. It has no passwords, keys or email addresses in it." });
+}
+
+handlers["diagnostics:copy"] = () => copyDiagnostics(); // also Settings › Data & support
+
 for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, async (event, ...args) => {
     await ready;
     while (renaming) await renaming; // no await when idle, so nothing slips in between this and busy++
-    const result = await whileBusy(() => fn(...args, event));
+    const result = await whileBusy(() => fn(...args, event)).catch((e) => {
+      diagnostics.remember(recentErrors, { at: new Date().toISOString(), channel, message: e?.message || String(e) }, 20);
+      throw e;
+    });
     if (EDITS.has(channel)) {
       const id = channel === "sites:save" ? args[0]?.id : channel.startsWith("settings:") ? args.at(-1) : args[0];
       if (typeof id === "string" && sites.has(id)) autosave(id);
@@ -1070,7 +1095,17 @@ app.whenReady().then(() => {
     icon: path.join(__dirname, "build", "icon.png"), // Linux/dev window icon; packaged mac/win use build.icon
     webPreferences: { preload: path.join(__dirname, "preload.js") },
   });
-  win.removeMenu();
+  const help = { role: "help", submenu: [
+    { label: "Copy diagnostic report", click: () => copyDiagnostics().catch((e) => dialog.showErrorBox("Couldn't make the diagnostic report", e.message)) },
+    { label: "Open data folder", click: () => handlers["settings:open-data"]() },
+  ] };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === "darwin" ? [{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }, help] : [help]));
+  // Publish/import log lines for the diagnostic report (#86); every sender of them goes through this window.
+  const send = win.webContents.send.bind(win.webContents);
+  win.webContents.send = (channel, ...args) => {
+    if (channel === "publish-log" || channel === "import-log") diagnostics.remember(recentLog, String(args[0]), 200);
+    return send(channel, ...args);
+  };
   // Links clicked in the preview open in the user's real browser, never inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
