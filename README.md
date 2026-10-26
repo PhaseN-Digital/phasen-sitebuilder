@@ -399,7 +399,8 @@ published always-pass test secret, so that one step needs internet access.
   `cssRule` in `lib/theme-builder.js`, which splits top-level rules
   properly (comments, strings, `@media` blocks).
   "Advanced HTML" edits the theme's templates (#200): pick a template, edit it
-  in a monospace textarea with line numbers (no highlighting yet, #226),
+  in a monospace textarea with line numbers and syntax highlighting (#226: a
+  `<pre>` behind the transparent textarea, no editor library),
   insert placeholders from the palette, or "Reset to default template".
   Only templates that differ from the defaults are saved, as `<name>.html`.
   The sample preview has a page per main layout (home, standard, services, contact).
@@ -875,7 +876,7 @@ site's local files until taking it offline has fully worked.
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
-- HTML templates (#200): the editor has no syntax highlighting (#226); a
+- HTML templates (#200): a
   build that falls back to the built-in templates only logs why (#225); the
   public themes repo's CI rejects template files until its vendored
   validator is re-synced (#224). External images in templates are allowed
