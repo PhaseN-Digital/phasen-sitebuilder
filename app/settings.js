@@ -77,7 +77,11 @@ function syncSettings() {
     h("p", { className: "hint" }, "Sync your defaults for websites, theme sources and theme choices through a private GitHub repository, so every computer you use has them. Passwords, keys and tokens never sync. On a new computer, choose the same repository to bring them in."),
     repo && h("p", {}, "Synced with ", repoLink(repo), "."),
     st.conflict ? conflictChoice(st.busy, (keep) => run(() => call("sync:resolve", null, st.conflict, keep)))
-      : repo ? h("button", { className: "primary", disabled: st.busy, onclick: () => run(() => call("sync:now", null)) }, "Sync now")
+      : repo ? h("div", { className: "inline", style: "flex-wrap:wrap" },
+        h("button", { className: "primary", disabled: st.busy, onclick: () => run(() => call("sync:now", null)) }, "Sync now"),
+        h("button", { disabled: st.busy, onclick: () => {
+          if (confirm(`Stop syncing your settings with ${repo}? The repository stays on GitHub, and this computer keeps its settings.`)) run(() => call("sync:settings-stop"));
+        } }, "Stop syncing settings"))
       : repoPicker(`${settings.github.login}/sitebuilder-settings`, st.busy,
         (owner, name) => run(async () => call("sync:settings", await call("sync:create", owner, name))),
         (spec) => run(() => call("sync:settings", spec))),

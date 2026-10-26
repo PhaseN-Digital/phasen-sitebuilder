@@ -262,8 +262,9 @@ published always-pass test secret, so that one step needs internet access.
   Dashboard has "GitHub sync" (make a private repo, by default
   `<login>/site-<name>`, or use an existing one; then Sync now, Disconnect,
   and the "keep this computer's version or GitHub's" choice after a
-  conflict), and Settings › GitHub sync has the shared-settings repo and
-  "Restore a website". A pull reopens the site in the editor. Both ask to
+  conflict), and Settings › GitHub sync has the shared-settings repo (Sync now, and "Stop syncing
+  settings", which forgets the repo and `userData/settings-sync/` but leaves
+  the repository on GitHub, #298) and "Restore a website". A pull reopens the site in the editor. Both ask to
   sign in to GitHub again (with private repositories allowed) when the
   sign-in is missing or expired (#253). A restored site's id must be one the
   app uses (`ID_RE` in `lib/sites-folder.js`), or the restore is refused.
@@ -917,8 +918,7 @@ site's local files until taking it offline has fully worked.
   (`git http-backend`, the fakes' `gitSync()`), in test.js and through the UI
   in the regression suite, not yet against github.com itself. A signed-out
   GitHub sign-in is checked in the UI by marking it expired in the renderer,
-  not by a real revoked token. There's no way to stop syncing the shared
-  settings short of signing out of GitHub (#298).
+  not by a real revoked token.
 - Linux (#153): x64 only (no arm64 build), unsigned, and checked only
   headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
   `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used

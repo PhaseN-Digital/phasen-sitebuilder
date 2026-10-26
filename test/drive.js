@@ -380,6 +380,13 @@ app.on("browser-window-created", (_e, win) => {
       await clickButton("Sync now");
       check("github sync: shared settings up to date", await waitFor(() => run(`!syncState.settings.busy && document.querySelector(".sync-settings [role=status]").textContent === "Up to date with GitHub."`)));
       await shot("sync-settings-synced");
+      await run(`window.confirm = () => true; 0`);
+      await clickButton("Stop syncing settings"); // #298
+      check("github sync: stop syncing settings forgets the repo and its local copy", await waitFor(async () => (await run(`!syncState.settings.busy && !settings.github.settingsRepo && Boolean(document.querySelector(".sync-settings").textContent.includes("Create private repository"))`))
+        && !fs.existsSync(path.join(UD, "settings-sync")) && (await run(`Boolean(settings.github.login)`))), await run(`document.querySelector(".sync-settings").textContent`));
+      await clickButton("Use an existing repository");
+      check("github sync: the settings repo stayed on GitHub and can be used again", await waitFor(async () => (await run(`!syncState.settings.busy && settings.github.settingsRepo`)) === "octo/sitebuilder-settings"
+        && /^(Brought in the changes from GitHub|Up to date with GitHub)\.$/.test(await run(`document.querySelector(".sync-settings [role=status]").textContent`))), await run(`document.querySelector(".sync-settings").textContent`));
     }
 
     // ---------- an edit made just before leaving the editor is saved, not dropped (#143) ----------

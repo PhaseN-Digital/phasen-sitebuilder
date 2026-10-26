@@ -855,6 +855,10 @@ const handlers = {
   "sync:remote": (id) => sync.remote(siteDir(id), GITHUB_LOGIN), // "owner/repo" or null; no sign-in needed
   "sync:disconnect": (id) => sync.disconnect(siteDir(id)),
   "sync:settings": (spec) => syncSettings(null, typeof spec === "string" ? sync.parseSpec(spec) : null),
+  "sync:settings-stop": async () => { // #298: forgets the repo and the local copy; the repository on GitHub is left alone
+    await updateSettings((x) => { if (x.github) delete x.github.settingsRepo; });
+    await fs.rm(data("settings-sync"), { recursive: true, force: true });
+  },
   "settings:default": async (key, value) => {
     if (!config.FIELDS.includes(key)) throw new Error("Unknown setting.");
     return publicSettings(await updateSettings((s) => { s.defaults[key] = key === "inboxDays" ? Math.max(1, Math.round(Number(value)) || 90) : String(value).trim(); }));
