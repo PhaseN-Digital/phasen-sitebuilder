@@ -365,6 +365,15 @@ published always-pass test secret, so that one step needs internet access.
   and use its own Cloudflare/Resend accounts (Publish tab; in
   `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
   never in `site.json`).
+- Diagnostic report (#86): Help › Copy diagnostic report (also in
+  Settings › Data & support) copies a plain-text report from
+  `lib/diagnostics.js`: app/Electron/OS versions, the data folder, which
+  accounts are connected (yes/no), each site's id, theme, page/form counts,
+  import verification and publish date, the last 20 IPC errors and the last
+  200 publish/import log lines (in memory only). It lists allowed fields, never
+  whole objects, and scrubs free text of every secret value in the inputs,
+  `importProvenance.declaredBy`, email addresses, long token-like strings and
+  the home folder; test.js checks it. Help › Open data folder opens userData.
 - Documentation (#165): the top bar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
@@ -969,8 +978,13 @@ site's local files until taking it offline has fully worked.
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
   only on Linux. Moving a live site to another Cloudflare account means taking
-  it offline first. Backup/restore (#70), diagnostics (#86) are disabled
-  placeholders.
+  it offline first. Backup/restore (#70) is a disabled placeholder.
+- Diagnostic report (#86): checked headlessly on Linux only (menu entries,
+  Settings button, report contents); the native menu bar it adds on
+  Windows/Linux and the macOS app menu haven't been looked at on those OSes.
+  Recent errors are only those from IPC calls (not renderer or startup
+  errors), and both they and the log lines are kept in memory, so a restart
+  clears them.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
