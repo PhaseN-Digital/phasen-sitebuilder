@@ -595,6 +595,26 @@ const site = {
   }
   globalThis.fetch = realFetch;
 
+  // Pending old sending keys (#276): only ids are kept, failures stay pending, 404 and the live key are dropped.
+  {
+    const seen = [];
+    globalThis.fetch = async (url, { method }) => {
+      seen.push(`${method} ${url}`);
+      const status = url.endsWith("/fail") ? 500 : url.endsWith("/gone") ? 404 : 200;
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    const st = { sendingKeyId: "live", oldSendingKeyIds: ["ok", "fail", "gone", "live"] }, said = [];
+    await pub135.deleteOldSendingKeys("re_account", st, (l) => said.push(l));
+    assert.deepStrictEqual(seen, ["ok", "fail", "gone"].map((k) => `DELETE https://api.resend.com/api-keys/${k}`));
+    assert.deepStrictEqual(st.oldSendingKeyIds, ["fail"]);
+    assert(/tried again next time/.test(said.join("")));
+    globalThis.fetch = async () => ({ status: 200, ok: true, json: async () => ({}) });
+    await pub135.deleteOldSendingKeys("re_account", st, () => {});
+    assert(!("oldSendingKeyIds" in st), "emptied list is removed");
+    assert(!require("./lib/secrets").SECRET_KEYS.has("oldSendingKeyIds"));
+  }
+  globalThis.fetch = realFetch;
+
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
   const moveStub = (routes, writes) => async (url, { method, body }) => {
     url = url.replace("https://api.cloudflare.com/client/v4", "");

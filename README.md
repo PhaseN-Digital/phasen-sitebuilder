@@ -231,7 +231,8 @@ published always-pass test secret, so that one step needs internet access.
   a secret is next saved. A published site whose Turnstile secret was lost
   gets a new one (`rotate_secret`) on the next publish; a lost sending key is
   re-created, and the old one deleted at Resend once the new one is live
-  (#176; if that fails, publishing goes on and the log says so). Sites and settings from before #136 (`userData/sites`,
+  (#176; if that fails, or the deploy fails, publishing goes on and its id waits
+  in publish.json's `oldSendingKeyIds` for the next successful publish, #276). Sites and settings from before #136 (`userData/sites`,
   `userData/settings.json`, each secret sealed separately) are moved on the
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
@@ -1000,7 +1001,7 @@ site's local files until taking it offline has fully worked.
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
   a site's folder (#177) likewise only on Linux. Deleting a replaced
-  sending key at Resend (#176) is tested against a fake Resend only. Nothing
+  sending key at Resend (#176, #276) is tested against a fake Resend only. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
