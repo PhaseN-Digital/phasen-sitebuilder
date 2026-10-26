@@ -345,6 +345,9 @@ are not, so add them yourself.
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.
+  Leaving goes through `leaveSite()` (or another `openSite()`), which bumps
+  `opening` so an `openSite()` still awaiting stops instead of rendering a
+  stale or null site (#203, `leaveWhileOpening` in `test/drive.js`).
 - App layout (#185): a website's screens are entries in `SECTIONS` in
   `app/app.js` (the left menu is built from it); add new ones there. App-wide
   screens (Settings, Themes, Import, and any new one) are entered through

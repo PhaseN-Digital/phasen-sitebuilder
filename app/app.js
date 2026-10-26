@@ -196,12 +196,19 @@ siteSearch.addEventListener("keydown", (e) => {
 });
 arrowKeys(switcherPanel, "#recent-sites button, #site-list button");
 
+// Bumped by every openSite and leaveSite: an openSite that's been overtaken by another one, or by
+// leaving for Settings/Themes/Import, stops at its next await instead of rendering a stale site (#203).
+let opening = 0;
 async function openSite(id) {
+  const mine = ++opening, stale = () => mine !== opening;
   await flushSave();
+  if (stale()) return;
   toggleSwitcher(false);
   publishLog = "";
   overriding = {};
-  ({ site, url: publishedUrl, publishedAt, canUnpublish, accounts: siteAccounts } = await call("sites:get", id));
+  const got = await call("sites:get", id);
+  if (stale()) return;
+  ({ site, url: publishedUrl, publishedAt, canUnpublish, accounts: siteAccounts } = got);
   pageId = site.pages[0].id;
   formId = site.forms[0]?.id;
   const last = recall("sb-sections", {})[id];
@@ -209,15 +216,19 @@ async function openSite(id) {
   remember("sb-recent", [id, ...recall("sb-recent", []).filter((x) => x !== id)].slice(0, 10));
   unread = null;
   if (publishedUrl) countUnread(id);
-  paths = await call("sites:save", site);
+  const saved = await call("sites:save", site);
+  if (stale()) return;
+  paths = saved;
   THEMES = await call("themes"); // the build registers a theme source's font
   await loadSites();
+  if (stale()) return;
   renderEditor();
   askDeclaration(); // imported before #141 (app/wordpress.js)
 }
 
 // Leaving the current website for an app-wide screen (Settings, Themes, Import): button is its top bar entry.
 async function leaveSite(button) {
+  opening++; // an openSite still in progress mustn't render over the screen being opened (#203)
   await flushSave();
   site = null;
   toggleSwitcher(false);

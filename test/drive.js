@@ -72,7 +72,7 @@ app.on("browser-window-created", (_e, win) => {
       await run(`{ const d = document.querySelector("dialog.declaration"); d.querySelector("input[type=checkbox]").click(); d.querySelector('button[value="ok"]').click(); } 0`);
       return wasDisabled;
     };
-    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
+    const steps = SB_PHASE === "reinstall" ? { reinstall } : { updateBanner, createSite, richText, pageLayouts, pagePicker, wordpressImport, elementorEditable, contentDetection, anyEditable, markdownImport, exactCopy, legacyDeclaration, pendingEdits, leaveWhileOpening, themeBuilder, settingsPage, themePublish, githubSync, history, portableSecrets, closeWithPendingEdit };
     try {
       for (const [name, fn] of Object.entries(steps)) {
         try { await fn(); } catch (e) { check(`${name} finished without errors`, false, e.stack || String(e)); }
@@ -413,6 +413,43 @@ app.on("browser-window-created", (_e, win) => {
         await run(`openSite(${JSON.stringify(created)})`);
         check("pending edit: copied page edit written before the next site opens", read(path.join(S(mirror), "mirror", "index.html")).includes(">Welcome to Acme Widgets!</h1>"));
       }
+    }
+
+    // ---------- leaving a site while openSite() is still saving it (#203) ----------
+    async function leaveWhileOpening() {
+      const { created, wordpress } = result.sites;
+      // Holds the next site.json write of `id` (openSite's sites:save) until released; main.js calls json.write through the module.
+      const json = require("../lib/json-store"), write = json.write;
+      let release, hit = false;
+      const hold = (id) => {
+        const held = new Promise((r) => { release = r; });
+        hit = false;
+        json.write = (file, value) => {
+          if (value?.id !== id || hit) return write(file, value);
+          hit = true;
+          return held.then(() => write(file, value));
+        };
+      };
+      // Resolves when that openSite() call has returned or thrown, not when it's assigned `site`.
+      const openHeld = async (id) => {
+        hold(id);
+        await run(`window.sbOpen = "pending"; openSite(${JSON.stringify(id)}).then(() => { window.sbOpen = "done"; }, (e) => { window.sbOpen = String(e); }); 0`);
+        check(`open while leaving: sites:save held`, await waitFor(() => hit), hit);
+      };
+      const finished = async () => { release(); json.write = write; return waitFor(() => run(`window.sbOpen !== "pending" && window.sbOpen`)); };
+      try {
+        await run(`openSite(${JSON.stringify(wordpress)})`);
+        await openHeld(created);
+        await run(`openSettings()`);
+        const ended = await finished();
+        check("open while leaving: opening Settings mid-open doesn't throw or render the site (#203)", ended === "done" && await run(`site === null && Boolean(document.querySelector("#settings-page h1")) && !document.querySelector("#side-menu:not([hidden])")`), ended);
+
+        await openHeld(created);
+        await run(`openSite(${JSON.stringify(wordpress)})`);
+        await siteOpened(`site?.id === ${JSON.stringify(wordpress)}`);
+        const ended2 = await finished();
+        check("open while leaving: a later site switch wins over an earlier open (#203)", ended2 === "done" && await run(`site.id === ${JSON.stringify(wordpress)} && site.pages.every((p) => p.id in paths) && document.querySelector("#site-list .active")?.dataset.id === site.id`), ended2);
+      } finally { json.write = write; release?.(); }
     }
 
     // Last step: an edit, then the app quits straight away. regression.js checks it reached site.json (#143).
