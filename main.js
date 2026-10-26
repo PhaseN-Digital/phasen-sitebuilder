@@ -339,9 +339,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
-  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
-    oldKeyId = state.sendingKeyId;
+    // Deleted only once the new key is live (#176), and kept until then even if this deploy fails (#276).
+    if (state.sendingKeyId) state.oldSendingKeyIds = [...new Set([...(state.oldSendingKeyIds || []), state.sendingKeyId])];
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -369,7 +369,10 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
-  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
+  if (state.oldSendingKeyIds) {
+    await cf.deleteOldSendingKeys(resendKey, state, log);
+    await writeState(id, state);
+  }
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
