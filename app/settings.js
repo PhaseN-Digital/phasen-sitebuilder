@@ -8,6 +8,10 @@ async function openSettings() {
   settings = await call("settings:get");
   $("#main").replaceChildren(h("div", { className: "import-wrap" }, h("div", { className: "import settings-page", id: "settings-page" })));
   renderSettings();
+  // Does GitHub still accept the sign-in (#253)? Re-render only if that changed.
+  if (settings.github && !settings.github.expired) call("github:check").then((s) => {
+    if (s.github?.expired && $("#settings-page")) { settings = s; renderSettings(); }
+  }, () => {});
 }
 $("#open-settings").addEventListener("click", openSettings);
 
@@ -16,7 +20,14 @@ $("#open-settings").addEventListener("click", openSettings);
 let ghFlow = null, ghError = "";
 function githubAccount() {
   const g = settings.github;
-  if (g) return [
+  if (g?.expired && !ghFlow) return [
+    h("p", { className: "error", role: "alert" }, `You've been signed out of GitHub (${g.login}): the sign-in expired or was revoked on GitHub. Sign in again to publish themes and read private theme sources.`),
+    h("div", { className: "inline" },
+      h("button", { className: "primary", onclick: () => githubSignIn(g.privateRepos) }, "Sign in to GitHub again"),
+      h("button", { onclick: () => accountCall(null, "settings:disconnect", "github") }, "Sign out")),
+    h("p", { className: "error" }, ghError),
+  ];
+  if (g && !ghFlow) return [
     h("p", {}, `Signed in as ${g.login}${g.privateRepos ? ", including private repositories" : ""}.`),
     h("p", { className: "hint" }, "Used to publish themes from Themes… and to read private theme sources. To revoke the app's access completely, also remove it in GitHub's ", link("Applications settings", "https://github.com/settings/applications"), "."),
     h("button", { onclick: () => accountCall(null, "settings:disconnect", "github") }, "Sign out"),
@@ -87,7 +98,7 @@ function renderSettings() {
     h("h2", { className: "section-title" }, "Accounts"),
     step("Cloudflare (hosting)", Boolean(settings.cloudflare), cloudflareAccount()),
     step("Resend (sends your form emails)", settings.resend, resendAccount()),
-    step("GitHub (publishing themes)", Boolean(settings.github), githubAccount()),
+    step("GitHub (publishing themes)", Boolean(settings.github && !settings.github.expired), githubAccount()),
 
     h("h2", { className: "section-title" }, "Defaults for websites"),
     h("p", { className: "hint" }, "Every website uses these unless you override them for that website. Changing one here changes it for every website that hasn't."),

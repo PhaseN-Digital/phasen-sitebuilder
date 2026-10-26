@@ -352,7 +352,8 @@ app.on("browser-window-created", (_e, win) => {
       await shot("history");
       // Restore the version before the edit.
       await run(`window.confirm = () => true; [...document.querySelectorAll("details.version")][1].querySelector("button").click(); 0`);
-      const restored = await waitFor(() => run(`site?.pages[0].sections[0].heading !== "Headline from history" && document.querySelector("details.version summary b")?.textContent`));
+      // Done once the re-rendered list shows the new version: until then the old list (topped by "Edited page Home") is still on screen (#215).
+      const restored = await waitFor(() => run(`site?.pages[0].sections[0].heading !== "Headline from history" && /^Restored the version from/.test(document.querySelector("details.version summary b")?.textContent) && document.querySelector("details.version summary b").textContent`));
       check("history: restore adds a version and reloads the editor", /^Restored the version from/.test(restored || "") && JSON.parse(read(path.join(dir, "site.json"))).pages[0].sections[0].heading === "Edited headline", restored);
       check("history: restored content previewed", await waitFor(() => inFrame(`document.querySelector("h1")?.textContent === "Edited headline"`)));
       await shot("history-restored");

@@ -109,6 +109,23 @@ const site = {
   assert.strictEqual(read("public/robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://bobsbikes.co.uk/sitemap.xml\n");
   await build(seoSite, siteDir, out, { preview: true, hostname: "bobsbikes.co.uk" });
   assert(!read("public/index.html").includes("canonical") && !read("public/index.html").includes("og:url") && read("public/index.html").includes('content="/assets/logo.webp"') && !fs.existsSync(path.join(out, "public/sitemap.xml")), "preview: no canonical/sitemap");
+  // Business details (#80): above the footer on every page, a Contact details section, LocalBusiness JSON-LD on the home page only.
+  const bizSite = { ...site, business: { street: "Unit 2\n1 <High> St", town: "Leeds", postcode: "LS1 1AA", country: "", phone: "0113 496 0000", email: "shop@bobs.example",
+    hours: "Mon-Fri: 9-5\nSat: 10-4", social: "https://www.instagram.com/bobs http://facebook.com/insecure javascript:alert(1) https://bsky.app/profile/bobs </script>" },
+  pages: [site.pages[0], { ...site.pages[1], sections: [...site.pages[1].sections, { type: "contact", heading: "Find us", text: "" }] }, site.pages[2]] };
+  await build(bizSite, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
+  const bizHome = read("public/index.html"), bizContact = read("public/contact-us.html");
+  const ld = JSON.parse(/<script type="application\/ld\+json">(.*?)<\/script>/.exec(bizHome)[1]);
+  assert.deepStrictEqual(ld, { "@context": "https://schema.org", "@type": "LocalBusiness", name: "Bob's <Bikes>", url: "https://bobsbikes.co.uk/", telephone: "0113 496 0000", email: "shop@bobs.example",
+    address: { "@type": "PostalAddress", streetAddress: "Unit 2, 1 <High> St", addressLocality: "Leeds", postalCode: "LS1 1AA" }, sameAs: ["https://www.instagram.com/bobs", "https://bsky.app/profile/bobs"] }, "LocalBusiness data, https social links only");
+  assert(!/<script type="application\/ld\+json">([^]*?)<\/script>/.exec(bizHome)[1].includes("<"), "no raw < in JSON-LD");
+  assert(!bizContact.includes("ld+json") && !read("public/privacy.html").includes("ld+json"), "JSON-LD on the home page only");
+  for (const f of ["public/index.html", "public/contact-us.html", "public/privacy.html", "public/404.html"]) assert(read(f).includes('<div class="site-business">') && read(f).includes("Unit 2<br>1 &lt;High&gt; St<br>Leeds<br>LS1 1AA"), `business details on ${f}`);
+  assert(bizHome.includes('<a href="tel:01134960000">0113 496 0000</a>') && bizHome.includes('<a href="mailto:shop@bobs.example">') && bizHome.includes("Mon-Fri: 9-5<br>Sat: 10-4")
+    && bizHome.includes('<a href="https://www.instagram.com/bobs">Instagram</a>') && bizHome.includes(">bsky.app<") === false && bizHome.includes(">Bluesky<") && !bizHome.includes("insecure") && !bizHome.includes("javascript:"), "footer details, safe links");
+  assert(bizContact.includes('<section class="contact-details"><div class="wrap"><h2>Find us</h2><div class="business-grid"><div><h3>Address</h3>') && bizContact.includes("https://www.google.com/maps/search/?api=1&amp;query=Unit%202%2C%201%20%3CHigh%3E%20St%2C%20Leeds%2C%20LS1%201AA"), "contact section with map link");
+  await build({ ...bizSite, business: { email: "not an email", hours: " " } }, siteDir, out, {});
+  assert(!read("public/index.html").includes("site-business") && !read("public/index.html").includes("ld+json"), "nothing valid, nothing shown");
   // Exact copies: sitemap from the copied pages (skipping noindex ones) unless they brought their own.
   const copyDir = fs.mkdtempSync(path.join(os.tmpdir(), "site-"));
   fs.mkdirSync(path.join(copyDir, "mirror/caf\u00e9"), { recursive: true });
@@ -640,7 +657,9 @@ const site = {
     assert(pub.themes.retro.preview.startsWith("data:image/png;base64,") && pub.themes.retro.label === "Retro");
     assert(pub.themes.broken.errors.join().includes("evil.js") && !pub.themes.broken.label);
     await assert.rejects(ts.fetchSource(fakeGh.privateSpec, opts), /private repository, add an access token/);
-    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /token has Contents/);
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { ...opts, token: "wrong" }), /didn't accept the access token.*sign out and sign in again/);
+    // A rejected token (e.g. an expired sign-in) doesn't block a public repo (#251).
+    assert.deepStrictEqual(Object.keys((await ts.fetchSource(ts.PUBLIC_SOURCE, { ...opts, token: "expired" })).themes).sort(), ["broken", "clean", "retro"]);
     await assert.rejects(ts.fetchSource("limited/repo", opts), /download limit/);
     await assert.rejects(ts.fetchSource(`${ts.PUBLIC_SOURCE}/nope`, opts), /no theme folders in nope\//);
     fakeGh.requests.length = 0;
@@ -698,7 +717,7 @@ const site = {
     assert(started.css.includes("flex-direction: column") && started.font === "serif" && started.colors.primary === "#ffee00" && started.radius === 2 && !started.css.includes("--radius"), "from a website: its CSS, font and colours");
     assert.strictEqual((await tb.fromSite({ ...site, mirror: {} }, siteDir, themes)).css, "", "exact copies: colours and font only");
     const sample = tb.sampleSite({});
-    assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
+    assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["contact", "form", "gallery", "hero", "richtext", "text"]);
 
     // Right-click menu (#156): its selector classes are exactly the ones the built markup uses.
     const frameLib = require("./app/theme-builder-frame");
@@ -745,6 +764,7 @@ const site = {
       assert.strictEqual(token, fake.token);
       assert.strictEqual((await gh.user(fake.url, token)).login, "octo");
       assert(await gh.canPush(fake.url, token, gh.PRIVATE_DEFAULT) && !(await gh.canPush(fake.url, "nope", gh.PRIVATE_DEFAULT)));
+      await assert.rejects(gh.user(fake.url, "revoked"), (e) => e.status === 401 && e.message === gh.SIGNED_OUT, "a rejected sign-in says to sign in again (#253)");
 
       fs.mkdirSync(path.join(lroot, "bad-one"));
       fs.cpSync(path.join(lroot, "sunny-days"), path.join(lroot, "bad-one"), { recursive: true });
@@ -1154,7 +1174,7 @@ const site = {
       await sync.connect(A, host.url, spec);
       assert.strictEqual(await sync.remote(A, host.url), spec);
       assert.strictEqual(await sync.remote(A, "https://elsewhere.example"), null, "a remote on another host isn't trusted with the token");
-      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), /didn't accept your sign-in/);
+      await assert.rejects(sync.sync(A, { ...o, token: "wrong" }), (e) => e.status === 401 && e.message === require("./lib/github").SIGNED_OUT, "a rejected sign-in token says signed out (#253)");
       assert.deepStrictEqual(await sync.sync(A, o), { status: "pushed" });
       assert.deepStrictEqual(await sync.sync(A, o), { status: "up to date" });
       assert(!/secrets/.test(host.git(spec, "ls-tree", "-r", "--name-only", "main")), "secrets never pushed");
