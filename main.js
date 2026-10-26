@@ -34,6 +34,15 @@ protocol.registerSchemesAsPrivileged([{ scheme: "preview", privileges: { standar
 
 const ID_RE = /^[a-f0-9-]{36}$/;
 const data = (...p) => path.join(app.getPath("userData"), ...p);
+const LICENCE_FILES = {
+  licence: () => [path.join(app.getAppPath(), "LICENSE")],
+  notices: () => [path.join(app.getAppPath(), "THIRD-PARTY-NOTICES.txt")],
+  electron: () => ["LICENSE.electron.txt", "LICENSE"].map((f) => path.join(path.dirname(process.execPath), f)),
+  chromium: () => [path.join(path.dirname(process.execPath), "LICENSES.chromium.html")],
+};
+const licenceFile = async (id) => {
+  for (const f of LICENCE_FILES[id]()) if (await fs.stat(f).then((s) => s.isFile(), () => false)) return f;
+};
 // Sites live in the user's sites folder (#136, lib/sites-folder.js), found by
 // scanning it: id -> folder. userData keeps only machine-local things (location.json,
 // preview/publish builds, caches).
@@ -839,6 +848,20 @@ const handlers = {
     return publicSettings(await updateSettings((s) => { s.autoUpdate = Boolean(on); }));
   },
   "settings:open-data": () => shell.openPath(data()),
+  // Settings › About (#233): only these fixed files, never a renderer path. In
+  // `npm start` runs Electron's licence is node_modules/electron/dist/LICENSE and
+  // THIRD-PARTY-NOTICES.txt exists only after scripts/licences.js; missing ones aren't listed.
+  "about:licences": async () => {
+    const found = [];
+    for (const id of Object.keys(LICENCE_FILES)) if (await licenceFile(id)) found.push(id);
+    return found;
+  },
+  "about:open-licence": async (id) => {
+    const file = Object.hasOwn(LICENCE_FILES, id) && await licenceFile(id);
+    if (!file) throw new Error("That file isn't included in this copy of the app.");
+    const err = await shell.openPath(file);
+    if (err) throw new Error(err);
+  },
   zones: async (siteId) => {
     const { cloudflare } = await settingsFor(siteId);
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];
