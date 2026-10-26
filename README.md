@@ -105,6 +105,11 @@ use `scripts/check-commit.js`.
   exclusions in `build.files`, which the script reads; a justified exception
   goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
   next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
+  Settings > About links to all four (#233) through main.js's
+  `about:open-licence`, which opens only those fixed files (never a path from
+  the renderer) and lists only the ones that exist: in `npm start` runs the
+  notices need `node scripts/licences.js` first, and Electron's licence is
+  `node_modules/electron/dist/LICENSE`.
 
 ## Regression tests
 
