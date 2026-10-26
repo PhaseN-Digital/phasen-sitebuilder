@@ -20,6 +20,7 @@ const secrets = require("./lib/secrets");
 const repo = require("./lib/site-repo");
 const folder = require("./lib/sites-folder");
 const sync = require("./lib/sync");
+const markdown = require("./lib/markdown");
 
 // The regression suite points this at a fake latest.json; never honoured in a packaged build.
 const UPDATE_URL = (!app.isPackaged && process.env.SITEBUILDER_UPDATE_URL) || update.LATEST_URL;
@@ -34,6 +35,15 @@ protocol.registerSchemesAsPrivileged([{ scheme: "preview", privileges: { standar
 
 const ID_RE = /^[a-f0-9-]{36}$/;
 const data = (...p) => path.join(app.getPath("userData"), ...p);
+const LICENCE_FILES = {
+  licence: () => [path.join(app.getAppPath(), "LICENSE")],
+  notices: () => [path.join(app.getAppPath(), "THIRD-PARTY-NOTICES.txt")],
+  electron: () => ["LICENSE.electron.txt", "LICENSE"].map((f) => path.join(path.dirname(process.execPath), f)),
+  chromium: () => [path.join(path.dirname(process.execPath), "LICENSES.chromium.html")],
+};
+const licenceFile = async (id) => {
+  for (const f of LICENCE_FILES[id]()) if (await fs.stat(f).then((s) => s.isFile(), () => false)) return f;
+};
 // Sites live in the user's sites folder (#136, lib/sites-folder.js), found by
 // scanning it: id -> folder. userData keeps only machine-local things (location.json,
 // preview/publish builds, caches).
@@ -260,17 +270,19 @@ function requireProvenance(site) {
 // "Decide for me" falling back to an exact copy keeps that verification (#145).
 // ponytail: in memory only; a restart between fetch and copy loses it (it's one click apart).
 const wpAuthenticatedOrigins = new Set();
+const markdownDirs = new Map(); // md:open token -> folder (#255)
 function requireDeclaration(declaration) {
   if (declaration?.confirmed !== true) throw new Error("Confirm that you own this website, or have the owner's written permission to copy and republish it, before importing it.");
 }
-async function importProvenance(url, declaration, { wpAuthenticated = false, imported = true } = {}) {
+// `local` names a source that isn't a website (Markdown files, #255): no address to verify against.
+async function importProvenance(url, declaration, { wpAuthenticated = false, imported = true, local = "" } = {}) {
   requireDeclaration(declaration);
   const raw = String(url || "").trim();
-  let source;
-  try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
+  let source = local;
+  if (!local) try { source = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { throw new Error("Enter the address of the website it was copied from."); }
   if (wpAuthenticated) wpAuthenticatedOrigins.add(source);
   const settings = await loadSettings();
-  const zones = settings.cloudflare ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
+  const zones = settings.cloudflare && !local ? await cf.listZones(unseal(settings.cloudflare.token), settings.cloudflare.accountId).catch(() => []) : [];
   const now = new Date().toISOString();
   return {
     source,
@@ -279,7 +291,7 @@ async function importProvenance(url, declaration, { wpAuthenticated = false, imp
     appVersion: app.getVersion(),
     declaredBy: { name: settings.name || "", email: settings.defaults?.email || "" }, // the app default form email (#134)
     statement: String(declaration.statement || "").slice(0, 500),
-    verification: await verifyOwnership(source, { zones, wpAuthenticated: wpAuthenticatedOrigins.has(source), token: String(declaration.token || "") }),
+    verification: local ? { status: "unverified", checkedAt: now } : await verifyOwnership(source, { zones, wpAuthenticated: wpAuthenticatedOrigins.has(source), token: String(declaration.token || "") }),
   };
 }
 
@@ -327,7 +339,9 @@ async function publish(id, log) {
   await writeState(id, state);
 
   const domainId = site.domain ? await cf.ensureResendDomain(token, site.domain, resendKey, log) : null;
+  let oldKeyId; // deleted only once the new key is live (#176)
   if (!state.sendingKey || state.sendingKeyDomain !== domainId) {
+    oldKeyId = state.sendingKeyId;
     const key = await cf.createSendingKey(resendKey, site.name, domainId);
     state.sendingKey = seal(key.token);
     state.sendingKeyId = key.id;
@@ -355,6 +369,7 @@ async function publish(id, log) {
   const secrets = { TURNSTILE_SECRET_KEY: turnstile.secret, RESEND_API_KEY: unseal(state.sendingKey) };
   if (!validSecrets(secrets)) throw new Error("The website's form keys aren't valid, so it wasn't published (its forms couldn't send email). Reconnect Resend and Cloudflare in Settings, then publish again.");
   await cf.deployWorker(publishDir(id), { token, accountId }, secrets, log);
+  if (oldKeyId && oldKeyId !== state.sendingKeyId) await cf.deleteSendingKey(resendKey, oldKeyId, log);
 
   // The site is already live by now, so nothing after this blocks it. A changed
   // hostname (#139) leaves the old one redirecting here unless the site opts out.
@@ -421,7 +436,14 @@ const findSource = async (spec) => {
   return source;
 };
 // A source without its own token uses the GitHub sign-in (#60), if any.
-const fetchSource = async (source) => themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: unseal(source.token) || unseal((await loadSettings()).github?.token), api: GITHUB_API });
+// A source without its own token uses the sign-in's (unless it's known to be
+// expired); GitHub rejecting it marks the sign-in expired, as withGithub does (#258).
+const fetchSource = async (source) => {
+  const own = unseal(source.token), g = own ? null : (await loadSettings()).github;
+  const signIn = g && !g.expired ? unseal(g.token) : null;
+  const rejected = signIn ? () => signedOut(signIn)({ status: 401 }).catch(() => {}) : undefined;
+  return themeSources.fetchSource(source.spec, { cacheRoot: themeCache(), token: own || signIn, api: GITHUB_API, rejected });
+};
 // Downloads only sources that have never been downloaded; "Refresh" and "Update theme" fetch again.
 async function listSources() {
   const local = { spec: LOCAL, local: true, themes: await builder.listLocal(localThemes()) };
@@ -839,6 +861,20 @@ const handlers = {
     return publicSettings(await updateSettings((s) => { s.autoUpdate = Boolean(on); }));
   },
   "settings:open-data": () => shell.openPath(data()),
+  // Settings › About (#233): only these fixed files, never a renderer path. In
+  // `npm start` runs Electron's licence is node_modules/electron/dist/LICENSE and
+  // THIRD-PARTY-NOTICES.txt exists only after scripts/licences.js; missing ones aren't listed.
+  "about:licences": async () => {
+    const found = [];
+    for (const id of Object.keys(LICENCE_FILES)) if (await licenceFile(id)) found.push(id);
+    return found;
+  },
+  "about:open-licence": async (id) => {
+    const file = Object.hasOwn(LICENCE_FILES, id) && await licenceFile(id);
+    if (!file) throw new Error("That file isn't included in this copy of the app.");
+    const err = await shell.openPath(file);
+    if (err) throw new Error(err);
+  },
   zones: async (siteId) => {
     const { cloudflare } = await settingsFor(siteId);
     return cloudflare ? cf.listZones(unseal(cloudflare.token), cloudflare.accountId) : [];
@@ -876,6 +912,25 @@ const handlers = {
   "mirror:discard": async (id) => {
     if ((await readSite(id))?.mirror) throw new Error("This website is still an exact copy.");
     for (const dir of ["mirror", "mirror-original"]) await fs.rm(path.join(siteDir(id), dir), { recursive: true, force: true });
+  },
+  // Markdown import (#255): read and rendered here (lib/markdown.js); app/markdown.js sanitizes the HTML and saves the
+  // pages. Each pick gets a token, so md:image only ever reads images from inside a folder the user chose.
+  "md:open": async (kind, declaration) => {
+    requireDeclaration(declaration);
+    const pickFolder = kind === "folder";
+    const { canceled, filePaths } = await dialog.showOpenDialog(pickFolder
+      ? { title: "Choose a folder of Markdown files", properties: ["openDirectory"] }
+      : { title: "Choose Markdown files", properties: ["openFile", "multiSelections"], filters: [{ name: "Markdown", extensions: ["md", "markdown"] }] });
+    if (canceled || !filePaths.length) return null;
+    const dir = pickFolder ? filePaths[0] : path.dirname(filePaths[0]);
+    const pages = await markdown.readMarkdown(dir, pickFolder ? null : filePaths);
+    const token = hex(8);
+    markdownDirs.set(token, dir);
+    return { token, name: path.basename(dir), pages, provenance: await importProvenance(null, declaration, { local: "Markdown files" }) };
+  },
+  "md:image": (token, rel) => {
+    if (!markdownDirs.has(token)) throw new Error("Choose the Markdown files again.");
+    return markdown.readImage(markdownDirs.get(token), rel);
   },
   // Exact-copy import: see lib/mirror.js.
   "wp:mirror": async (url, declaration, event) => {

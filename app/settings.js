@@ -70,6 +70,9 @@ const LICENCES = [
   ["Wrangler", "MIT or Apache-2.0", "https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler"],
 ];
 
+// Files shipped with the app (#233), opened by main.js's about:open-licence.
+const LICENCE_LABELS = { licence: "Licence", notices: "Third-party notices", electron: "Electron licence", chromium: "Chromium licences" };
+
 function renderSettings() {
   const page = $("#settings-page");
   const scroll = page.parentElement.scrollTop;
@@ -89,6 +92,7 @@ function renderSettings() {
     } catch (e) { updateStatus.textContent = errorText(e); }
     checkNow.disabled = false;
   } }, "Check now");
+  const licenceFiles = h("p", { className: "hint" });
   const soon = (label) => h("button", { disabled: true }, label);
 
   page.replaceChildren(
@@ -132,7 +136,10 @@ function renderSettings() {
     h("p", {}, `PhaseN Site Builder ${settings.version}, by `, link("PhaseN Digital", "https://phasen.digital"), ". ", link("Documentation", DOCS_URL)),
     h("p", { className: "hint" }, "Built with open-source software, including:"),
     h("ul", { className: "licences" }, LICENCES.map(([name, licence, url]) => h("li", {}, `${name} (${licence}) `, link("licence", url)))),
+    licenceFiles,
   );
+  call("about:licences").then((ids) => licenceFiles.replaceChildren(...ids.flatMap((id, i) => [i ? " · " : "",
+    h("a", { href: "#", "data-licence": id, onclick: (e) => { e.preventDefault(); call("about:open-licence", id).catch((err) => alert(errorText(err))); } }, LICENCE_LABELS[id])])));
   page.parentElement.scrollTop = scroll;
 }
 

@@ -61,7 +61,11 @@ use `scripts/check-commit.js`.
   only merges if `main` is still exactly what the regression run tested
   against (#97); if anything landed on `main` meanwhile it comments, labels
   the PR `regate` and leaves it to the next run (a push, the daily schedule,
-  or `gh workflow run release-please.yml`), which re-gates it. This all
+  or `gh workflow run release-please.yml`), which re-gates it.
+  release-please doesn't rebuild its PR when only non-releasable commits
+  (chore/docs/test) landed, so before gating, a head that's behind the
+  run's main gets that main merged into it (#113) and regression tests the
+  merge; if that conflicts the PR stays labelled `regate`. This all
   happens in one run because release-please's PR updates and a
   `GITHUB_TOKEN` merge don't trigger other workflow runs.
 - Public downloads and update check (#37): once `build` succeeds for a
@@ -105,6 +109,11 @@ use `scripts/check-commit.js`.
   exclusions in `build.files`, which the script reads; a justified exception
   goes in its `ALLOW`. Both files ship in the app folder (`resources/app/`),
   next to Electron's own `LICENSE.electron.txt` and `LICENSES.chromium.html`.
+  Settings > About links to all four (#233) through main.js's
+  `about:open-licence`, which opens only those fixed files (never a path from
+  the renderer) and lists only the ones that exist: in `npm start` runs the
+  notices need `node scripts/licences.js` first, and Electron's licence is
+  `node_modules/electron/dist/LICENSE`.
 
 ## Regression tests
 
@@ -145,7 +154,10 @@ checks the whole app end to end with no accounts, against fake sites in
   one page's block re-chosen in the frame, one page left out, built pages
   checked for content and no copied chrome); the ownership declaration
   (modal, main-process refusal, provenance recorded, verification file, a
-  pre-#141 import asked to declare before publishing); exact copy of a fake
+  pre-#141 import asked to declare before publishing); Markdown import of
+  `test/fixtures/markdown` (new site, titles, order, front matter address,
+  links between files, local image, hostile HTML, editor round trip, then one
+  file added to that site from the Pages tab); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -216,7 +228,8 @@ published always-pass test secret, so that one step needs internet access.
   startup, and is moved aside (`.unreadable-<time>`), never overwritten, when
   a secret is next saved. A published site whose Turnstile secret was lost
   gets a new one (`rotate_secret`) on the next publish; a lost sending key is
-  re-created. Sites and settings from before #136 (`userData/sites`,
+  re-created, and the old one deleted at Resend once the new one is live
+  (#176; if that fails, publishing goes on and the log says so). Sites and settings from before #136 (`userData/sites`,
   `userData/settings.json`, each secret sealed separately) are moved on the
   first start of this version: copied, verified (file hashes), secrets
   re-encrypted, committed, renamed into place, and only then removed, so an
@@ -413,7 +426,9 @@ published always-pass test secret, so that one step needs internet access.
   in `settings.github` (the token itself in `.phasen/secrets.enc`, #136), and also used for theme sources that
   have no token of their own. Publishing validates the theme with
   `lib/theme-validate.js` and sends only the files it allows (`theme.json`,
-  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. "Push to repo"
+  `theme.css`, `preview.png` and HTML templates), as one commit through the git data API. That commit
+  also deletes theme files the theme no longer has (an old `preview.png`)
+  from its own folder, never its subfolders or any other path (#159). "Push to repo"
   commits to `themes/<id>/` (or `owner/repo/folder@branch`) of any repo the
   user can write to, defaulting to the last one used, else
   PhaseN-Digital/phasen-themes-private when the user can write to it.
@@ -429,7 +444,10 @@ published always-pass test secret, so that one step needs internet access.
   the API or git host marks `settings.github.expired`. Settings then says
   "You've been signed out of GitHub" with "Sign in to GitHub again", and
   publishing and sync refuse with the same message until the user signs
-  in again.
+  in again. A theme source without its own token uses the sign-in's; when
+  GitHub rejects it, `fetchSource` in main.js marks it expired the same way
+  (#258), downloads a public source without it (#251), and stops sending it
+  until the user signs in again.
 
 ## Privacy page
 
@@ -521,6 +539,20 @@ robots.txt/sitemap.xml (#115). Without a hostname they stay root-relative.
 The import log warns that search engines are blocked only when robots.txt
 disallows `/` for `*`, Googlebot or Bingbot; agents blocked in their own
 groups (GPTBot, CCBot) are reported neutrally as kept AI crawler blocks (#167).
+
+## Business details and local SEO
+
+Site settings › Business details (#80, `site.business`: street, town,
+postcode, country, phone, email, opening hours, social links) feed three
+things in `lib/build.js` (`businessOf`): a `.site-business` block just above
+the theme's footer on every built page (outside the footer template, so it
+shows with every theme), the "Contact details" section type (the same details
+plus a "View on a map" link to Google Maps; no embedded map, so nothing loads
+from Google), and LocalBusiness JSON-LD in the home page's `<head>`
+(`businessJsonLd`, only with an address, phone or email). Social links must be
+https, the email must look like one, and `tel:` keeps only digits and `+`.
+Nothing shows when everything is blank. Exact-copy pages keep their own
+footer and don't get the block.
 
 ## Importing a website
 
@@ -731,6 +763,41 @@ When the address isn't a WordPress site, the site is first copied exactly
   mapped to the closest built-in theme as for WordPress. The copied files are
   then deleted (`mirror:discard`).
 
+### Markdown import (#255)
+
+"Import a folder of Markdown files…" on the Import screen makes a new website
+from a folder, named after it, with one page per `.md`/`.markdown` file in
+it and its subfolders (hidden folders and `node_modules` skipped, up to 500
+files of 2 MB). "Import Markdown…" on the Pages tab adds the chosen files to
+the open website. Both ask for the ownership declaration first (without the
+website verification, there's no address to check), and main.js's `md:open`
+refuses without one.
+
+- Reading and rendering is `lib/markdown.js` (main process, `marked`, MIT):
+  code blocks become a paragraph with line breaks and h5/h6 become h4, since
+  rich text has neither. Raw HTML in the Markdown passes through marked and
+  is then removed or cleaned by the allowlist sanitizer
+  (`cleanFragment` in `app/wordpress.js`), like every editable import, in
+  `app/markdown.js`.
+- Title: front matter `title:`, else the first `# heading`, else the file
+  name. Front matter `path:` (or `slug:`, as `/<slug>/`) sets
+  `page.path`, kept or 301'd by `pagePaths` like an imported page's old
+  address; without one the address comes from the title, so subfolders are
+  flattened (until page hierarchy, #190) and clashes are numbered.
+  Front matter is `key: value` lines only, not full YAML.
+- Menu order: a top-level `index.md` (else `README.md`) is the home page,
+  then front matter `order:`, then the file's path.
+- Links between the imported files become links to their pages (`#page:<id>`,
+  any `#anchor` dropped); links to other local files (a PDF) are removed,
+  keeping their text. Web links are kept.
+- Images: ones next to the files (relative paths, only inside the chosen
+  folder: `md:image` checks, with symlinks resolved) are re-encoded like
+  uploads, and web images downloaded, as for WordPress (`imageFetcher`);
+  ones that can't be read are dropped and counted in the log.
+- Provenance: source `Markdown files` (no file paths are recorded or
+  published), verification `unverified`. Pages added to a site that was
+  already imported from a website keep that site's provenance.
+
 ## What publishing does
 
 1. Uses the workers.dev subdomain, or the chosen Cloudflare zone (plus an
@@ -821,6 +888,17 @@ site's local files until taking it offline has fully worked.
 
 ## Known gaps
 
+- Markdown import (#255): front matter is read as `key: value` lines, not
+  YAML; tables, task lists and footnotes come through only as far as the
+  rich text allowlist allows (task list checkboxes are dropped). Code blocks
+  are plain text, and Quill splits their lines into paragraphs once edited.
+  Tested on Linux only; the file and folder pickers are stubbed in
+  `test/drive.js`, so the real dialogs haven't been tried on Windows/macOS.
+- Business details (#80): opening hours are free text, so they're left out
+  of the LocalBusiness JSON-LD (#247); the Contact details section links to a
+  map instead of embedding one (#248); theme footer templates can't place the
+  details themselves (#249). Checked in the built HTML and the app's preview
+  headlessly, not yet with Google's Rich Results Test on a published site.
 - GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
   Tested against real git smart HTTP (`git http-backend` in test/fakes.js
   `startGitHost`) and the IPC channels driven in the app headlessly once,
@@ -870,8 +948,8 @@ site's local files until taking it offline has fully worked.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
-  a site's folder (#177) likewise only on Linux. A lost
-  sending key is re-created without deleting the old one at Resend. A secrets
+  a site's folder (#177) likewise only on Linux. Deleting a replaced
+  sending key at Resend (#176) is tested against a fake Resend only. A secrets
   problem for a deleted site's folder shows until the app restarts. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
@@ -897,12 +975,10 @@ site's local files until taking it offline has fully worked.
 - GitHub publishing (#60): tested against a fake GitHub API only (device
   flow, git data API, fork, PR), not yet the real one. Noticing a revoked
   sign-in (#253) was tested only with the fake answering 401, not with a
-  token revoked on github.com; a theme source using the sign-in token
-  doesn't mark it (it retries without it, #251) until Settings is opened. Signing out only
+  token revoked on github.com (theme sources included, #258). Signing out only
   forgets the token; revoking it is done on GitHub (the app has no client
-  secret to revoke it with). A file dropped from a theme (an old
-  `preview.png`) stays in the target repo, since a push only adds or
-  replaces files.
+  secret to revoke it with). Deleting files dropped from a theme (#159) is
+  skipped when GitHub truncates the repo's file listing (100k+ files).
 
 - Updates are notify-only: the user downloads and runs the new installer
   themselves. Silent auto-update (electron-updater) needs signed macOS

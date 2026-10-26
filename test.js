@@ -109,6 +109,23 @@ const site = {
   assert.strictEqual(read("public/robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://bobsbikes.co.uk/sitemap.xml\n");
   await build(seoSite, siteDir, out, { preview: true, hostname: "bobsbikes.co.uk" });
   assert(!read("public/index.html").includes("canonical") && !read("public/index.html").includes("og:url") && read("public/index.html").includes('content="/assets/logo.webp"') && !fs.existsSync(path.join(out, "public/sitemap.xml")), "preview: no canonical/sitemap");
+  // Business details (#80): above the footer on every page, a Contact details section, LocalBusiness JSON-LD on the home page only.
+  const bizSite = { ...site, business: { street: "Unit 2\n1 <High> St", town: "Leeds", postcode: "LS1 1AA", country: "", phone: "0113 496 0000", email: "shop@bobs.example",
+    hours: "Mon-Fri: 9-5\nSat: 10-4", social: "https://www.instagram.com/bobs http://facebook.com/insecure javascript:alert(1) https://bsky.app/profile/bobs </script>" },
+  pages: [site.pages[0], { ...site.pages[1], sections: [...site.pages[1].sections, { type: "contact", heading: "Find us", text: "" }] }, site.pages[2]] };
+  await build(bizSite, siteDir, out, { workerName: "w", hostname: "bobsbikes.co.uk" });
+  const bizHome = read("public/index.html"), bizContact = read("public/contact-us.html");
+  const ld = JSON.parse(/<script type="application\/ld\+json">(.*?)<\/script>/.exec(bizHome)[1]);
+  assert.deepStrictEqual(ld, { "@context": "https://schema.org", "@type": "LocalBusiness", name: "Bob's <Bikes>", url: "https://bobsbikes.co.uk/", telephone: "0113 496 0000", email: "shop@bobs.example",
+    address: { "@type": "PostalAddress", streetAddress: "Unit 2, 1 <High> St", addressLocality: "Leeds", postalCode: "LS1 1AA" }, sameAs: ["https://www.instagram.com/bobs", "https://bsky.app/profile/bobs"] }, "LocalBusiness data, https social links only");
+  assert(!/<script type="application\/ld\+json">([^]*?)<\/script>/.exec(bizHome)[1].includes("<"), "no raw < in JSON-LD");
+  assert(!bizContact.includes("ld+json") && !read("public/privacy.html").includes("ld+json"), "JSON-LD on the home page only");
+  for (const f of ["public/index.html", "public/contact-us.html", "public/privacy.html", "public/404.html"]) assert(read(f).includes('<div class="site-business">') && read(f).includes("Unit 2<br>1 &lt;High&gt; St<br>Leeds<br>LS1 1AA"), `business details on ${f}`);
+  assert(bizHome.includes('<a href="tel:01134960000">0113 496 0000</a>') && bizHome.includes('<a href="mailto:shop@bobs.example">') && bizHome.includes("Mon-Fri: 9-5<br>Sat: 10-4")
+    && bizHome.includes('<a href="https://www.instagram.com/bobs">Instagram</a>') && bizHome.includes(">bsky.app<") === false && bizHome.includes(">Bluesky<") && !bizHome.includes("insecure") && !bizHome.includes("javascript:"), "footer details, safe links");
+  assert(bizContact.includes('<section class="contact-details"><div class="wrap"><h2>Find us</h2><div class="business-grid"><div><h3>Address</h3>') && bizContact.includes("https://www.google.com/maps/search/?api=1&amp;query=Unit%202%2C%201%20%3CHigh%3E%20St%2C%20Leeds%2C%20LS1%201AA"), "contact section with map link");
+  await build({ ...bizSite, business: { email: "not an email", hours: " " } }, siteDir, out, {});
+  assert(!read("public/index.html").includes("site-business") && !read("public/index.html").includes("ld+json"), "nothing valid, nothing shown");
   // Exact copies: sitemap from the copied pages (skipping noindex ones) unless they brought their own.
   const copyDir = fs.mkdtempSync(path.join(os.tmpdir(), "site-"));
   fs.mkdirSync(path.join(copyDir, "mirror/caf\u00e9"), { recursive: true });
@@ -377,6 +394,24 @@ const site = {
   }
 
   // Exact copy of a WordPress in a subfolder copies that folder only, with `/` redirecting to it.
+  // Exact copy lists pages in crawl order with home first (#95), even when home finishes after pages fetched
+  // alongside it (the 404 page's links join home's batch) and later pages finish out of order.
+  {
+    const delay = { "/": 150, "/b/": 150 };
+    const html = (body) => `<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`;
+    const srv = require("node:http").createServer((req, res) => {
+      const known = { "/": '<a href="/b/">b</a><a href="/c/">c</a>', "/a/": "a", "/b/": "b", "/c/": "c" }[req.url];
+      setTimeout(() => {
+        res.writeHead(known === undefined ? 404 : 200, { "content-type": "text/html" });
+        res.end(html(known ?? '<a href="/a/">a</a>'));
+      }, delay[req.url] || 0);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "sb-order-"));
+    const r = await require("./lib/mirror").mirrorSite(`http://127.0.0.1:${srv.address().port}/`, out, () => {}).finally(() => srv.close());
+    assert.deepStrictEqual(r.pages.map((p) => p.path), ["/", "/a/", "/b/", "/c/"], "exact copy pages in crawl order, home first");
+  }
+
   const sub = await require("./test/fakes").startSubfolder();
   const subOut = fs.mkdtempSync(path.join(os.tmpdir(), "sb-sub-"));
   const copied = await require("./lib/mirror").mirrorSite(`${sub.url}/blog`, subOut, () => {}).finally(sub.close);
@@ -470,6 +505,20 @@ const site = {
     "DELETE /zones/z1/dns_records/r1", "DELETE /zones/z1/rulesets/rs1/rules/x1", "DELETE /accounts/a1/challenges/widgets/s1", "DELETE /api-keys/k1"]);
   assert.deepStrictEqual(res, { state: { accountId: "a1", turnstile: { sitekey: "s1" } }, failed: ["the form spam check (Turnstile widget)"] }, "failed step kept for retry, 404 counts as removed");
   assert(logs.join("").includes("Couldn't remove the form spam check") && logs.join("").includes("Already gone: the form email key"));
+  globalThis.fetch = realFetch;
+
+  // Replaced sending key (#176): deleting it never throws, and never logs a key value.
+  for (const [status, said] of [[200, /Deleted this site's old/], [404, /^$/], [401, /Couldn't delete this site's old Resend sending key \(Resend: nope\)/], [0, /Couldn't delete .*offline/]]) {
+    const seen = [], said176 = [];
+    globalThis.fetch = async (url, { method, headers }) => {
+      seen.push(`${method} ${url} ${headers.Authorization}`);
+      if (!status) throw new Error("offline");
+      return { status, ok: status < 300, json: async () => (status < 300 ? {} : { message: "nope" }) };
+    };
+    await pub135.deleteSendingKey("re_account", "old-1", (l) => said176.push(l));
+    assert.deepStrictEqual(seen, ["DELETE https://api.resend.com/api-keys/old-1 Bearer re_account"]);
+    assert(said.test(said176.join("")) && !said176.join("").includes("re_account"), `${status}: ${said176}`);
+  }
   globalThis.fetch = realFetch;
 
   // Hostname changes (#139): old Custom Domain, old apex's www and a 301 from the old hostname, all best-effort.
@@ -657,6 +706,16 @@ const site = {
     await build({ ...site, theme: "night", themeSource: fakeGh.privateSpec, font: "theme-night" }, siteDir, out2);
     const css = fs.readFileSync(path.join(out2, "public/styles.css"), "utf8");
     assert(css.includes("night-theme-css") && css.includes('--font: "Courier New", monospace'), "site-local theme CSS and font stack");
+
+    // #258: a rejected token is reported (so main.js can mark the sign-in expired); a working one isn't.
+    let rejected = 0;
+    const tick = async () => rejected++;
+    const cache258 = fs.mkdtempSync(path.join(os.tmpdir(), "sb-themecache-"));
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick });
+    await assert.rejects(ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: "expired", rejected: tick }));
+    await ts.fetchSource(fakeGh.privateSpec, { cacheRoot: cache258, api: fakeGh.url, token: fakeGh.token, rejected: tick });
+    await ts.fetchSource(ts.PUBLIC_SOURCE, { cacheRoot: cache258, api: fakeGh.url, rejected: tick });
+    assert.strictEqual(rejected, 2, "rejected() runs once per 401, never for a good or absent token");
   } finally {
     await fakeGh.close();
   }
@@ -700,7 +759,7 @@ const site = {
     assert(started.css.includes("flex-direction: column") && started.font === "serif" && started.colors.primary === "#ffee00" && started.radius === 2 && !started.css.includes("--radius"), "from a website: its CSS, font and colours");
     assert.strictEqual((await tb.fromSite({ ...site, mirror: {} }, siteDir, themes)).css, "", "exact copies: colours and font only");
     const sample = tb.sampleSite({});
-    assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["form", "gallery", "hero", "richtext", "text"]);
+    assert.deepStrictEqual([...new Set(sample.pages.flatMap((p) => p.sections.map((s) => s.type)))].sort(), ["contact", "form", "gallery", "hero", "richtext", "text"]);
 
     // Right-click menu (#156): its selector classes are exactly the ones the built markup uses.
     const frameLib = require("./app/theme-builder-frame");
@@ -773,6 +832,18 @@ const site = {
       assert.deepStrictEqual(Object.keys(p.files).filter((f) => f.startsWith("themes/sunny-days/")).sort(), ["themes/sunny-days/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
       assert(!Object.keys(fake.files("PhaseN-Digital/phasen-sitebuilder-themes")).some((f) => f.includes("sunny")), "upstream itself untouched");
       assert((await gh.submitTheme({ api: fake.url, token, ...theme, label: "Again", about: "x" })).url.endsWith("/pull/2"), "existing fork reused");
+
+      // A file dropped from a theme is deleted from its folder on the next push (#159), and nothing else is.
+      const push = (id, f) => gh.pushTheme({ api: fake.url, token, target: gh.PRIVATE_DEFAULT, id, files: f, version: "1" });
+      const x = Buffer.from("x");
+      await push("sunny-days", { ...files, "header.html": x, "notes.md": x }); // notes.md: not a theme file
+      await push("sunny-days/sub", { "preview.png": x }); // a subfolder
+      await push("sunny-days-old", { "preview.png": x }); // a sibling sharing the prefix
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] });
+      assert.deepStrictEqual(Object.keys(fake.files(gh.PRIVATE_DEFAULT)).sort(), ["README.md", "themes/.gitkeep", "themes/sunny-days-old/preview.png",
+        "themes/sunny-days/notes.md", "themes/sunny-days/sub/preview.png", "themes/sunny-days/theme.css", "themes/sunny-days/theme.json"]);
+      await push("sunny-days", { "theme.json": files["theme.json"], "theme.css": files["theme.css"] }); // nothing left to delete: no error
+      for (const id of ["..", "a/../b", "", "a//b"]) await assert.rejects(push(id, files), /Bad theme folder/);
       assert(fake.requests.filter(([, url]) => url.startsWith("/login/")).every(([, , auth]) => !auth), "no token sent to the login endpoints");
     } finally {
       await fake.close();
@@ -1304,6 +1375,32 @@ const site = {
     const rescanned = await folder.scan(to);
     assert(rescanned.size === 2 && [...rescanned.values()].includes(wheels) && !fs.existsSync(cycles) && await repo.isRepo(wheels));
     fs.rmSync(base, { recursive: true, force: true });
+  }
+
+  // Markdown import (#255): titles, addresses, menu order, rendering; sanitizing and links are app/markdown.js (test/drive.js).
+  {
+    const md = require("./lib/markdown");
+    assert.deepStrictEqual(md.frontMatter("\uFEFF---\ntitle: 'A: b'\nSlug: x\n---\nBody").data, { title: "A: b", slug: "x" });
+    assert.strictEqual(md.frontMatter("No front matter\n---\n").body, "No front matter\n---\n");
+    assert.strictEqual(md.toPage("a.md", "Intro\n\n# The *Title*").title, "The Title", "first # heading");
+    assert.strictEqual(md.toPage("a.md", "---\ntitle: Front\n---\n# Heading").title, "Front", "front matter wins");
+    assert.strictEqual(md.toPage("dir/getting-started.md", "## Not h1").title, "Getting started", "file name last");
+    assert.strictEqual(md.toPage("a.md", "---\nslug: /about/\n---\n").path, "/about/");
+    assert.strictEqual(md.toPage("a.md", "---\npath: services/web\n---\n").path, "/services/web");
+    assert.strictEqual(md.toPage("a.md", "x").path, undefined, "no front matter address: title-based");
+    const { html } = md.toPage("a.md", "```\na<b\nc\n```\n\n###### Tiny\n\n<script>x</script>");
+    assert(html.includes("<p>a&lt;b<br>c</p>") && html.includes("<h4>Tiny</h4>") && html.includes("<script>"), "code as a paragraph, h6 as h4, raw HTML left for the sanitizer");
+    const pages = await md.readMarkdown(path.join(__dirname, "test/fixtures/markdown"));
+    assert.deepStrictEqual(pages.map((p) => [p.rel, p.title, p.path]), [
+      ["index.md", "Welcome to Bob's Bikes", undefined], ["about.md", "About the team", "/about-us/"], ["guides/setup.md", "Setup", undefined], ["README.md", "Readme", undefined]],
+      "index.md is home (README.md only without one), then order:, then path");
+    assert.strictEqual(md.toPages([{ rel: "b.md", text: "" }, { rel: "README.md", text: "" }])[0].rel, "README.md");
+    const fx = path.join(__dirname, "test/fixtures/markdown");
+    assert((await md.readImage(fx, "img/bike.png")).length > 50);
+    for (const bad of ["../markdown/img/bike.png/..", "../../package.json", "index.md", "/etc/passwd"]) await assert.rejects(md.readImage(fx, bad), undefined, bad);
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "md-"));
+    await assert.rejects(md.readMarkdown(empty), /no Markdown/);
+    fs.rmSync(empty, { recursive: true });
   }
 
   const { execFileSync } = require("node:child_process");
