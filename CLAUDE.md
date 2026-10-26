@@ -295,6 +295,10 @@ are not, so add them yourself.
   (`npm test` and `npm run dist` fail via `scripts/licences.js`); exclude it
   in `build.files` or add a justified `ALLOW` entry. Keep `LICENSE` and
   `THIRD-PARTY-NOTICES.txt` in `build.files`.
+- The diagnostic report (#86, `lib/diagnostics.js`) is an allowlist: add
+  fields one by one, never spread a settings/site/state object into it, and
+  pass any new free text through its `clean`. test.js asserts no secret,
+  `declaredBy`, `secrets.enc` content or inbox email reaches it.
 - Generated sites follow phasen.digital's shape: non-asset requests must
   fall through to `env.ASSETS.fetch` (`runtime/worker.js`), or custom 404
   pages break.
@@ -344,7 +348,7 @@ are not, so add them yourself.
   when no script has changed the page.
 - Editor saves are debounced 400ms (`save()` in `app/app.js`). Anything that
   leaves the editor or writes/publishes the site (switching site, Settings,
-  Themes, Import, delete, publish, and window close via main.js's `close`
+  Themes, Import, delete, publish, GitHub sync (`runSync`), and window close via main.js's `close`
   handler) must `await flushSave()` first, never just `clearTimeout`, or the
   last edit is lost (#143). `flushSave` also waits for copied-page edits
   (`copyEdits` in `app/copied.js`); `test/drive.js` `pendingEdits` checks it.

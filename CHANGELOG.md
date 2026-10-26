@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.1...phasen-sitebuilder-v0.10.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **publish:** delete the replaced Resend sending key after the deploy ([#176](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/176)) ([#277](https://github.com/PhaseN-Digital/phasen-sitebuilder/issues/277)) ([a628df4](https://github.com/PhaseN-Digital/phasen-sitebuilder/commit/a628df4ed48a9e6d37a93f9490f9fed06ac99604))
+
 ## [0.10.1](https://github.com/PhaseN-Digital/phasen-sitebuilder/compare/phasen-sitebuilder-v0.10.0...phasen-sitebuilder-v0.10.1) (2026-10-26)
 
 

@@ -157,7 +157,9 @@ checks the whole app end to end with no accounts, against fake sites in
   pre-#141 import asked to declare before publishing); Markdown import of
   `test/fixtures/markdown` (new site, titles, order, front matter address,
   links between files, local image, hostile HTML, editor round trip, then one
-  file added to that site from the Pages tab); exact copy of a fake
+  file added to that site from the Pages tab); the Pages screen's page
+  dropdown (switching, filtering 30+ pages) and "Reorder pages" dialog (Cancel,
+  arrows, drag, saved order and built menu); exact copy of a fake
   Elementor site (no origin URLs left, forms re-wired, copy vs structure
   tagging, page edit, site-wide edit, image replace, undo, revert); the
   Settings page (app defaults and accounts, a per-site default override and
@@ -196,7 +198,7 @@ published always-pass test secret, so that one step needs internet access.
   default (Settings › Data › Change folder… moves the sites there, or points
   at a folder that already has some; the choice is in `userData/location.json`).
   One sub-folder per site, named from its name (renamed with the site, #177,
-  once the edit is committed and nothing else is running; if a file in it is
+  once the edit is committed and nothing else, preview requests included, is running; if a file in it is
   open on Windows it keeps its old name until the next commit), each its
   own git repo (`lib/site-repo.js`, through
   [isomorphic-git](https://isomorphic-git.org), pure JS, MIT, so users need
@@ -256,7 +258,15 @@ published always-pass test secret, so that one step needs internet access.
   allowlist, `shared()`) sync the same way through a settings repo of their
   own, kept locally in `userData/settings-sync/`; the first sync on a
   computer takes GitHub's settings if there are any. The token is only ever
-  sent to `github.com/<owner>/<repo>.git`.
+  sent to `github.com/<owner>/<repo>.git`. In the app (#235): a site's
+  Dashboard has "GitHub sync" (make a private repo, by default
+  `<login>/site-<name>`, or use an existing one; then Sync now, Disconnect,
+  and the "keep this computer's version or GitHub's" choice after a
+  conflict), and Settings › GitHub sync has the shared-settings repo and
+  "Restore a website". A pull reopens the site in the editor. Both ask to
+  sign in to GitHub again (with private repositories allowed) when the
+  sign-in is missing or expired (#253). A restored site's id must be one the
+  app uses (`ID_RE` in `lib/sites-folder.js`), or the restore is refused.
 - `app/`: the editor UI (plain HTML/CSS/JS, no framework). `app/wordpress.js`
   is the import screen and HTML sanitizer; `app/content-detect.js` and
   `app/content-pick-frame.js` find and review the content of non-WordPress
@@ -316,7 +326,7 @@ published always-pass test secret, so that one step needs internet access.
   `footer.html`, `section.html` (wraps every section) and `layout-<id>.html`
   (the inside of `<main>` for that layout). `lib/templates.js` renders them:
   `{{name}}` placeholders (escaped, except the app-built `{{brand}}`,
-  `{{menu}}`, `{{content}}`, `{{footer.links}}`) and `{{#if name}} … {{/if}}`,
+  `{{menu}}`, `{{content}}`, `{{footer.links}}`, `{{footer.business}}`) and `{{#if name}} … {{/if}}`,
   nothing else; its `DEFAULTS` reproduce the built-in markup, so a theme
   without templates builds exactly as before. `validateTemplate` in
   `lib/theme-validate.js` is an allowlist (elements, attributes, URL schemes,
@@ -324,7 +334,9 @@ published always-pass test secret, so that one step needs internet access.
   javascript:/data: URLs, forms, external resources except https images
   from `IMAGE_HOSTS`, iframes only for YouTube-nocookie/Vimeo), and
   `{{menu}}`, `{{content}}` and `{{footer.links}}` are required. It runs on
-  install, on save in the Theme Builder and at every build; a build falls
+  install, on save in the Theme Builder and at every build;
+  `{{footer.business}}` (optional, #249) puts the business details inside
+  the footer, and then they aren't also shown above it; a build falls
   back to the built-in templates if any fail (`console.warn` only for now, #225).
   The Design tab and Theme Builder label themes that use templates.
 - App layout (#185, `app/index.html`, `app/app.js`): a top bar with the
@@ -353,6 +365,15 @@ published always-pass test secret, so that one step needs internet access.
   and use its own Cloudflare/Resend accounts (Publish tab; in
   `sites/<id>/accounts.json` with the secrets in `.secrets/secrets.enc`,
   never in `site.json`).
+- Diagnostic report (#86): Help › Copy diagnostic report (also in
+  Settings › Data & support) copies a plain-text report from
+  `lib/diagnostics.js`: app/Electron/OS versions, the data folder, which
+  accounts are connected (yes/no), each site's id, theme, page/form counts,
+  import verification and publish date, the last 20 IPC errors and the last
+  200 publish/import log lines (in memory only). It lists allowed fields, never
+  whole objects, and scrubs free text of every secret value in the inputs,
+  `importProvenance.declaredBy`, email addresses, long token-like strings and
+  the home folder; test.js checks it. Help › Open data folder opens userData.
 - Documentation (#165): the top bar's Documentation button and a link in
   Settings › About open https://sitebuilder.phasen.digital/docs in the
   browser through the https-only `open` handler. The address is `DOCS_URL`
@@ -499,7 +520,11 @@ becomes Home, the rest Standard; copied pages have none.
 | Legal | rich text | a title band, narrow column (the generated privacy page uses it) |
 
 Pages › "+ Add page" asks for the layout; Pages › Layout changes it later and
-keeps the sections. The page is `<body class="layout-<id>">`; only its
+keeps the sections. The Pages screen picks the page to edit from a dropdown
+(with a filter box above it once a site has more than 8 pages, #261), and
+"Reorder pages…" opens a dialog (drag and drop, or each page's up/down
+buttons; Save or Cancel) that sets the menu order; the first page is the home
+page. The page is `<body class="layout-<id>">`; only its
 first heading is an `h1` (the title band, else the first banner, later
 banners get `h2`), and the title band is left out when a banner opens the
 page. Rich text sections can be "shown as cards": each Heading 3 starts a
@@ -679,7 +704,8 @@ since then as the "original".
 
 Not copied: anything only reachable
 via a query string (`?p=123` permalinks, search results), files only loaded
-by JS at runtime (some page-builder widget scripts), feeds, file uploads in
+by JS at runtime (Elementor's widget chunks are found in its scripts; other
+page builders' are not), feeds, file uploads in
 forms. Third-party assets (Google Fonts, CDNs) stay remote.
 
 ### Editable import
@@ -720,6 +746,15 @@ already signed in"). They're only sent over https and aren't stored.
   themes and other page builders mostly don't expose these, so they get a
   built-in theme's defaults.
 - Some plugins print HTML before the REST API's JSON; that's skipped.
+- Divi and WPBakery shortcodes (`[et_pb_…]`, `[vc_…]`, which the REST API
+  returns as text) are stripped and what's between them kept; a Divi image
+  module becomes an image (#24, `stripShortcodes` in `lib/wordpress.js`).
+  Text held only in a module's settings (button labels, call-to-action
+  titles), WPBakery images (stored by media ID) and raw HTML blocks are lost.
+- Pages with no content of their own, which block themes build from
+  templates (often the front page), get the `<main>` of the page as
+  WordPress shows it instead, minus its title heading (`fromTemplates`).
+  Text and images left loose by the layout's `<div>`s are put in paragraphs.
 - Posts (#180, `/wp/v2/posts`) become Blog post pages (keeping their
   address, date, author, excerpt and featured image), listed by one Blog
   page: the home page when WordPress shows posts there, else an empty page
@@ -904,11 +939,12 @@ site's local files until taking it offline has fully worked.
   map instead of embedding one (#248); theme footer templates can't place the
   details themselves (#249). Checked in the built HTML and the app's preview
   headlessly, not yet with Google's Rich Results Test on a published site.
-- GitHub sync (#137): backend and IPC channels only, no UI yet (#235).
-  Tested against real git smart HTTP (`git http-backend` in test/fakes.js
-  `startGitHost`) and the IPC channels driven in the app headlessly once,
-  not yet against github.com itself. A pull rewrites the site's files
-  directly, so the editor has to reload the open site afterwards.
+- GitHub sync (#137, #235): tested only against real git smart HTTP
+  (`git http-backend`, the fakes' `gitSync()`), in test.js and through the UI
+  in the regression suite, not yet against github.com itself. A signed-out
+  GitHub sign-in is checked in the UI by marking it expired in the renderer,
+  not by a real revoked token. There's no way to stop syncing the shared
+  settings short of signing out of GitHub (#298).
 - Linux (#153): x64 only (no arm64 build), unsigned, and checked only
   headlessly (the AppImage's window opening under xvfb, its bundled wrangler's
   `deploy --dry-run`, `dpkg-deb -I` on the .deb), not yet installed and used
@@ -953,14 +989,18 @@ site's local files until taking it offline has fully worked.
 - Settings (#134): per-site accounts and overrides are tested against a
   stubbed Cloudflare/Resend in the regression suite, not real accounts, and
   only on Linux. Moving a live site to another Cloudflare account means taking
-  it offline first. Backup/restore (#70), diagnostics (#86) are disabled
-  placeholders.
+  it offline first. Backup/restore (#70) is a disabled placeholder.
+- Diagnostic report (#86): checked headlessly on Linux only (menu entries,
+  Settings button, report contents); the native menu bar it adds on
+  Windows/Linux and the macOS app menu haven't been looked at on those OSes.
+  Recent errors are only those from IPC calls (not renderer or startup
+  errors), and both they and the log lines are kept in memory, so a restart
+  clears them.
 - Sites folder and history (#136): tested on Linux only (unit tests, and the
   regression suite with `safeStorage` in its plain-text mode), not yet on
   Windows/macOS keychains or with a synced folder (OneDrive/iCloud); renaming
   a site's folder (#177) likewise only on Linux. Deleting a replaced
-  sending key at Resend (#176) is tested against a fake Resend only. A secrets
-  problem for a deleted site's folder shows until the app restarts. Nothing
+  sending key at Resend (#176) is tested against a fake Resend only. Nothing
   is pushed anywhere yet (the repos are local), and the 100MB GitHub warning
   only lists files in the History tab. Restoring a version doesn't restore
   the site's accounts or publish state, by design.
@@ -1025,6 +1065,8 @@ site's local files until taking it offline has fully worked.
   application password), but not yet against a client site. Known problems
   from that: conditional-field detection in re-wired forms is built from
   plugin markup conventions, not yet re-tested on a real Gravity, Fluent or
-  Divi conditional form (#22); editable import of Divi/WPBakery pages, block-theme home pages and SVG logos (#24);
-  Elementor 3 runtime-loaded scripts (#11). Tracker removal and Google Fonts
+  Divi conditional form (#22); editable import of Divi/WPBakery pages and block-theme pages is tested only against fixtures (#24); SVG logos aren't copied (#282);
+  Elementor 3's runtime-loaded webpack chunks are read from its webpack
+  runtime but only tested against a fake (#11), and other page builders'
+  runtime-loaded scripts aren't copied. Tracker removal and Google Fonts
   self-hosting (#45) are tested only against a fake Elementor site.
